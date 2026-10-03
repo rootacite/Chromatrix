@@ -18,9 +18,13 @@ export MIOPEN_USER_DB_PATH="$HOME/.config/miopen"
 
 export PYTORCH_CUDA_ALLOC_CONF="max_split_size_mb:128,garbage_collection_threshold:0.8"
 
+# The trainer's interpreter: AXL_PYTHON is the one Chromatrix runs api.py with, and a bare `python`
+# on PATH is not necessarily it (a user systemd unit, for one, has /usr/local/bin:/usr/bin only).
+TRAIN_PYTHON="${AXL_PYTHON:-python}"
+
 # [environment].amdfq: none | tail | vmm. Chromatrix Utils writes it; this is what actually preloads.
 # Fail here if the chosen .so is missing rather than starting a run without the patch.
-amdfq_line=$(python -u -c "from trainer.amdfq_patch import launch_env_line; print(launch_env_line())")
+amdfq_line=$("$TRAIN_PYTHON" -u -c "from trainer.amdfq_patch import launch_env_line; print(launch_env_line())")
 IFS='|' read -r amdfq_choice amdfq_so amdfq_va_status amdfq_vram_reserve amdfq_va_never_reuse amdfq_pool <<< "$amdfq_line"
 if [[ $amdfq_choice == tail || $amdfq_choice == vmm ]]; then
     if [[ -z $amdfq_so || ! -f $amdfq_so ]]; then
@@ -59,8 +63,8 @@ fi
 # DataLoader forkserver then keeps the workers it forked alive, each holding /dev/kfd and ~0.5 GB.
 # Start the reaper first, detached, so it outlives the tree it tears down; it reads the session and
 # start time from /proc itself.
-setsid python -u trainer/orphans.py \
+setsid "$TRAIN_PYTHON" -u trainer/orphans.py \
     --watch "$$" --script "$PWD/trainer/main.py" &
 
-exec python -u trainer/main.py \
+exec "$TRAIN_PYTHON" -u trainer/main.py \
     1> >(grep -Ev "grid_desc|CandidateSelectionModel|metadata" >> /dev/null)
