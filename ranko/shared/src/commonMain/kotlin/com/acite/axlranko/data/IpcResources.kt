@@ -303,6 +303,7 @@ internal object IpcResources {
         "automation_job_delete" to { params -> listOf(job(params.text("id"))) },
         "automation_image_delete" to { params -> listOf(job(params.text("id"))) },
         "automation_job_prompt_edit" to { params -> listOf(job(params.text("id"))) },
+        "automation_job_rename" to { params -> listOf(job(params.text("id"))) },
 
         // --- read-only, or reading the files is the point (see the class comment) ---
         "ping" to { _ -> emptyList() },
@@ -314,6 +315,7 @@ internal object IpcResources {
         "tag_lexicon" to { _ -> emptyList() },
         "prompt_matrix" to { _ -> emptyList() },
         "automation_discover" to { _ -> emptyList() },
+        "automation_loras" to { _ -> emptyList() },
         "automation_workflow_validate" to { _ -> emptyList() },
         "automation_prompt_list" to { _ -> emptyList() },
         "automation_prompt_get" to { _ -> emptyList() },

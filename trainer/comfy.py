@@ -20,6 +20,7 @@ import json
 import os
 import time
 import urllib.error
+from pathlib import Path
 import urllib.parse
 import urllib.request
 from typing import Any, Callable, Iterable, Optional
@@ -80,6 +81,151 @@ def _parse_ports(text: str, wildcard: str) -> set[int]:
         if host in ("0100007F", wildcard) or host.endswith("0100007F"):
             ports.add(port)
     return ports
+
+
+def server_port(server: str) -> int:
+    """The TCP port of a ComfyUI address. A bare host gets the scheme's default port."""
+    parsed = urllib.parse.urlparse(normalize_server(server))
+    if parsed.port:
+        return int(parsed.port)
+    return 443 if parsed.scheme == "https" else 80
+
+
+def _listen_inodes(port: int, tcp_path: str, tcp6_path: str) -> set[str]:
+    """Socket inodes of processes listening on `port`, from `/proc/net/tcp{,6}`."""
+    inodes: set[str] = set()
+    for path in (tcp_path, tcp6_path):
+        try:
+            with open(path, encoding="utf-8") as handle:
+                lines = handle.read().splitlines()
+        except OSError:
+            continue
+        for line in lines[1:]:
+            fields = line.split()
+            if len(fields) < 10 or fields[3] != "0A":
+                continue
+            _address, _, port_hex = fields[1].rpartition(":")
+            try:
+                if int(port_hex, 16) != port:
+                    continue
+            except ValueError:
+                continue
+            if fields[9].isdigit():
+                inodes.add(fields[9])
+    return inodes
+
+
+def pid_for_listen_port(port: int, proc_root: str = "/proc") -> Optional[int]:
+    """The process that owns the listen socket, or None when the inode has no owner we can read."""
+    root = Path(proc_root)
+    inodes = _listen_inodes(port, str(root / "net" / "tcp"), str(root / "net" / "tcp6"))
+    if not inodes:
+        return None
+    wanted = {f"socket:[{inode}]" for inode in inodes}
+    try:
+        entries = list(root.iterdir())
+    except OSError:
+        return None
+    for entry in entries:
+        if not entry.name.isdigit():
+            continue
+        fd_dir = entry / "fd"
+        try:
+            fds = list(fd_dir.iterdir())
+        except OSError:
+            continue
+        for fd in fds:
+            try:
+                target = os.readlink(fd)
+            except OSError:
+                continue
+            if target in wanted:
+                return int(entry.name)
+    return None
+
+
+def _process_argv(pid: int, proc_root: Path) -> list[str]:
+    try:
+        raw = (proc_root / str(pid) / "cmdline").read_bytes()
+    except OSError:
+        return []
+    return [part.decode("utf-8", "replace") for part in raw.split(b"\0") if part]
+
+
+def _process_cwd(pid: int, proc_root: Path) -> Optional[Path]:
+    try:
+        return Path(os.readlink(proc_root / str(pid) / "cwd"))
+    except OSError:
+        return None
+
+
+def process_install_root(pid: int, proc_root: str = "/proc") -> Optional[Path]:
+    """The ComfyUI install directory for a process: its cwd, or the directory of `main.py`.
+
+    A launch from another directory (`python /opt/ComfyUI/main.py`) keeps home as the cwd, so the
+    script path wins when that directory is the one that holds `models/loras`.
+    """
+    root = Path(proc_root)
+    cwd = _process_cwd(pid, root)
+    candidates: list[Path] = []
+    if cwd is not None:
+        candidates.append(cwd)
+    for arg in _process_argv(pid, root):
+        if Path(arg).name != "main.py":
+            continue
+        script = Path(arg)
+        if not script.is_absolute():
+            if cwd is None:
+                continue
+            script = cwd / script
+        candidates.append(script.parent)
+    ordered: list[Path] = []
+    for path in candidates:
+        try:
+            resolved = path.resolve()
+        except OSError:
+            resolved = path
+        if resolved not in ordered:
+            ordered.append(resolved)
+    for path in ordered:
+        if (path / "models" / "loras").is_dir():
+            return path
+    for path in ordered:
+        if (path / "main.py").is_file():
+            return path
+    return ordered[0] if ordered else None
+
+
+def list_lora_files(install_root: Path) -> list[str]:
+    """`.safetensors` under `models/loras`, as the relative names `LoraLoader` expects."""
+    folder = Path(install_root) / "models" / "loras"
+    if not folder.is_dir():
+        return []
+    names: list[str] = []
+    for path in folder.rglob("*"):
+        if path.is_file() and path.suffix.lower() == ".safetensors":
+            names.append(path.relative_to(folder).as_posix())
+    names.sort(key=str.lower)
+    return names
+
+
+def loras_for_server(server: str, proc_root: str = "/proc") -> dict[str, Any]:
+    """LoRA names for the ComfyUI listening at `server`, found from that process's directory."""
+    port = server_port(server)
+    pid = pid_for_listen_port(port, proc_root)
+    if pid is None:
+        return {"root": "", "loras": [], "error": f"no process is listening on port {port}"}
+    install = process_install_root(pid, proc_root)
+    if install is None:
+        return {"root": "", "loras": [], "error": f"could not read the directory of process {pid}"}
+    folder = install / "models" / "loras"
+    names = list_lora_files(install)
+    error = ""
+    if not folder.is_dir():
+        error = f"no models/loras under {install}"
+    elif not names:
+        error = f"no .safetensors in {folder}"
+    return {"root": str(install), "loras": names, "error": error}
 
 
 def listening_ports(

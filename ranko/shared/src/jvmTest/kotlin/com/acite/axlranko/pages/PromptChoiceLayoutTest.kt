@@ -54,7 +54,7 @@ class PromptChoiceLayoutTest {
     }
 
     private fun noopActions() = PromptEditorActions(
-        setCharacter = {}, setMode = {}, setExposure = { _, _ -> }, setClothingAny = {},
+        setCharacter = {}, setQualitySuffix = {}, setMode = {}, setExposure = { _, _ -> }, setClothingAny = {},
         toggleClothing = {}, setChest = {}, setBelly = {}, setFigure = {}, setPussyShape = {},
         setPussyHair = {}, setFaceGroup = { _, _ -> },
         toggleFaceTag = { _, _ -> }, setSceneAny = {}, toggleScene = {}, setFamilyAny = {},

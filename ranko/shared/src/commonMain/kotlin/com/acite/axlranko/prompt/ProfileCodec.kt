@@ -103,6 +103,7 @@ object ProfileCodec {
     fun specToJson(spec: PromptSpec): JsonObject = JsonObject(
         linkedMapOf(
             "character" to JsonPrimitive(spec.character),
+            "quality_suffix" to JsonPrimitive(spec.qualitySuffix),
             "mode" to JsonPrimitive(spec.mode.wire),
             "exposure" to JsonArray(spec.exposure.map { JsonPrimitive(it) }),
             "clothing_any" to JsonPrimitive(spec.clothingAny),
@@ -142,6 +143,20 @@ object ProfileCodec {
         is FacePick.Tags -> JsonArray(value.tags.map { JsonPrimitive(it) })
         FacePick.Any -> JsonPrimitive(FACE_ANY)
         FacePick.None -> JsonPrimitive(FACE_NONE)
+    }
+
+    /**
+     * A missing key is the shipped default. A present empty string stays empty, so a profile can
+     * opt out. A non-string is a bad file.
+     */
+    private fun qualitySuffixAt(data: JsonObject): String {
+        if (!data.containsKey("quality_suffix")) return DEFAULT_QUALITY_SUFFIX
+        val element = data["quality_suffix"]
+        val primitive = element as? JsonPrimitive
+        if (primitive == null || !primitive.isString) {
+            throw ProfileException("quality_suffix must be a string")
+        }
+        return primitive.content
     }
 
     fun specFromJson(data: JsonObject): PromptSpec {
@@ -204,6 +219,7 @@ object ProfileCodec {
             pussyHair = pickAt(data, "pussy_hair"),
             face = faceAt(data),
             count = count,
+            qualitySuffix = qualitySuffixAt(data),
         )
     }
 

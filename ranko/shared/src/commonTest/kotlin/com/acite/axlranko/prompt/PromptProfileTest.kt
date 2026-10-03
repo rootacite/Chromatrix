@@ -111,6 +111,20 @@ class ProfileCodecTest {
     }
 
     @Test
+    fun aMissingQualitySuffixBecomesTheDefaultAndABlankOneStaysBlank() {
+        val missing = ProfileCodec.profileText("old", fullSpec())
+            .replace(Regex("\"quality_suffix\": \"[^\"]*\",\\s*"), "")
+        assertEquals(DEFAULT_QUALITY_SUFFIX, ProfileCodec.loadProfile(missing, "old").spec.qualitySuffix)
+        val withSuffix = fullSpec().also { it.qualitySuffix = "best quality, newest, highres" }
+        val blank = ProfileCodec.profileText("none", withSuffix)
+            .replace(Regex("\"quality_suffix\": \"[^\"]*\""), "\"quality_suffix\": \"\"")
+        assertEquals("", ProfileCodec.loadProfile(blank, "none").spec.qualitySuffix)
+        val bad = ProfileCodec.profileText("bad", fullSpec())
+            .replace(Regex("\"quality_suffix\": \"[^\"]*\""), "\"quality_suffix\": 1")
+        assertFailsWith<ProfileException> { ProfileCodec.loadProfile(bad, "bad") }
+    }
+
+    @Test
     fun aProfileWithoutTheNewGroupsReadsAsOff() {
         // What every profile written before the three sections loads in: no pick, no word.
         val text = ProfileCodec.profileText("old", fullSpec())
@@ -335,6 +349,11 @@ class ManifestModelTest {
         assertTrue(rows.contains("figure"))
         assertTrue(rows.contains("pose"))
         assertTrue(rows.contains("count"))
+        val items = ManifestModel.items(testSpec(qualitySuffix = "best quality, newest"), PromptLang.English)
+        val suffix = items.filter { it.label == "Quality suffix" }
+        assertEquals(1, suffix.size)
+        assertEquals("character", suffix[0].pageKey)
+        assertEquals("best quality, newest", suffix[0].value)
     }
 
     @Test

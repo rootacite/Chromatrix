@@ -702,6 +702,12 @@ class TrainerIpcClient {
         return json.decodeFromJsonElement(result)
     }
 
+    suspend fun automationLoras(server: String = ""): ComfyLoraList {
+        val params = if (server.isBlank()) JsonObject(emptyMap()) else buildJsonObject { put("server", server) }
+        val result = call("automation_loras", params)
+        return json.decodeFromJsonElement(result)
+    }
+
     suspend fun automationDiscover(server: String = ""): ComfyDiscovery {
         val params = if (server.isBlank()) JsonObject(emptyMap()) else buildJsonObject { put("server", server) }
         val result = call("automation_discover", params)
@@ -851,6 +857,18 @@ class TrainerIpcClient {
             buildJsonObject {
                 put("id", id)
                 put("count", count)
+            },
+        )
+        return json.decodeFromJsonElement(result)
+    }
+
+    /** Sets the display name. A blank name clears it. The id and the folder stay. */
+    suspend fun automationJobRename(id: String, name: String): AutomationJobDetail {
+        val result = call(
+            "automation_job_rename",
+            buildJsonObject {
+                put("id", id)
+                put("name", name)
             },
         )
         return json.decodeFromJsonElement(result)

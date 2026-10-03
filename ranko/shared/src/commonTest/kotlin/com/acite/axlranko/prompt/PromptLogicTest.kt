@@ -106,6 +106,7 @@ internal fun testSpec(
     pussyHair: List<String> = emptyList(),
     face: Map<String, FacePick> = defaultFace(),
     count: Int = 8,
+    qualitySuffix: String = "",
 ): PromptSpec = PromptSpec(
     character = character,
     mode = mode,
@@ -127,6 +128,7 @@ internal fun testSpec(
     pussyHair = pussyHair,
     face = face,
     count = count,
+    qualitySuffix = qualitySuffix,
 )
 
 /** Group values from the defaults; a bare name means a one-tag candidate list. */
@@ -291,6 +293,50 @@ class PrefixAndForbiddenTagTest {
             listOf("nsfw", "sfw", "explicit", "masterpiece", "best quality", "newest").forEach { banned ->
                 assertFalse(tags.contains(banned), "$banned in $line")
             }
+        }
+    }
+
+    @Test
+    fun theQualitySuffixIsAppendedAfterTheFilter() {
+        val pose = MatrixEntry(listOf("sitting"))
+        val scene = MatrixEntry(listOf("bedroom"))
+        val matrixSuffix = MatrixEntry(listOf("best quality", "soft lighting"))
+        val line = PromptGenerator.assemble(
+            testSpec(qualitySuffix = DEFAULT_QUALITY_SUFFIX),
+            pose,
+            null,
+            false,
+            scene,
+            matrixSuffix,
+            null,
+        )
+        val tags = splitTags(line)
+        assertEquals(listOf("best quality", "newest", "highres"), tags.takeLast(3), line)
+        assertEquals(1, tags.count { it == "best quality" }, line)
+        assertTrue(tags.contains("soft lighting"), line)
+        val cleared = PromptGenerator.assemble(
+            testSpec(qualitySuffix = "   "),
+            pose,
+            null,
+            false,
+            scene,
+            matrixSuffix,
+            null,
+        )
+        assertFalse(splitTags(cleared).contains("best quality"), cleared)
+        assertTrue(splitTags(cleared).contains("soft lighting"), cleared)
+    }
+
+    @Test
+    fun theDefaultSuffixFollowsAFreshSpec() {
+        val lines = PromptGenerator.generate(
+            PromptSpec(character = "1girl", mode = PromptMode.Sfw, count = 3),
+            matrix,
+            seed = 1,
+        )
+        assertEquals(3, lines.size)
+        lines.forEach { line ->
+            assertTrue(line.endsWith(DEFAULT_QUALITY_SUFFIX), line)
         }
     }
 

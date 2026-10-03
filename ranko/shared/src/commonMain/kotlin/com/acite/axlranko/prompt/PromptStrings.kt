@@ -14,6 +14,8 @@ internal object PromptStrings {
     private val chinese: Map<String, String> = mapOf(
         "character_title" to "角色词（置于最前，生成时不会改写）",
         "character_hint" to "例如 (sena_character:1.1), 1girl",
+        "suffix_title" to "质量后缀（接在每条提示词最后；留空则不加）",
+        "suffix_hint" to "默认 best quality, newest, highres",
         "mode_title" to "模式",
         "mode_sfw" to "SFW — 日常姿态，不写性交",
         "mode_nsfw" to "NSFW — 日常姿态，默认可高暴露",
@@ -92,6 +94,7 @@ internal object PromptStrings {
         "manifest_stage_fallback" to "全为 0 → during",
         "footer_manifest" to "↑↓ 移动  Enter 编辑/执行  b 返回  q 放弃",
         "item_character" to "角色词",
+        "item_suffix" to "质量后缀",
         "item_mode" to "模式",
         "item_exposure" to "暴露程度",
         "item_clothing" to "服装",
@@ -117,6 +120,8 @@ internal object PromptStrings {
     private val english: Map<String, String> = mapOf(
         "character_title" to "Character prefix (immutable, always first)",
         "character_hint" to "e.g. (sena_character:1.1), 1girl",
+        "suffix_title" to "Quality suffix (appended to every prompt; blank adds nothing)",
+        "suffix_hint" to "Default: best quality, newest, highres",
         "mode_title" to "Mode",
         "mode_sfw" to "SFW — everyday poses, no sex tags",
         "mode_nsfw" to "NSFW — everyday poses, high exposure by default",
@@ -195,6 +200,7 @@ internal object PromptStrings {
         "manifest_stage_fallback" to "all zero → during",
         "footer_manifest" to "↑↓ move  Enter edit/run  b back  q quit",
         "item_character" to "Character",
+        "item_suffix" to "Quality suffix",
         "item_mode" to "Mode",
         "item_exposure" to "Exposure",
         "item_clothing" to "Clothing",

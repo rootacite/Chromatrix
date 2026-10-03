@@ -72,6 +72,7 @@ import com.acite.axlranko.model.JobFilter
 import com.acite.axlranko.model.jobElapsedSeconds
 import com.acite.axlranko.model.jobImagePathFor
 import com.acite.axlranko.model.jobProgress
+import com.acite.axlranko.model.jobTitle
 import com.acite.axlranko.pages.AutomationScreenViewModel
 import com.acite.axlranko.pages.components.ImagePreviewOverlay
 import com.acite.axlranko.pages.components.PreviewImage
@@ -204,21 +205,35 @@ fun GalleryPane(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Text(
-                            text = detail.id,
-                            color = colors.text,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 13.sp,
-                            maxLines = 1,
-                            softWrap = false,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f),
-                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = jobTitle(detail.name, detail.id),
+                                color = colors.text,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 13.sp,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            if (detail.name.isNotBlank()) {
+                                Text(
+                                    text = detail.id,
+                                    color = colors.textDim,
+                                    fontSize = 10.sp,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
                         Row(
                             modifier = Modifier.weight(1.6f).horizontalScroll(rememberScrollState()),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
+                            GalleryAction(uiText(lang, "rename_job"), Icons.Default.Edit, portrait, state.jobActionBusy == "") {
+                                viewModel.openJobRename(detail.id)
+                            }
                             GalleryAction(uiText(lang, "append_all"), Icons.Default.Add, portrait, !busy) {
                                 viewModel.openPromptAppendAll(detail.id)
                             }
@@ -271,6 +286,49 @@ fun GalleryPane(
                                 viewModel = viewModel,
                                 busy = busy,
                                 portrait = portrait,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        state.renamingJob?.let { draft ->
+            Dialog(onDismissRequest = viewModel::dismissJobRename) {
+                PorcelainCard {
+                    Column(
+                        modifier = Modifier.width(420.dp).padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Text(
+                            text = uiText(lang, "rename_job"),
+                            color = colors.text,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        OutlinedTextField(
+                            value = draft.name,
+                            onValueChange = viewModel::updateJobRename,
+                            singleLine = true,
+                            label = { Text(uiText(lang, "job_name"), fontSize = 11.sp) },
+                            placeholder = { Text(draft.jobId, fontSize = 12.sp) },
+                            colors = rankoFieldColors(),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Text(text = uiText(lang, "rename_note"), color = colors.textDim, fontSize = 10.sp)
+                        state.jobsError?.let { Text(it, color = colors.qualityRed, fontSize = 11.sp) }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            CapsuleButton(
+                                text = uiText(lang, "save"),
+                                onClick = viewModel::saveJobRename,
+                                enabled = state.jobActionBusy == "",
+                                emphasized = true,
+                                compact = true,
+                            )
+                            CapsuleButton(
+                                text = uiText(lang, "no"),
+                                onClick = viewModel::dismissJobRename,
+                                compact = true,
                             )
                         }
                     }
@@ -657,7 +715,7 @@ private fun JobRow(
                 )
             }
             Text(
-                text = job.id,
+                text = jobTitle(job.name, job.id),
                 color = colors.text,
                 fontSize = 12.sp,
                 maxLines = 1,
@@ -680,9 +738,11 @@ private fun JobRow(
                     modifier = Modifier.width(64.dp),
                 )
                 Text(
-                    text = job.id,
+                    text = jobTitle(job.name, job.id),
                     color = colors.text,
                     fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
                 Text(

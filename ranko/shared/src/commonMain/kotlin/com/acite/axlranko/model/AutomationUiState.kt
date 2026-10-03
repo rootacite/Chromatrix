@@ -12,10 +12,11 @@ import com.acite.axlranko.prompt.PromptSpec
 import com.acite.axlranko.prompt.WizardModel
 import com.acite.axlranko.prompt.defaultSpec
 
-/** The Automation page's three areas, in rail order. */
+/** The Automation page's areas, in rail order. */
 enum class AutomationSection(val title: String) {
     Prompts("Prompts"),
     ComfyUi("ComfyUI"),
+    Universal("Universal (Beta)"),
     Gallery("Gallery"),
 }
 
@@ -42,6 +43,8 @@ data class AutomationSettingsDraft(
     val count: String = "1",
     val poll: String = "0.5",
     val outputDir: String = "",
+    val universalLora: String = "",
+    val universalTrigger: String = "",
 ) {
     companion object {
         fun of(settings: AutomationSettings): AutomationSettingsDraft = AutomationSettingsDraft(
@@ -51,6 +54,8 @@ data class AutomationSettingsDraft(
             count = settings.count.toString(),
             poll = settings.poll.toString(),
             outputDir = settings.outputDir,
+            universalLora = settings.universalLora,
+            universalTrigger = settings.universalTrigger,
         )
     }
 
@@ -61,6 +66,8 @@ data class AutomationSettingsDraft(
         count = count.filter { it.isDigit() }.toIntOrNull() ?: 1,
         poll = poll.toDoubleOrNull() ?: 0.5,
         outputDir = outputDir.trim(),
+        universalLora = universalLora.trim(),
+        universalTrigger = universalTrigger.trim(),
     )
 }
 
@@ -102,7 +109,7 @@ data class AutomationUiState(
     val generateError: String? = null,
     val warnings: List<String> = emptyList(),
     val busy: Boolean = false,
-    /** The prompt list handed to the ComfyUI area. */
+    /** The prompt list handed to ComfyUI and Universal (Beta). */
     val batchInput: List<String> = emptyList(),
 
     // --- ComfyUI section ---
@@ -118,6 +125,8 @@ data class AutomationUiState(
     val workflowsLoading: Boolean = false,
     val workflowCheck: Boolean = false,
     val workflowError: String? = null,
+    /** Name typed for the next job either section starts. Blank keeps the id as the label. */
+    val jobName: String = "",
     val promptSource: PromptSource = PromptSource.CurrentResults,
     val promptSetName: String = "",
     val manualPrompts: String = "",
@@ -126,6 +135,16 @@ data class AutomationUiState(
     val startingJob: Boolean = false,
     val jobError: String? = null,
     val lastJobId: String = "",
+
+    // --- Universal (Beta): its own prompt source; server, count, poll and output stay on [settings] ---
+    val universalSource: PromptSource = PromptSource.CurrentResults,
+    val universalSetName: String = "",
+    val universalManual: String = "",
+    /** `.safetensors` names under the ComfyUI process's `models/loras`. */
+    val loras: List<String> = emptyList(),
+    val loraRoot: String = "",
+    val lorasLoading: Boolean = false,
+    val lorasError: String? = null,
 
     // --- Gallery section ---
     val jobs: List<AutomationJobSummary> = emptyList(),
@@ -140,6 +159,8 @@ data class AutomationUiState(
     val jobActionBusy: String = "",
     /** Job id waiting for the delete confirmation. */
     val pendingDeleteJob: String? = null,
+    /** The rename dialog: which job, and the name being typed. */
+    val renamingJob: JobRenameDraft? = null,
     // --- Gallery: one image / one prompt at a time ---
     /** An image waiting for its confirmation (delete, or a redraw that overwrites it). */
     val pendingImageAction: GalleryImagePrompt? = null,
@@ -176,7 +197,9 @@ data class AutomationUiState(
             if (!stateOk) return@filter false
             if (jobSearch.isBlank()) return@filter true
             val needle = jobSearch.trim().lowercase()
-            job.id.lowercase().contains(needle) || job.workflow.lowercase().contains(needle)
+            job.id.lowercase().contains(needle) ||
+                job.name.lowercase().contains(needle) ||
+                job.workflow.lowercase().contains(needle)
         }
 
     /** Images of the selected job, in the order the runner produced them (absolute paths). */
@@ -197,6 +220,12 @@ fun jobImagePathFor(jobId: String, outputDir: String, name: String): String {
     val root = outputDir.trimEnd('/')
     return "$root/$jobId/images/$name"
 }
+
+/** The label a list shows: the name when the job has one, otherwise its id. */
+fun jobTitle(name: String, id: String): String = name.trim().ifBlank { id }
+
+/** The open rename dialog. A blank [name] clears the label. */
+data class JobRenameDraft(val jobId: String, val name: String)
 
 /** One image of one job — what a per-image action needs to name its target. */
 data class GalleryImageRef(val jobId: String, val promptIndex: Int, val image: String)

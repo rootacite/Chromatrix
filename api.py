@@ -73,7 +73,7 @@ from trainer.runs import (
     safe_name,
     write_chart_view,
 )
-from trainer import automation, blobcodec, comfy, evaluation, fsrpc, genjob
+from trainer import automation, blobcodec, comfy, evaluation, fsrpc, genjob, run_automation
 
 _TAG_BLOCKED = frozenset(
     {
@@ -2055,6 +2055,19 @@ def handle_automation_discover(params: dict[str, Any]) -> dict[str, Any]:
     return comfy.discover()
 
 
+def handle_automation_loras(params: dict[str, Any]) -> dict[str, Any]:
+    """`.safetensors` under the listening ComfyUI's `models/loras`."""
+    server = str(params.get("server") or "").strip()
+    if not server:
+        server = str(automation.load_settings().get("server") or "").strip()
+    if not server:
+        found = comfy.discover()
+        if not found.get("found"):
+            return {"root": "", "loras": [], "error": "no ComfyUI found listening on this machine"}
+        server = str(found.get("url") or "")
+    return comfy.loras_for_server(server)
+
+
 def handle_automation_workflow_list(_params: dict[str, Any]) -> dict[str, Any]:
     settings = automation.load_settings()
     object_info = _automation_object_info(settings["server"])
@@ -2165,6 +2178,11 @@ def handle_automation_job_start(params: dict[str, Any]) -> dict[str, Any]:
             merged[key] = params[key]
     settings = automation.normalize_settings(merged)
 
+    mode = str(params.get("mode") or "").strip()
+    if mode not in ("", run_automation.UNIVERSAL_MODE):
+        raise ValueError("mode must be 'universal' or omitted")
+    universal = mode == run_automation.UNIVERSAL_MODE
+
     prompts_payload = params.get("prompts")
     if prompts_payload in (None, "", []):
         set_name = str(params.get("prompt_set") or "")
@@ -2174,19 +2192,40 @@ def handle_automation_job_start(params: dict[str, Any]) -> dict[str, Any]:
     else:
         prompts = automation.normalize_prompts(prompts_payload)
 
-    workflow_raw = settings["workflow"]
-    if not workflow_raw:
-        raise ValueError("pick a workflow first")
-    workflow_path = Path(workflow_raw).expanduser()
-    if not workflow_path.is_file():
-        workflow_path = automation.workflow_path(Path(workflow_raw).stem)
-    report = _automation_workflow_report(workflow_path, positive_node=settings["positive_node"])
+    lora_name = ""
+    trigger = ""
+    if universal:
+        lora_name = str(params.get("lora_name") or settings.get("universal_lora") or "").strip()
+        trigger = str(params.get("trigger") or settings.get("universal_trigger") or "").strip()
+        if not lora_name:
+            raise ValueError("pick a LoRA file first")
+        if not trigger:
+            raise ValueError("a character trigger is required")
+        workflow_path = run_automation.universal_workflow_path()
+        if not workflow_path.is_file():
+            raise ValueError(f"missing bundled workflow: {workflow_path}")
+        positive_node = run_automation.UNIVERSAL_POSITIVE_NODE
+    else:
+        workflow_raw = settings["workflow"]
+        if not workflow_raw:
+            raise ValueError("pick a workflow first")
+        workflow_path = Path(workflow_raw).expanduser()
+        if not workflow_path.is_file():
+            workflow_path = automation.workflow_path(Path(workflow_raw).stem)
+        positive_node = settings["positive_node"]
+
+    report = _automation_workflow_report(workflow_path, positive_node=positive_node)
     if not report["valid"]:
         raise ValueError(f"workflow is not usable: {report['error']}")
     if settings["count"] > 1 and not report["batch_size_nodes"]:
         raise ValueError("this workflow has no numeric batch_size input, so images per prompt cannot apply")
     if not report["positive_node"]:
         raise ValueError("pick the CLIPTextEncode node that receives the prompt")
+    if universal:
+        try:
+            run_automation.require_universal_nodes(automation.load_workflow(workflow_path))
+        except comfy.ComfyError as exc:
+            raise ValueError(str(exc)) from exc
 
     output_dir = settings["output_dir"]
     running = next(
@@ -2198,9 +2237,11 @@ def handle_automation_job_start(params: dict[str, Any]) -> dict[str, Any]:
 
     stem = Path(workflow_path).stem or "automation"
     job_id = automation.new_job_id(stem)
+    job_name = automation.normalize_job_name(params.get("name"))
     now = time.time()
     job = {
         "id": job_id,
+        "name": job_name,
         "state": automation.STATE_RUNNING,
         "created_at": now,
         "started_at": None,
@@ -2221,6 +2262,10 @@ def handle_automation_job_start(params: dict[str, Any]) -> dict[str, Any]:
             for index, text in enumerate(prompts)
         ],
     }
+    if universal:
+        job["mode"] = run_automation.UNIVERSAL_MODE
+        job["lora_name"] = lora_name
+        job["trigger"] = trigger
     automation.write_job(job, output_dir)
     pid = _spawn_automation_job(job_id, output_dir)
     job = automation.update_job(job_id, output_dir, pid=pid, started_at=now)
@@ -2448,6 +2493,16 @@ def handle_automation_prompt_extend_all(params: dict[str, Any]) -> dict[str, Any
     return _automation_job_detail(updated, settings)
 
 
+def handle_automation_job_rename(params: dict[str, Any]) -> dict[str, Any]:
+    """Set or clear the display name. The id and the job directory stay where they are."""
+    settings = automation.load_settings()
+    job = _automation_job(str(params.get("id") or ""), settings)
+    job_id = str(job.get("id"))
+    output_dir = str(job.get("output_dir") or settings["output_dir"])
+    updated = automation.update_job(job_id, output_dir, name=automation.normalize_job_name(params.get("name")))
+    return _automation_job_detail(updated, settings)
+
+
 def handle_automation_job_prompt_edit(params: dict[str, Any]) -> dict[str, Any]:
     """Rewrite the text of one prompt entry.
 
@@ -2539,6 +2594,7 @@ _HANDLERS = {
     "automation_config_get": handle_automation_config_get,
     "automation_config_save": handle_automation_config_save,
     "automation_discover": handle_automation_discover,
+    "automation_loras": handle_automation_loras,
     "automation_workflow_list": handle_automation_workflow_list,
     "automation_workflow_validate": handle_automation_workflow_validate,
     "automation_workflow_save": handle_automation_workflow_save,
@@ -2558,6 +2614,7 @@ _HANDLERS = {
     "automation_prompt_extend": handle_automation_prompt_extend,
     "automation_prompt_extend_all": handle_automation_prompt_extend_all,
     "automation_job_prompt_edit": handle_automation_job_prompt_edit,
+    "automation_job_rename": handle_automation_job_rename,
     "tag_lexicon": handle_tag_lexicon,
     "dataset_list": handle_dataset_list,
     "caption_write": handle_caption_write,

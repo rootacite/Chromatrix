@@ -292,6 +292,9 @@ val RATING_TAGS: Set<String> = setOf(
     "rating:questionable",
     "rating:explicit",
 )
+/** Appended after assembly. The matrix still may not contribute these words. */
+const val DEFAULT_QUALITY_SUFFIX: String = "best quality, newest, highres"
+
 val QUALITY_TAGS: Set<String> = setOf(
     "masterpiece",
     "best quality",

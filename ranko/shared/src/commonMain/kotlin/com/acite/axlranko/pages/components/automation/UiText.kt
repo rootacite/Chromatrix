@@ -11,6 +11,10 @@ private val UI_TEXT: Map<String, Pair<String, String>> = mapOf(
     "language" to ("界面语言" to "Interface language"),
     "section_prompts" to ("向导、档案与生成结果" to "Wizard, profiles and the prompts they generate"),
     "section_comfy" to ("连接服务、选择工作流，把提示词批量送进去出图" to "Connect, pick a workflow, run the prompt batch"),
+    "section_universal" to (
+        "固定工作流：选择 LoRA 和角色触发词，再跑同一批提示词" to
+            "Fixed workflow: pick a LoRA and a trigger, then run the same batch"
+        ),
     "section_gallery" to ("浏览生成结果：任务、缩略图、单张保存" to "Browse the results: jobs, thumbnails, save one"),
     "placeholder_comfy_1" to (
         "连接服务、上传 API 格式工作流、把提示词批量送进去出图。" to
@@ -46,7 +50,8 @@ private val UI_TEXT: Map<String, Pair<String, String>> = mapOf(
         "还没有生成；在向导末页或总清单点「生成」" to "Nothing generated yet: press Generate"
         ),
     "batch_queue" to (
-        "批量输入队列：{n} 条（在 ComfyUI 区使用）" to "Batch queue: {n} prompts (used in the ComfyUI section)"
+        "批量输入队列：{n} 条（ComfyUI 与 Universal (Beta)）" to
+            "Batch queue: {n} prompts (ComfyUI and Universal (Beta))"
         ),
     "profiles_empty" to (
         "还没有档案；在总清单里「存为档案」即可创建" to "No profile yet; save one from the list"
@@ -75,7 +80,27 @@ private val UI_TEXT: Map<String, Pair<String, String>> = mapOf(
     "copied_one" to ("已复制 1 条" to "Copied 1 prompt"),
     "copied_many" to ("已复制 {n} 条" to "Copied {n} prompts"),
     "saved_to" to ("已保存 {path}" to "Saved {path}"),
-    "sent_to_batch" to ("已交给批量生成：{n} 条" to "Sent {n} prompts to the batch queue"),
+    "sent_to_batch" to (
+        "已交给 ComfyUI 和 Universal (Beta)：{n} 条" to
+            "Sent {n} prompts to ComfyUI and Universal (Beta)"
+        ),
+    "lora" to ("LoRA 文件" to "LoRA file"),
+    "lora_hint" to (
+        "列出该 ComfyUI 进程安装目录下 models/loras 里的 .safetensors。" to
+            "The .safetensors under models/loras in that ComfyUI process's install directory."
+        ),
+    "lora_empty" to ("没有找到 .safetensors" to "No .safetensors found"),
+    "trigger" to ("角色触发词" to "Character trigger"),
+    "trigger_hint" to (
+        "替换超分提示词的第一段，其余保持工作流原文。生图提示词整段使用批量输入。" to
+            "Replaces the first segment of the upscale prompt. The rest stays as the workflow wrote it. The generation prompt is the batch line, whole."
+        ),
+    "need_lora" to ("请先选择 LoRA" to "Pick a LoRA first"),
+    "need_trigger" to ("请填写角色触发词" to "Enter a character trigger"),
+    "job_name" to ("任务名称" to "Job name"),
+    "job_name_hint" to ("留空则显示任务 id" to "Blank shows the job id"),
+    "rename_job" to ("重命名" to "Rename"),
+    "rename_note" to ("只改显示名，目录和 id 不变。留空则回到 id。" to "Changes the label. The folder and id stay. Blank shows the id again."),
     "profile_deleted" to ("已删除档案 {name}" to "Deleted profile {name}"),
     "need_name" to ("请输入档案名称" to "Enter a profile name"),
     "save_failed" to ("保存失败" to "Save failed"),

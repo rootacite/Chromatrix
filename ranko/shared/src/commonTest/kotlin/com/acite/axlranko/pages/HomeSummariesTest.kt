@@ -128,6 +128,23 @@ class HomeSummariesTest {
     }
 
     @Test
+    fun aJobNameReplacesTheWorkflowFileOnTheHomeCard() {
+        val home = automationHome(
+            listOf(
+                AutomationJobSummary(
+                    id = "now",
+                    name = "evening batch",
+                    state = "done",
+                    done = 2,
+                    total = 2,
+                    workflow = "/wf/batch.json",
+                ),
+            ),
+        )
+        assertEquals("evening batch · 2/2", home.detail)
+    }
+
+    @Test
     fun automationImagesAreTheNewestOnes() {
         val home = automationHome(
             listOf(

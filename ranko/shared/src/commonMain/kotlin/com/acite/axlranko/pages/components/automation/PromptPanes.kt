@@ -634,6 +634,7 @@ private fun PromptSaveDialog(state: AutomationUiState, viewModel: AutomationScre
 
 private fun editorActions(viewModel: AutomationScreenViewModel): PromptEditorActions = PromptEditorActions(
     setCharacter = viewModel::setCharacter,
+    setQualitySuffix = viewModel::setQualitySuffix,
     setMode = viewModel::setMode,
     setExposure = viewModel::setExposure,
     setClothingAny = viewModel::setClothingAny,

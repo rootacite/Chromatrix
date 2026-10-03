@@ -36,6 +36,7 @@ import com.acite.axlranko.pages.components.automation.GalleryPane
 import com.acite.axlranko.pages.components.ImagePreviewOverlay
 import com.acite.axlranko.pages.components.PreviewImage
 import com.acite.axlranko.pages.components.automation.PromptsPane
+import com.acite.axlranko.pages.components.automation.UniversalPane
 import com.acite.axlranko.prompt.defaultSpec
 import com.acite.axlranko.ui.theme.RankoTheme
 import com.acite.axlranko.util.PathPicker
@@ -100,6 +101,7 @@ class AutomationPanesRenderTest {
                             when (current.section) {
                                 AutomationSection.Prompts -> PromptsPane(current, viewModel, warning = null)
                                 AutomationSection.ComfyUi -> ComfyPane(current, viewModel)
+                                AutomationSection.Universal -> UniversalPane(current, viewModel)
                                 AutomationSection.Gallery -> GalleryPane(current, viewModel)
                             }
                         }
@@ -229,6 +231,15 @@ class AutomationPanesRenderTest {
                 prompts,
                 comfySection,
                 comfyEmpty,
+                AutomationUiState(
+                    section = AutomationSection.Universal,
+                    settings = AutomationSettingsDraft(
+                        server = "http://127.0.0.1:8188",
+                        universalLora = "Yui_s002850.safetensors",
+                        universalTrigger = "(yui_character:1.1)",
+                    ),
+                    comfy = comfy,
+                ),
                 AutomationUiState(section = AutomationSection.ComfyUi, workflowsLoading = true),
                 gallery,
                 galleryPreview,

@@ -197,8 +197,9 @@ If the helper process can't be reached (and no data has loaded), a full-screen e
 ### Automation — prompt wizard, ComfyUI batch, gallery
 
 The tab that writes prompts (or takes them from a saved set) and pushes them through a ComfyUI
-workflow, then shows what came out. Its three sections sit in a rail on the left; the language
-chips (中文 / EN) at the top right switch the whole page, and it opens in English.
+workflow, then shows what came out. Its sections sit in a rail on the left (Prompts, ComfyUI,
+Universal (Beta), Gallery); the language chips (中文 / EN) at the top right switch the whole page,
+and it opens in English.
 
 Everything the section remembers lives under `automation/` in the repo root (gitignored):
 `settings.json`, `workflows/*.json` (workflows you uploaded), `prompts/*.txt` (saved prompt sets)
@@ -235,7 +236,10 @@ of the app uses, so no new image path exists.
 - **Wizard**: 16 steps (character, mode, exposure, clothing, chest, belly, figure, face, scene,
   family, ratio, stages, pussy shape, pussy hair, pose, count) with a step list on the left,
   back/next at the bottom, and pages the current mode or exposure does not use skipped (`nude` drops
-  clothing; only `sex` has family / ratio / stages / pussy shape / pussy hair). The face page is five
+  clothing; only `sex` has family / ratio / stages / pussy shape / pussy hair). The character step
+  also has a quality suffix, appended after the matrix filter, defaulting to
+  `best quality, newest, highres`; clearing it adds nothing, and a profile that does not mention
+  `quality_suffix` loads that default. The face page is five
   groups (总表情, 视线, 眼睛状态, 嘴状态, 脸红, 眼泪 here named
   Expression / Gaze / Eye state / Mouth / Blush / Tears), each with **any** (roll one of the whole
   mode pool), **off**, or a tick list that becomes that group's candidate pool — one tag per group
@@ -254,8 +258,9 @@ of the app uses, so no new image path exists.
   a row opens that step's editor in a dialog and returns to the list. **Generate**, **Save as
   profile** and **Back to the wizard** sit at the bottom.
 - **Generated prompts**: the list, with a copy button per line, **Copy all**, **Download .txt** (the
-  desktop save dialog or a browser download), and **Send to batch**, which hands the list to the
-  ComfyUI section. The seed field is on the count step: blank means a fresh random seed, and the
+  desktop save dialog or a browser download), and **Send to batch**, which hands the list to both
+  the ComfyUI section and Universal (Beta). Each section can then switch its own source. The seed
+  field is on the count step: blank means a fresh random seed, and the
   result header shows the seed that was used so the same batch can be reproduced.
 
 **ComfyUI** — connect, pick a workflow, run the batch:
@@ -272,7 +277,8 @@ of the app uses, so no new image path exists.
   **Positive-prompt node** lists every `CLIPTextEncode` with a snippet of its current text; the one
   the sampler's `positive` link points at is picked for you and marked as guessed.
 - **Batch**: prompts come from the generated list, a saved prompt set, or a box you type into. Set
-  images per prompt (1–16; refused when the workflow has no numeric `batch_size`), the history poll
+  images per prompt (1–16; refused when the workflow has no numeric `batch_size`), an optional job
+  name, the history poll
   interval, and the output folder (defaults to `automation/jobs`; **Browse** picks it). **Save
   settings** writes `settings.json`, **Start** queues the job, and while one runs the card shows its
   progress with **Cancel**. `Save as prompt set` stores the current list under `automation/prompts/`
@@ -285,13 +291,25 @@ of the app uses, so no new image path exists.
   seed, `prompt_id` and prompt text — `PreviewImage` nodes are ignored. Cancelling keeps whatever
   already landed.
 
+**Universal (Beta)** — the same server, batch and Gallery as ComfyUI, with the workflow fixed to
+`beta/Chromatrix.json`. There is no workflow picker and no positive-node picker. The card asks for
+a LoRA, chosen from a list of the `.safetensors` under `models/loras` in the install directory
+of the ComfyUI process (the listen port's process; its cwd, or the directory of `main.py` when
+that is where `models/loras` lives), and a character trigger. On each queued prompt the runner sets node `207:219`'s
+`lora_name`, replaces the first comma-separated segment of node `198:259` (the upscale prompt)
+with the trigger, and writes the batch line into node `215` whole. LoRA and trigger are stored in
+`settings.json` as `universal_lora` and `universal_trigger`. Starting without either is refused.
+Redraws and appends reuse the values stored on that job.
+
 **Gallery** — the jobs and their images:
 
-- Newest first, with state, `done/total`, image count and elapsed time; filter chips (all / running
+- Newest first, with state, the job's name (or its id when it has none), `done/total`, image count
+  and elapsed time; filter chips (all / running
   / done / failed / cancelled) and a search box over the job id and workflow path. The list itself
   scrolls inside its card (a history is unbounded, and every job ever run would otherwise push the
   gallery below it off the page); the filter chips, the search box and the job below stay put.
-- The selected job offers **Append…** (add N images to *every* prompt, see below), **Cancel**
+- The selected job offers **Rename** (the display name only; the id and the folder stay, and a blank
+  name shows the id again), **Append…** (add N images to *every* prompt, see below), **Cancel**
   (SIGTERMs the runner), **Retry failed** (runs only the prompts that produced no image, in the same
   folder), **Save records .txt** (one line per image: name, seed, `prompt_id`, prompt), **Open
   folder** (desktop) and **Delete** (asks first; removes the job directory).

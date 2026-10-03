@@ -42,6 +42,11 @@ object ManifestModel {
 
         val rows = mutableListOf(
             ManifestRow("character", label("character"), spec.character),
+            ManifestRow(
+                "character",
+                label("suffix"),
+                spec.qualitySuffix.ifBlank { t(lang, "pick_off") },
+            ),
             ManifestRow("mode", label("mode"), spec.mode.wire),
             ManifestRow("exposure", label("exposure"), spec.exposure.joinToString(", ")),
         )

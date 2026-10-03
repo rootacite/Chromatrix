@@ -121,7 +121,9 @@ private fun samplingLine(status: TrainStatus): String {
 internal fun automationHome(jobs: List<AutomationJobSummary>): AutomationHome {
     val job = jobs.firstOrNull { it.state == "running" } ?: jobs.firstOrNull()
         ?: return AutomationHome(statusKey = "idle", statusLabel = "Idle", detail = "No jobs")
-    val name = job.workflow.substringAfterLast('/').ifBlank { job.id }
+    val name = job.name.trim().ifBlank {
+        job.workflow.substringAfterLast('/').ifBlank { job.id }
+    }
     val failed = if (job.failed > 0) " · ${job.failed} failed" else ""
     val labeled = trainStatusLabel(job.state)
     val images = job.recentPaths.ifEmpty { job.previewPaths }.takeLast(HOME_JOB_IMAGE_LIMIT)

@@ -16,6 +16,7 @@ import com.acite.axlranko.model.GalleryImageAction
 import com.acite.axlranko.model.GalleryImagePrompt
 import com.acite.axlranko.model.GalleryImageRef
 import com.acite.axlranko.model.JobFilter
+import com.acite.axlranko.model.JobRenameDraft
 import com.acite.axlranko.model.PromptAppendAllDraft
 import com.acite.axlranko.model.PromptEditDraft
 import com.acite.axlranko.model.PromptExtendDraft
@@ -51,6 +52,7 @@ import dev.zacsweers.metro.Inject
 import dev.zacsweers.metrox.viewmodel.ViewModelKey
 import kotlin.random.Random
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.coroutines.Job
@@ -135,6 +137,7 @@ class AutomationScreenViewModel(
 
     fun selectSection(section: AutomationSection) {
         _uiState.update { it.copy(section = section) }
+        if (section == AutomationSection.Universal) refreshLoras()
     }
 
     fun setLanguage(language: PromptLang) {
@@ -331,6 +334,8 @@ class AutomationScreenViewModel(
 
     fun setCharacter(value: String) = edit { it.character = value }
 
+    fun setQualitySuffix(value: String) = edit { it.qualitySuffix = value }
+
     fun setMode(mode: PromptMode) = edit { WizardModel.applyModeChange(it, mode) }
 
     /** An empty exposure falls back to the mode's default when a prompt is drawn, like the CLI. */
@@ -508,6 +513,7 @@ class AutomationScreenViewModel(
             it.copy(
                 batchInput = results,
                 promptSource = PromptSource.CurrentResults,
+                universalSource = PromptSource.CurrentResults,
                 notice = uiText(it.language, "sent_to_batch").replace("{n}", results.size.toString()),
             )
         }
@@ -528,6 +534,35 @@ class AutomationScreenViewModel(
         updateSettings { it.copy(poll = value.filter { ch -> ch.isDigit() || ch == '.' }.take(4)) }
 
     fun setSettingsOutputDir(value: String) = updateSettings { it.copy(outputDir = value) }
+
+    fun setJobName(value: String) {
+        _uiState.update { it.copy(jobName = value.take(64), jobError = null) }
+    }
+
+    fun setUniversalLora(value: String) = updateSettings { it.copy(universalLora = value) }
+
+    fun setUniversalTrigger(value: String) = updateSettings { it.copy(universalTrigger = value) }
+
+    /** Lists `.safetensors` under `models/loras` of the ComfyUI process for the current server. */
+    fun refreshLoras() {
+        val server = _uiState.value.settings.server.trim()
+        viewModelScope.launch {
+            _uiState.update { it.copy(lorasLoading = true, lorasError = null) }
+            try {
+                val listed = ipc.automationLoras(server)
+                _uiState.update {
+                    it.copy(
+                        lorasLoading = false,
+                        loras = listed.loras,
+                        loraRoot = listed.root,
+                        lorasError = listed.error.ifBlank { null },
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(lorasLoading = false, lorasError = e.message ?: "读取 LoRA 失败") }
+            }
+        }
+    }
 
     /** Browse on the machine that runs the helper (the desktop dialog, or the web path picker). */
     suspend fun browseOutputDir() {
@@ -599,7 +634,10 @@ class AutomationScreenViewModel(
                         },
                     )
                 }
-                if (found.found) refreshWorkflows()
+                if (found.found) {
+                    refreshWorkflows()
+                    refreshLoras()
+                }
             } catch (e: Exception) {
                 _uiState.update { it.copy(discovering = false, discoverError = e.message ?: "探测失败") }
             }
@@ -714,6 +752,18 @@ class AutomationScreenViewModel(
         _uiState.update { it.copy(manualPrompts = text, jobError = null) }
     }
 
+    fun setUniversalSource(source: PromptSource) {
+        _uiState.update { it.copy(universalSource = source, jobError = null) }
+    }
+
+    fun setUniversalSetName(name: String) {
+        _uiState.update { it.copy(universalSetName = name, jobError = null) }
+    }
+
+    fun setUniversalManual(text: String) {
+        _uiState.update { it.copy(universalManual = text, jobError = null) }
+    }
+
     fun refreshPromptSets() {
         viewModelScope.launch {
             try {
@@ -722,6 +772,7 @@ class AutomationScreenViewModel(
                     state.copy(
                         promptSets = listed.prompts,
                         promptSetName = state.promptSetName.ifBlank { listed.prompts.firstOrNull()?.name.orEmpty() },
+                        universalSetName = state.universalSetName.ifBlank { listed.prompts.firstOrNull()?.name.orEmpty() },
                     )
                 }
             } catch (e: Exception) {
@@ -730,9 +781,10 @@ class AutomationScreenViewModel(
         }
     }
 
-    fun savePromptSet(name: String) {
+    fun savePromptSet(name: String, manual: String? = null) {
         val state = _uiState.value
-        val text = state.manualPrompts.ifBlank { promptExportText(state.results) }
+        val typed = manual ?: state.manualPrompts
+        val text = typed.ifBlank { promptExportText(state.results) }
         viewModelScope.launch {
             try {
                 val saved = ipc.automationPromptSave(name, text)
@@ -757,6 +809,7 @@ class AutomationScreenViewModel(
                     state.copy(
                         promptSets = state.promptSets.filterNot { it.name == name },
                         promptSetName = if (state.promptSetName == name) "" else state.promptSetName,
+                        universalSetName = if (state.universalSetName == name) "" else state.universalSetName,
                     )
                 }
             } catch (e: Exception) {
@@ -768,11 +821,7 @@ class AutomationScreenViewModel(
     /** Starts a batch job from the chosen prompt source. */
     fun startJob() {
         val state = _uiState.value
-        val (prompts, setName) = when (state.promptSource) {
-            PromptSource.CurrentResults -> state.results to ""
-            PromptSource.SavedSet -> emptyList<String>() to state.promptSetName
-            PromptSource.Manual -> manualPrompts(state.manualPrompts) to ""
-        }
+        val (prompts, setName) = chosenPrompts(state.promptSource, state.promptSetName, state.manualPrompts)
         if (prompts.isEmpty() && setName.isBlank()) {
             _uiState.update { it.copy(jobError = uiText(it.language, "no_prompts")) }
             return
@@ -784,7 +833,7 @@ class AutomationScreenViewModel(
                 val started = ipc.automationJobStart(
                     prompts = prompts,
                     promptSet = setName,
-                    overrides = jsonOverrides(settings),
+                    overrides = jsonOverrides(settings, state.jobName),
                 )
                 _uiState.update {
                     it.copy(
@@ -801,16 +850,81 @@ class AutomationScreenViewModel(
         }
     }
 
+    /** The bundled workflow. LoRA name and trigger are required; the ComfyUI workflow selection is not. */
+    fun startUniversalJob() {
+        val state = _uiState.value
+        val settings = state.settings.toSettings()
+        val missing = when {
+            settings.universalLora.isBlank() -> "need_lora"
+            settings.universalTrigger.isBlank() -> "need_trigger"
+            else -> null
+        }
+        if (missing != null) {
+            _uiState.update { it.copy(jobError = uiText(it.language, missing)) }
+            return
+        }
+        val (prompts, setName) = chosenPrompts(state.universalSource, state.universalSetName, state.universalManual)
+        if (prompts.isEmpty() && setName.isBlank()) {
+            _uiState.update { it.copy(jobError = uiText(it.language, "no_prompts")) }
+            return
+        }
+        viewModelScope.launch {
+            _uiState.update { it.copy(startingJob = true, jobError = null) }
+            try {
+                val started = ipc.automationJobStart(
+                    prompts = prompts,
+                    promptSet = setName,
+                    overrides = universalOverrides(settings, state.jobName),
+                )
+                _uiState.update {
+                    it.copy(
+                        startingJob = false,
+                        lastJobId = started.job.id,
+                        selectedJobId = started.job.id,
+                        notice = "${uiText(it.language, "job_started")}: ${started.job.id}",
+                    )
+                }
+                refreshJobs()
+            } catch (e: Exception) {
+                _uiState.update { it.copy(startingJob = false, jobError = e.message ?: "启动任务失败") }
+            }
+        }
+    }
+
+    private fun chosenPrompts(source: PromptSource, setName: String, manual: String): Pair<List<String>, String> =
+        when (source) {
+            PromptSource.CurrentResults -> _uiState.value.results to ""
+            PromptSource.SavedSet -> emptyList<String>() to setName
+            PromptSource.Manual -> manualPrompts(manual) to ""
+        }
+
     private fun manualPrompts(text: String): List<String> =
         text.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
 
-    private fun jsonOverrides(settings: AutomationSettings): JsonObject = buildJsonObject {
+    private fun universalOverrides(settings: AutomationSettings, name: String): JsonObject = buildJsonObject {
+        if (settings.server.isNotBlank()) put("server", settings.server)
+        put("mode", "universal")
+        put("lora_name", settings.universalLora)
+        put("trigger", settings.universalTrigger)
+        put("count", settings.count)
+        put("poll", settings.poll)
+        if (settings.outputDir.isNotBlank()) put("output_dir", settings.outputDir)
+        putJobName(name)
+    }
+
+    private fun jsonOverrides(settings: AutomationSettings, name: String): JsonObject = buildJsonObject {
         if (settings.server.isNotBlank()) put("server", settings.server)
         if (settings.workflow.isNotBlank()) put("workflow", settings.workflow)
         if (settings.positiveNode.isNotBlank()) put("positive_node", settings.positiveNode)
         put("count", settings.count)
         put("poll", settings.poll)
         if (settings.outputDir.isNotBlank()) put("output_dir", settings.outputDir)
+        putJobName(name)
+    }
+
+    private fun JsonObjectBuilder.putJobName(name: String) {
+        val trimmed = name.trim()
+        if (trimmed.isNotEmpty()) put("name", trimmed)
     }
 
     // --- Gallery ---
@@ -916,6 +1030,44 @@ class AutomationScreenViewModel(
 
     fun dismissDeleteJob() {
         _uiState.update { it.copy(pendingDeleteJob = null) }
+    }
+
+    fun openJobRename(id: String) {
+        val current = _uiState.value.jobs.firstOrNull { it.id == id }?.name
+            ?: _uiState.value.jobDetail?.takeIf { it.id == id }?.name
+            ?: ""
+        _uiState.update { it.copy(renamingJob = JobRenameDraft(id, current), jobsError = null) }
+    }
+
+    fun updateJobRename(value: String) {
+        _uiState.update { state ->
+            val draft = state.renamingJob ?: return@update state
+            state.copy(renamingJob = draft.copy(name = value.take(64)))
+        }
+    }
+
+    fun dismissJobRename() {
+        _uiState.update { it.copy(renamingJob = null) }
+    }
+
+    fun saveJobRename() {
+        val draft = _uiState.value.renamingJob ?: return
+        viewModelScope.launch {
+            _uiState.update { it.copy(jobActionBusy = draft.jobId, jobsError = null) }
+            try {
+                val detail = ipc.automationJobRename(draft.jobId, draft.name.trim())
+                _uiState.update {
+                    it.copy(
+                        jobActionBusy = "",
+                        renamingJob = null,
+                        jobDetail = if (it.selectedJobId == detail.id) detail else it.jobDetail,
+                    )
+                }
+                refreshJobs()
+            } catch (e: Exception) {
+                _uiState.update { it.copy(jobActionBusy = "", jobsError = e.message ?: "重命名失败") }
+            }
+        }
     }
 
     fun deleteJob(id: String) {

@@ -615,6 +615,11 @@ object PromptGenerator {
             if (!seen.add(key)) continue
             out.add(tag)
         }
+        // After the filter on purpose: the matrix may not add quality tags, the user suffix may.
+        for (tag in splitTags(spec.qualitySuffix)) {
+            if (!seen.add(tag.lowercase())) continue
+            out.add(tag)
+        }
         return out.joinToString(", ")
     }
 

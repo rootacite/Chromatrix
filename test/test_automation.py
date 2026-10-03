@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from PIL import Image
 
 import api
-from trainer import automation, comfy
+from trainer import automation, comfy, run_automation
 
 REPO = Path(__file__).resolve().parent.parent
 RUNNER = REPO / "trainer" / "run_automation.py"
@@ -58,6 +58,22 @@ def stub_workflow() -> dict:
         "5": {"class_type": "SaveImage", "inputs": {"images": ["4", 0], "filename_prefix": "stub"}},
         "6": {"class_type": "PreviewImage", "inputs": {"images": ["4", 0]}},
     }
+
+
+def universal_mini_workflow() -> dict:
+    """The stub graph plus the three nodes a Universal job rewrites. SaveImage stays node 5."""
+    workflow = stub_workflow()
+    workflow["215"] = {"class_type": "CLIPTextEncode", "inputs": {"text": "old prompt", "clip": ["1", 1]}}
+    workflow["216"] = {"class_type": "CLIPTextEncode", "inputs": {"text": "worst quality", "clip": ["1", 1]}}
+    workflow["207:219"] = {
+        "class_type": "LoraLoader",
+        "inputs": {"lora_name": "old.safetensors", "strength_model": 1, "strength_clip": 1},
+    }
+    workflow["198:259"] = {
+        "class_type": "CLIPTextEncode",
+        "inputs": {"text": "(yui_character:1.1), best quality, anime illustration", "clip": ["1", 1]},
+    }
+    return workflow
 
 
 STUB_OBJECT_INFO = {
@@ -583,6 +599,72 @@ class RunnerTest(unittest.TestCase):
         seeds = {p["seed"] for p in job["prompts"]}
         self.assertEqual(2, len(seeds))
 
+    def test_universal_mode_patches_lora_and_the_upscale_prompt(self):
+        path = self.root / "universal.json"
+        path.write_text(json.dumps(universal_mini_workflow()), encoding="utf-8")
+        job_id = automation.new_job_id("Chromatrix")
+        automation.write_job(
+            {
+                "id": job_id,
+                "state": automation.STATE_RUNNING,
+                "created_at": time.time(),
+                "server": self.stub.url,
+                "workflow_path": str(path),
+                "positive_node": "215",
+                "mode": "universal",
+                "lora_name": "Yui_s002850.safetensors",
+                "trigger": "(yui_character:1.1)",
+                "count": 1,
+                "poll": 0.1,
+                "output_dir": str(self.output_dir),
+                "prompts": [
+                    {"index": 0, "text": "one line", "state": automation.PROMPT_STATE_PENDING, "images": []}
+                ],
+            },
+            self.output_dir,
+        )
+        proc, job = self._run(job_id)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertEqual(automation.STATE_DONE, job["state"], job.get("error"))
+        queued = self.stub.queued[0]
+        self.assertEqual("one line", queued["215"]["inputs"]["text"])
+        self.assertEqual("worst quality", queued["216"]["inputs"]["text"])
+        self.assertEqual("placeholder", queued["2"]["inputs"]["text"])
+        self.assertEqual("Yui_s002850.safetensors", queued["207:219"]["inputs"]["lora_name"])
+        self.assertEqual(
+            "(yui_character:1.1), best quality, anime illustration",
+            queued["198:259"]["inputs"]["text"],
+        )
+
+    def test_a_job_without_universal_mode_leaves_those_nodes_alone(self):
+        path = self.root / "universal.json"
+        path.write_text(json.dumps(universal_mini_workflow()), encoding="utf-8")
+        job_id = automation.new_job_id("plain")
+        automation.write_job(
+            {
+                "id": job_id,
+                "state": automation.STATE_RUNNING,
+                "created_at": time.time(),
+                "server": self.stub.url,
+                "workflow_path": str(path),
+                "positive_node": "2",
+                "count": 1,
+                "poll": 0.1,
+                "output_dir": str(self.output_dir),
+                "prompts": [
+                    {"index": 0, "text": "plain line", "state": automation.PROMPT_STATE_PENDING, "images": []}
+                ],
+            },
+            self.output_dir,
+        )
+        proc, job = self._run(job_id)
+        self.assertEqual(0, proc.returncode, proc.stderr)
+        self.assertEqual(automation.STATE_DONE, job["state"], job.get("error"))
+        queued = self.stub.queued[0]
+        self.assertEqual("plain line", queued["2"]["inputs"]["text"])
+        self.assertEqual("old.safetensors", queued["207:219"]["inputs"]["lora_name"])
+        self.assertTrue(queued["198:259"]["inputs"]["text"].startswith("(yui_character:1.1),"))
+
     def test_a_single_seed_drives_every_seed_input(self):
         workflow = stub_workflow()
         workflow["9"] = {"class_type": "SeedNode", "inputs": {"seed": 5}}
@@ -963,6 +1045,67 @@ class AutomationApiTest(unittest.TestCase):
         self.assertEqual(job_id, deleted["id"])
         self.assertEqual([], api.dispatch("automation_job_list", {})["jobs"])
 
+    def test_a_job_name_is_a_label_and_rename_keeps_the_directory(self):
+        self._settings()
+        with self.assertRaises(ValueError):
+            api.dispatch("automation_job_start", {"prompts": ["named"], "name": "a/b"})
+        self.assertEqual([], automation.list_jobs(self.output_dir))
+        started = api.dispatch(
+            "automation_job_start", {"prompts": ["named"], "name": "evening batch"}
+        )
+        job_id = started["job"]["id"]
+        self.assertEqual("evening batch", started["job"]["name"])
+        self.assertNotIn("evening", job_id)
+        self._wait_for(job_id)
+        renamed = api.dispatch("automation_job_rename", {"id": job_id, "name": "morning"})
+        self.assertEqual("morning", renamed["name"])
+        self.assertEqual(job_id, renamed["id"])
+        self.assertTrue((self.output_dir / job_id).is_dir())
+        cleared = api.dispatch("automation_job_rename", {"id": job_id, "name": "  "})
+        self.assertEqual("", cleared["name"])
+        listed = api.dispatch("automation_job_list", {})["jobs"]
+        self.assertEqual("", listed[0]["name"])
+        api.dispatch("automation_job_delete", {"id": job_id})
+
+    def test_universal_start_patches_the_bundled_workflow(self):
+        self._settings(workflow="")
+        with self.assertRaises(ValueError):
+            api.dispatch(
+                "automation_job_start",
+                {"prompts": ["x"], "mode": "universal", "trigger": "yui_character"},
+            )
+        with self.assertRaises(ValueError):
+            api.dispatch(
+                "automation_job_start",
+                {"prompts": ["x"], "mode": "universal", "lora_name": "Yui.safetensors"},
+            )
+        self.assertEqual([], automation.list_jobs(self.output_dir))
+        started = api.dispatch(
+            "automation_job_start",
+            {
+                "prompts": ["one line"],
+                "mode": "universal",
+                "lora_name": "Yui_s002850.safetensors",
+                "trigger": "kano_character",
+            },
+        )
+        detail = self._wait_for(started["job"]["id"])
+        self.assertEqual("universal", detail["mode"])
+        self.assertEqual("215", detail["positive_node"])
+        self.assertTrue(str(detail["workflow_path"]).endswith("beta/Chromatrix.json"))
+        self.assertEqual("Yui_s002850.safetensors", detail["lora_name"])
+        self.assertEqual("kano_character", detail["trigger"])
+        self.assertTrue(self.stub.queued, detail.get("error"))
+        queued = self.stub.queued[0]
+        original = json.loads((REPO / "beta" / "Chromatrix.json").read_text(encoding="utf-8"))
+        self.assertEqual("one line", queued["215"]["inputs"]["text"])
+        self.assertEqual(original["216"]["inputs"]["text"], queued["216"]["inputs"]["text"])
+        self.assertEqual("Yui_s002850.safetensors", queued["207:219"]["inputs"]["lora_name"])
+        _head, sep, tail = str(original["198:259"]["inputs"]["text"]).partition(",")
+        self.assertTrue(sep)
+        self.assertEqual("kano_character" + sep + tail, queued["198:259"]["inputs"]["text"])
+        api.dispatch("automation_job_delete", {"id": started["job"]["id"]})
+
     def test_start_refuses_without_prompts_or_a_workflow(self):
         self._settings()
         with self.assertRaises(ValueError):
@@ -1208,6 +1351,92 @@ class AutomationApiTest(unittest.TestCase):
                 return True
             time.sleep(0.05)
         self.fail("the condition never came true")
+
+
+class UniversalPatchTest(unittest.TestCase):
+    def test_the_trigger_replaces_only_the_first_segment(self):
+        workflow = universal_mini_workflow()
+        run_automation.apply_universal(workflow, "subdir/Yui.safetensors", "yui_character, 1girl")
+        self.assertEqual("subdir/Yui.safetensors", workflow["207:219"]["inputs"]["lora_name"])
+        self.assertEqual(
+            "yui_character, 1girl, best quality, anime illustration",
+            workflow["198:259"]["inputs"]["text"],
+        )
+        self.assertEqual("old prompt", workflow["215"]["inputs"]["text"])
+
+    def test_a_missing_comma_or_name_is_refused(self):
+        broken = universal_mini_workflow()
+        broken["198:259"]["inputs"]["text"] = "no comma here"
+        with self.assertRaises(comfy.ComfyError):
+            run_automation.apply_universal(broken, "a.safetensors", "trigger")
+        with self.assertRaises(comfy.ComfyError):
+            run_automation.apply_universal(universal_mini_workflow(), "", "trigger")
+        with self.assertRaises(comfy.ComfyError):
+            run_automation.apply_universal(universal_mini_workflow(), "a.safetensors", "  ")
+
+    def test_the_shipped_workflow_has_the_three_nodes(self):
+        workflow = json.loads((REPO / "beta" / "Chromatrix.json").read_text(encoding="utf-8"))
+        run_automation.require_universal_nodes(workflow)
+        self.assertEqual("LoraLoader", workflow["207:219"]["class_type"])
+        self.assertIn(",", workflow["198:259"]["inputs"]["text"])
+        self.assertEqual("CLIPTextEncode", workflow["215"]["class_type"])
+
+
+class LoraDiscoveryTest(unittest.TestCase):
+    def _proc(self, install: Path, cwd: Path, argv: list[str], port: int = 8188, inode: str = "4242", pid: int = 4321):
+        root = Path(self.tmp.name) / "proc"
+        (root / "net").mkdir(parents=True)
+        port_hex = f"{port:04X}"
+        header = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n"
+        line = (
+            f"   0: 0100007F:{port_hex} 00000000:0000 0A 00000000:00000000 00:00000000 00000000"
+            f"     0        0 {inode} 1 0000000000000000 100 0 0 10 0\n"
+        )
+        (root / "net" / "tcp").write_text(header + line, encoding="utf-8")
+        (root / "net" / "tcp6").write_text(header, encoding="utf-8")
+        proc = root / str(pid)
+        (proc / "fd").mkdir(parents=True)
+        (proc / "fd" / "3").symlink_to(f"socket:[{inode}]")
+        (proc / "cwd").symlink_to(cwd)
+        (proc / "cmdline").write_bytes(b"\0".join(part.encode() for part in argv) + b"\0")
+        (install / "models" / "loras" / "chars").mkdir(parents=True)
+        (install / "models" / "loras" / "Yui_s002850.safetensors").write_bytes(b"lora")
+        (install / "models" / "loras" / "chars" / "Kano.safetensors").write_bytes(b"lora")
+        (install / "models" / "loras" / "note.txt").write_text("no", encoding="utf-8")
+        (install / "models" / "checkpoints").mkdir(parents=True)
+        (install / "models" / "checkpoints" / "base.safetensors").write_bytes(b"ckpt")
+        (install / "main.py").write_text("# comfy\n", encoding="utf-8")
+        return root
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def test_the_process_cwd_lists_only_lora_safetensors(self):
+        install = Path(self.tmp.name) / "ComfyUI"
+        proc = self._proc(install, install, ["python", "main.py"])
+        found = comfy.loras_for_server("http://127.0.0.1:8188", proc_root=str(proc))
+        self.assertEqual(str(install.resolve()), found["root"])
+        self.assertEqual(["chars/Kano.safetensors", "Yui_s002850.safetensors"], found["loras"])
+        self.assertEqual("", found["error"])
+
+    def test_an_absolute_main_py_wins_when_the_cwd_is_not_the_install(self):
+        install = Path(self.tmp.name) / "ComfyUI"
+        home = Path(self.tmp.name) / "home"
+        home.mkdir()
+        proc = self._proc(install, home, ["python", str(install / "main.py"), "--listen"])
+        found = comfy.loras_for_server("127.0.0.1:8188", proc_root=str(proc))
+        self.assertEqual(str(install.resolve()), found["root"])
+        self.assertEqual(2, len(found["loras"]))
+
+    def test_a_port_with_no_process_is_an_error(self):
+        proc = Path(self.tmp.name) / "proc"
+        (proc / "net").mkdir(parents=True)
+        (proc / "net" / "tcp").write_text("sl local_address\n", encoding="utf-8")
+        (proc / "net" / "tcp6").write_text("sl local_address\n", encoding="utf-8")
+        found = comfy.loras_for_server("http://127.0.0.1:8188", proc_root=str(proc))
+        self.assertEqual([], found["loras"])
+        self.assertIn("8188", found["error"])
 
 
 class RealComfyReadOnlyTest(unittest.TestCase):

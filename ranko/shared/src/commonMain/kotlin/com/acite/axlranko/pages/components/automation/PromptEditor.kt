@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.acite.axlranko.prompt.BELLY_LEVELS
 import com.acite.axlranko.prompt.CHEST_LEVELS
+import com.acite.axlranko.prompt.DEFAULT_QUALITY_SUFFIX
 import com.acite.axlranko.prompt.FACE_GROUPS
 import com.acite.axlranko.prompt.FacePick
 import com.acite.axlranko.prompt.MatrixEntry
@@ -66,6 +67,7 @@ import kotlin.math.roundToInt
 /** Everything a prompt page widget needs to write back into the current spec. */
 class PromptEditorActions(
     val setCharacter: (String) -> Unit,
+    val setQualitySuffix: (String) -> Unit,
     val setMode: (PromptMode) -> Unit,
     val setExposure: (String, Boolean) -> Unit,
     val setClothingAny: () -> Unit,
@@ -346,13 +348,25 @@ fun PromptPageEditor(
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
         when (pageKey) {
-            "character" -> OutlinedTextField(
-                value = spec.character,
-                onValueChange = actions.setCharacter,
-                singleLine = true,
-                colors = rankoFieldColors(),
-                modifier = Modifier.fillMaxWidth(),
-            )
+            "character" -> {
+                OutlinedTextField(
+                    value = spec.character,
+                    onValueChange = actions.setCharacter,
+                    singleLine = true,
+                    colors = rankoFieldColors(),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(text = t(lang, "suffix_title"), color = colors.text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                OutlinedTextField(
+                    value = spec.qualitySuffix,
+                    onValueChange = actions.setQualitySuffix,
+                    singleLine = true,
+                    placeholder = { Text(DEFAULT_QUALITY_SUFFIX, fontSize = 12.sp) },
+                    colors = rankoFieldColors(),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                dimHint(t(lang, "suffix_hint"))
+            }
 
             "mode" -> SingleChoice(
                 options = listOf(

@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.acite.axlranko.model.AutomationUiState
 import com.acite.axlranko.model.jobProgress
+import com.acite.axlranko.model.jobTitle
 import com.acite.axlranko.model.PromptSource
 import com.acite.axlranko.pages.AutomationScreenViewModel
 import com.acite.axlranko.ui.SingleLineOrStacked
@@ -74,7 +75,7 @@ fun ComfyPane(
 }
 
 @Composable
-private fun ServerCard(state: AutomationUiState, viewModel: AutomationScreenViewModel) {
+internal fun ServerCard(state: AutomationUiState, viewModel: AutomationScreenViewModel) {
     val colors = rankoColors
     val lang = state.language
     PorcelainCard {
@@ -301,7 +302,21 @@ private fun WorkflowCard(state: AutomationUiState, viewModel: AutomationScreenVi
 }
 
 @Composable
-private fun BatchCard(state: AutomationUiState, viewModel: AutomationScreenViewModel, portrait: Boolean) {
+internal fun BatchCard(
+    state: AutomationUiState,
+    viewModel: AutomationScreenViewModel,
+    portrait: Boolean,
+    source: PromptSource = state.promptSource,
+    onSource: (PromptSource) -> Unit = viewModel::setPromptSource,
+    setName: String = state.promptSetName,
+    onSetName: (String) -> Unit = viewModel::setPromptSetName,
+    manual: String = state.manualPrompts,
+    onManual: (String) -> Unit = viewModel::setManualPrompts,
+    onStart: () -> Unit = viewModel::startJob,
+    starting: Boolean = state.startingJob,
+    error: String? = state.jobError,
+    onSaveSet: (String) -> Unit = { name -> viewModel.savePromptSet(name) },
+) {
     val colors = rankoColors
     val lang = state.language
     val scope = rememberCoroutineScope()
@@ -343,22 +358,22 @@ private fun BatchCard(state: AutomationUiState, viewModel: AutomationScreenViewM
                 }
                 CapsuleChoice(
                     text = uiText(lang, "source_results").replace("{n}", state.results.size.toString()),
-                    selected = state.promptSource == PromptSource.CurrentResults,
-                    onClick = { viewModel.setPromptSource(PromptSource.CurrentResults) },
+                    selected = source == PromptSource.CurrentResults,
+                    onClick = { onSource(PromptSource.CurrentResults) },
                 )
                 CapsuleChoice(
                     text = uiText(lang, "source_set"),
-                    selected = state.promptSource == PromptSource.SavedSet,
-                    onClick = { viewModel.setPromptSource(PromptSource.SavedSet) },
+                    selected = source == PromptSource.SavedSet,
+                    onClick = { onSource(PromptSource.SavedSet) },
                 )
                 CapsuleChoice(
                     text = uiText(lang, "source_manual"),
-                    selected = state.promptSource == PromptSource.Manual,
-                    onClick = { viewModel.setPromptSource(PromptSource.Manual) },
+                    selected = source == PromptSource.Manual,
+                    onClick = { onSource(PromptSource.Manual) },
                 )
             }
 
-            when (state.promptSource) {
+            when (source) {
                 PromptSource.SavedSet -> {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (state.promptSets.isEmpty()) {
@@ -367,8 +382,8 @@ private fun BatchCard(state: AutomationUiState, viewModel: AutomationScreenViewM
                             state.promptSets.forEach { set ->
                                 CapsuleChoice(
                                     text = "${set.name} (${set.count})",
-                                    selected = state.promptSetName == set.name,
-                                    onClick = { viewModel.setPromptSetName(set.name) },
+                                    selected = setName == set.name,
+                                    onClick = { onSetName(set.name) },
                                 )
                             }
                         }
@@ -376,8 +391,8 @@ private fun BatchCard(state: AutomationUiState, viewModel: AutomationScreenViewM
                     }
                 }
                 PromptSource.Manual -> OutlinedTextField(
-                    value = state.manualPrompts,
-                    onValueChange = viewModel::setManualPrompts,
+                    value = manual,
+                    onValueChange = onManual,
                     placeholder = { Text(uiText(lang, "manual_hint"), fontSize = 12.sp) },
                     colors = rankoFieldColors(),
                     modifier = Modifier.fillMaxWidth().heightIn(min = 96.dp),
@@ -431,11 +446,21 @@ private fun BatchCard(state: AutomationUiState, viewModel: AutomationScreenViewM
                 }
             }
 
+            OutlinedTextField(
+                value = state.jobName,
+                onValueChange = viewModel::setJobName,
+                singleLine = true,
+                label = { Text(uiText(lang, "job_name"), fontSize = 11.sp) },
+                placeholder = { Text(uiText(lang, "job_name_hint"), fontSize = 12.sp) },
+                colors = rankoFieldColors(),
+                modifier = Modifier.fillMaxWidth(),
+            )
+
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 CapsuleButton(
-                    text = if (state.startingJob) "…" else uiText(lang, "start_job"),
-                    onClick = viewModel::startJob,
-                    enabled = !state.startingJob,
+                    text = if (starting) "…" else uiText(lang, "start_job"),
+                    onClick = onStart,
+                    enabled = !starting,
                     emphasized = true,
                 )
                 CapsuleButton(
@@ -446,7 +471,7 @@ private fun BatchCard(state: AutomationUiState, viewModel: AutomationScreenViewM
                 val running = state.runningJob
                 if (running != null) {
                     Text(
-                        text = "${running.id} · ${running.done + running.failed}/${running.total}",
+                        text = "${jobTitle(running.name, running.id)} · ${running.done + running.failed}/${running.total}",
                         color = colors.accentBlue,
                         fontSize = 11.sp,
                     )
@@ -469,22 +494,22 @@ private fun BatchCard(state: AutomationUiState, viewModel: AutomationScreenViewM
                 )
                 CapsuleButton(
                     text = uiText(lang, "save_prompt_set"),
-                    onClick = { if (promptSetDraft.isNotBlank()) viewModel.savePromptSet(promptSetDraft.trim()) },
+                    onClick = { if (promptSetDraft.isNotBlank()) onSaveSet(promptSetDraft.trim()) },
                     enabled = promptSetDraft.isNotBlank() &&
-                        (state.results.isNotEmpty() || state.manualPrompts.isNotBlank()),
+                        (state.results.isNotEmpty() || manual.isNotBlank()),
                     compact = true,
                 )
-                if (state.promptSource == PromptSource.SavedSet && state.promptSetName.isNotBlank()) {
+                if (source == PromptSource.SavedSet && setName.isNotBlank()) {
                     CapsuleButton(
                         text = uiText(lang, "delete"),
-                        onClick = { viewModel.deletePromptSet(state.promptSetName) },
+                        onClick = { viewModel.deletePromptSet(setName) },
                         danger = true,
                         compact = true,
                     )
                 }
             }
 
-            state.jobError?.let { Text(it, color = colors.qualityRed, fontSize = 11.sp) }
+            error?.let { Text(it, color = colors.qualityRed, fontSize = 11.sp) }
             state.settingsError?.let { Text(it, color = colors.qualityRed, fontSize = 11.sp) }
             state.promptSetError?.let { Text(it, color = colors.qualityRed, fontSize = 11.sp) }
             state.runningJob?.let { running ->
@@ -507,7 +532,7 @@ private fun BatchCard(state: AutomationUiState, viewModel: AutomationScreenViewM
 }
 
 @Composable
-private fun JobLogCard(state: AutomationUiState, viewModel: AutomationScreenViewModel) {
+internal fun JobLogCard(state: AutomationUiState, viewModel: AutomationScreenViewModel) {
     val colors = rankoColors
     val lang = state.language
     val detail = state.jobDetail ?: return

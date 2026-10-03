@@ -55,6 +55,11 @@ data class PromptSpec(
     var pussyHair: List<String> = emptyList(),
     var face: Map<String, FacePick> = defaultFace(),
     var count: Int = PromptLimits.COUNT_DEFAULT,
+    /**
+     * Tags written after assembly. Empty means none. Missing from a profile means
+     * [DEFAULT_QUALITY_SUFFIX]. The quality-tag filter does not apply to this string.
+     */
+    var qualitySuffix: String = DEFAULT_QUALITY_SUFFIX,
 ) {
     /** A copy that shares no mutable collection, so an editor cannot write through to the original. */
     fun deepCopy(): PromptSpec = copy(

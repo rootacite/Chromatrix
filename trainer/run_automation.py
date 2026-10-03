@@ -45,6 +45,51 @@ except ImportError:
 
 MAX_CONSECUTIVE_FAILURES = 3
 
+# The bundled `beta/Chromatrix.json` graph. Generation text is node 215; the upscale
+# prompt is node 198:259; the LoRA name is node 207:219.
+UNIVERSAL_MODE = "universal"
+UNIVERSAL_POSITIVE_NODE = "215"
+UNIVERSAL_LORA_NODE = "207:219"
+UNIVERSAL_UPSCALE_NODE = "198:259"
+
+
+def universal_workflow_path() -> Path:
+    return automation.repo_root() / "beta" / "Chromatrix.json"
+
+
+def require_universal_nodes(workflow: Mapping[str, Any]) -> None:
+    """The three inputs a Universal job rewrites. Raises before a prompt is queued."""
+    lora = workflow.get(UNIVERSAL_LORA_NODE)
+    lora_inputs = lora.get("inputs") if isinstance(lora, dict) else None
+    if not isinstance(lora_inputs, dict) or "lora_name" not in lora_inputs:
+        raise comfy.ComfyError(f"LoRA node {UNIVERSAL_LORA_NODE!r} has no lora_name input")
+    upscale = workflow.get(UNIVERSAL_UPSCALE_NODE)
+    upscale_inputs = upscale.get("inputs") if isinstance(upscale, dict) else None
+    text = upscale_inputs.get("text") if isinstance(upscale_inputs, dict) else None
+    if not isinstance(text, str) or "," not in text:
+        raise comfy.ComfyError(
+            f"upscale prompt {UNIVERSAL_UPSCALE_NODE!r} has no first segment to replace"
+        )
+    positive = workflow.get(UNIVERSAL_POSITIVE_NODE)
+    positive_inputs = positive.get("inputs") if isinstance(positive, dict) else None
+    if not isinstance(positive_inputs, dict) or "text" not in positive_inputs:
+        raise comfy.ComfyError(f"generation prompt {UNIVERSAL_POSITIVE_NODE!r} has no text input")
+
+
+def apply_universal(workflow: dict[str, Any], lora_name: str, trigger: str) -> None:
+    """Set the LoRA name and the first segment of the upscale prompt. The generation node is separate."""
+    lora = str(lora_name or "").strip()
+    word = str(trigger or "").strip()
+    if not lora:
+        raise comfy.ComfyError("a LoRA name is required")
+    if not word:
+        raise comfy.ComfyError("a character trigger is required")
+    require_universal_nodes(workflow)
+    workflow[UNIVERSAL_LORA_NODE]["inputs"]["lora_name"] = lora
+    text = str(workflow[UNIVERSAL_UPSCALE_NODE]["inputs"]["text"])
+    _head, sep, tail = text.partition(",")
+    workflow[UNIVERSAL_UPSCALE_NODE]["inputs"]["text"] = word + sep + tail
+
 
 class Stop:
     """The runner's stop flag: set by SIGTERM/SIGINT, read between prompts and polls."""
@@ -345,6 +390,12 @@ def run_job(spec_path: Path, only_failed: bool = False, target: Optional[Mapping
                     seed = secrets.randbits(63)
                     workflow = copy.deepcopy(base_workflow)
                     set_positive_prompt(workflow, positive, prompt_text)
+                    if str(spec.get("mode") or "") == UNIVERSAL_MODE:
+                        apply_universal(
+                            workflow,
+                            str(spec.get("lora_name") or ""),
+                            str(spec.get("trigger") or ""),
+                        )
                     set_batch_size(workflow, plan["batch"])
                     changed_seeds = set_seed(workflow, seed)
                     _log(f"[{counter}] seed={seed} count={plan['batch']} seed nodes={changed_seeds}")

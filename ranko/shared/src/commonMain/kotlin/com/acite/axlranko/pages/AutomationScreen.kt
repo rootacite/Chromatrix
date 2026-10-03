@@ -33,6 +33,7 @@ import com.acite.axlranko.model.AutomationUiState
 import com.acite.axlranko.pages.components.automation.ComfyPane
 import com.acite.axlranko.pages.components.automation.GalleryPane
 import com.acite.axlranko.pages.components.automation.PromptsPane
+import com.acite.axlranko.pages.components.automation.UniversalPane
 import com.acite.axlranko.pages.components.automation.uiText
 import com.acite.axlranko.prompt.PromptLang
 import com.acite.axlranko.ui.SingleLineOrStacked
@@ -45,6 +46,7 @@ import dev.zacsweers.metrox.viewmodel.metroViewModel
 private fun sectionDescription(section: AutomationSection, lang: PromptLang): String = when (section) {
     AutomationSection.Prompts -> uiText(lang, "section_prompts")
     AutomationSection.ComfyUi -> uiText(lang, "section_comfy")
+    AutomationSection.Universal -> uiText(lang, "section_universal")
     AutomationSection.Gallery -> uiText(lang, "section_gallery")
 }
 
@@ -145,6 +147,8 @@ private fun AutomationBody(
             )
 
             AutomationSection.ComfyUi -> ComfyPane(state = uiState, viewModel = viewModel, portrait = portrait)
+
+            AutomationSection.Universal -> UniversalPane(state = uiState, viewModel = viewModel, portrait = portrait)
 
             AutomationSection.Gallery -> GalleryPane(state = uiState, viewModel = viewModel, portrait = portrait)
         }

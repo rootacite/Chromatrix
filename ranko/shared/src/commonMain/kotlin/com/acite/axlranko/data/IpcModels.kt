@@ -173,6 +173,8 @@ data class AutomationSettings(
     val count: Int = 1,
     val poll: Double = 0.5,
     @SerialName("output_dir") val outputDir: String = "",
+    @SerialName("universal_lora") val universalLora: String = "",
+    @SerialName("universal_trigger") val universalTrigger: String = "",
 )
 
 @Serializable
@@ -200,6 +202,13 @@ data class ComfyCheckedEntry(
     val url: String = "",
     val ok: Boolean = false,
     val reason: String = "",
+)
+
+@Serializable
+data class ComfyLoraList(
+    val root: String = "",
+    val loras: List<String> = emptyList(),
+    val error: String = "",
 )
 
 @Serializable
@@ -300,6 +309,8 @@ fun imageSeedAt(prompt: JobPromptState, imageIndex: Int): Long? =
 @Serializable
 data class AutomationJobSummary(
     val id: String = "",
+    /** Display name. Empty on a job from before names existed, and the lists then show [id]. */
+    val name: String = "",
     val state: String = "",
     @SerialName("created_at") val createdAt: Double? = null,
     @SerialName("started_at") val startedAt: Double? = null,
@@ -352,6 +363,7 @@ fun jobPassProgress(pass: JobPass): Float =
 @Serializable
 data class AutomationJobDetail(
     val id: String = "",
+    val name: String = "",
     val state: String = "",
     val prompts: List<JobPromptState> = emptyList(),
     val summary: AutomationJobSummary? = null,

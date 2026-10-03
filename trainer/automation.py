@@ -104,6 +104,8 @@ def default_settings() -> dict[str, Any]:
         "count": 1,
         "poll": 0.5,
         "output_dir": str(default_output_dir()),
+        "universal_lora": "",
+        "universal_trigger": "",
     }
 
 
@@ -138,6 +140,14 @@ def validate_name(name: str, what: str = "name") -> str:
     if any(ch in NAME_ILLEGAL or ord(ch) < 32 for ch in trimmed):
         raise ValueError(f'a {what} cannot contain / \\ : * ? " < > |')
     return trimmed
+
+
+def normalize_job_name(name: Any) -> str:
+    """A display name. Blank is allowed and means the Gallery shows the id. Not a directory name."""
+    text = str(name or "").strip()
+    if not text:
+        return ""
+    return validate_name(text, "job name")
 
 
 def safe_name(name: str, fallback: str = "item") -> str:
@@ -197,6 +207,8 @@ def normalize_settings(payload: Mapping[str, Any]) -> dict[str, Any]:
         "count": count,
         "poll": poll,
         "output_dir": str(output),
+        "universal_lora": str(payload.get("universal_lora") or "").strip(),
+        "universal_trigger": str(payload.get("universal_trigger") or "").strip(),
     }
 
 
@@ -692,6 +704,7 @@ def job_summary(job: Mapping[str, Any]) -> dict[str, Any]:
     root = images_dir(str(job.get("id")), output_dir) if job.get("id") else None
     return {
         "id": job.get("id"),
+        "name": str(job.get("name") or ""),
         "state": job.get("state"),
         "created_at": job.get("created_at"),
         "started_at": job.get("started_at"),
