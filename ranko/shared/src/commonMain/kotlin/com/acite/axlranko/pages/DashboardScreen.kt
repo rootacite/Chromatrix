@@ -268,6 +268,7 @@ fun DashboardScreen(
                     Spacer(Modifier.height(4.dp))
                     TrainControlCard(
                         iconOnly = portrait,
+                        portrait = portrait,
                         status = uiState.trainStatus,
                         commandInFlight = uiState.commandInFlight,
                         controlsEnabled = trainingControlsEnabled(uiState),

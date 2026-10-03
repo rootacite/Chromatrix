@@ -31,6 +31,7 @@ import com.acite.axlranko.model.HardwareCpu
 import com.acite.axlranko.model.HardwareGpu
 import com.acite.axlranko.model.HardwareStatus
 import com.acite.axlranko.model.StatisticsUiState
+import com.acite.axlranko.model.TrainSettings
 import com.acite.axlranko.model.TrainStatus
 import com.acite.axlranko.model.UtilsUiState
 import com.acite.axlranko.pages.components.CheckpointRow
@@ -579,6 +580,103 @@ class PortraitLayoutTest {
             landscape.close()
         }
     }
+
+    @Test
+    fun portraitSplitsTheCadenceControlsFromTheSamplingSwitch() {
+        if (GraphicsEnvironment.isHeadless()) return
+        val status = TrainStatus(
+            pid = 4242,
+            status = "training",
+            alive = true,
+            outputName = "rein",
+            runId = "rein_20261004_053000",
+            settings = TrainSettings(
+                saveEveryNSteps = 200,
+                samplingEnabled = true,
+                nextSaveStep = 400,
+            ),
+        )
+        val portrait = scene(320, 820) {
+            Column(Modifier.width(320.dp)) {
+                TrainControlCard(
+                    iconOnly = true,
+                    portrait = true,
+                    status = status,
+                    commandInFlight = false,
+                    settingsEnabled = true,
+                    outputDir = "/out",
+                    loggingDir = "/logs",
+                    onStart = {},
+                    onPause = {},
+                    onResume = {},
+                    onStop = {},
+                    onReset = {},
+                )
+            }
+        }
+        val landscape = scene(1100, 520) {
+            Column(Modifier.width(1100.dp)) {
+                TrainControlCard(
+                    status = status,
+                    commandInFlight = false,
+                    settingsEnabled = true,
+                    outputDir = "/out",
+                    loggingDir = "/logs",
+                    onStart = {},
+                    onPause = {},
+                    onResume = {},
+                    onStop = {},
+                    onReset = {},
+                )
+            }
+        }
+        try {
+            // The phase bar carries the same "Sampling" label above the settings row, so the row's
+            // is the one with the greater y.
+            val tallNodes = nodes(portrait)
+            val apply = texts(tallNodes).first { it.first == "Apply" }.second
+            val saveEvery = nodeWithText(tallNodes, "Save every")
+            val sampling = samplingLabel(tallNodes)
+            assertTrue(
+                sampling.positionInRoot.y > apply + 8f,
+                "Sampling y=${sampling.positionInRoot.y} Apply y=$apply",
+            )
+            // Its own row starts at the card's left edge, under the cadence controls.
+            assertEquals(saveEvery.positionInRoot.x, sampling.positionInRoot.x, 2f)
+            val switch = tallNodes.first {
+                it.config.getOrNull(SemanticsProperties.ToggleableState) != null
+            }
+            assertTrue(
+                switch.positionInRoot.y > apply + 8f,
+                "switch y=${switch.positionInRoot.y} Apply y=$apply",
+            )
+
+            val wideNodes = nodes(landscape)
+            val wideApply = texts(wideNodes).first { it.first == "Apply" }.second
+            val wideSampling = samplingLabel(wideNodes)
+            assertTrue(
+                kotlin.math.abs(wideSampling.positionInRoot.y - wideApply) < 20f,
+                "landscape sampling y=${wideSampling.positionInRoot.y} Apply y=$wideApply",
+            )
+            assertTrue(
+                wideSampling.positionInRoot.x > 550f,
+                "landscape sampling x=${wideSampling.positionInRoot.x}",
+            )
+        } finally {
+            portrait.close()
+            landscape.close()
+        }
+    }
+
+    private fun nodeWithText(nodes: List<SemanticsNode>, text: String): SemanticsNode =
+        nodes.first { node ->
+            node.config.getOrNull(SemanticsProperties.Text).orEmpty().any { it.text == text }
+        }
+
+    private fun samplingLabel(nodes: List<SemanticsNode>): SemanticsNode =
+        nodes.filter { node ->
+            node.config.getOrNull(SemanticsProperties.Text).orEmpty().any { it.text == "Sampling" }
+        }.maxBy { it.positionInRoot.y }
 
     private fun click(scene: ImageComposeScene, x: Float, y: Float) {
         val at = Offset(x, y)

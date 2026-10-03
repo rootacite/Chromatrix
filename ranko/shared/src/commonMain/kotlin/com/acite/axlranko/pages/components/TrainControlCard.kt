@@ -61,6 +61,8 @@ import kotlin.math.roundToInt
 fun TrainControlCard(
     /** Portrait: the five commands draw an icon and keep their name as the content description. */
     iconOnly: Boolean = false,
+    /** Portrait: the cadence controls and the sampling switch take a row each. */
+    portrait: Boolean = false,
     status: TrainStatus,
     commandInFlight: Boolean,
     controlsEnabled: Boolean = true,
@@ -226,6 +228,7 @@ fun TrainControlCard(
                 requested = status.requested,
                 runStatus = actual,
                 enabled = settingsEnabled,
+                portrait = portrait,
                 inFlight = settingsInFlight,
                 error = settingsError,
                 configSaveEveryNSteps = configSaveEveryNSteps,
@@ -391,6 +394,8 @@ private fun LiveSettingsRow(
     requested: TrainSettings?,
     runStatus: String,
     enabled: Boolean,
+    /** Portrait: the cadence controls and the sampling switch take a row each. */
+    portrait: Boolean,
     inFlight: Boolean,
     error: String?,
     configSaveEveryNSteps: Int?,
@@ -406,12 +411,8 @@ private fun LiveSettingsRow(
     }
     val parsed = draft.trim().toIntOrNull()
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            if (enabled) {
+        if (enabled) {
+            val cadence: @Composable () -> Unit = {
                 Text(
                     text = "Save every",
                     style = MaterialTheme.typography.bodySmall,
@@ -435,7 +436,8 @@ private fun LiveSettingsRow(
                 ) {
                     Text("Apply", fontWeight = FontWeight.SemiBold)
                 }
-                Spacer(Modifier.weight(1f))
+            }
+            val sampling: @Composable () -> Unit = {
                 Text(
                     text = "Sampling",
                     style = MaterialTheme.typography.bodySmall,
@@ -446,6 +448,30 @@ private fun LiveSettingsRow(
                     enabled = !inFlight,
                     onCheckedChange = { on -> onApply(null, on) },
                 )
+            }
+            if (portrait) {
+                // Two rows: on a tall narrow card one line would clip the switch against the card
+                // edge and wrap the "Sampling" label onto itself.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) { cadence() }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) { sampling() }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    cadence()
+                    Spacer(Modifier.weight(1f))
+                    sampling()
+                }
             }
         }
         val summary = if (enabled) {
