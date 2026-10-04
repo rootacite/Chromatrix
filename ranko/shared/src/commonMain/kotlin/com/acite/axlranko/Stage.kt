@@ -129,7 +129,13 @@ public fun Stage(
                 Screen.Images -> ImagesScreen()
                 Screen.Statistics -> StatisticsScreen()
                 Screen.Utils -> UtilsScreen()
-                Screen.Dashboard -> DashboardScreen(viewModel = dsViewModel)
+                Screen.Dashboard -> DashboardScreen(
+                    viewModel = dsViewModel,
+                    onSendToAutomation = { send ->
+                        auViewModel.applyCheckpointSend(send)
+                        open(Screen.Automation)
+                    },
+                )
                 Screen.Automation -> AutomationScreen(viewModel = auViewModel)
             }
         }

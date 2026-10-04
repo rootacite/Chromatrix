@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
@@ -34,6 +35,7 @@ import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
@@ -105,6 +107,8 @@ import com.acite.axlranko.model.CLEAR_SAMPLES_CONFIRM_TITLE
 import com.acite.axlranko.model.ChartPickState
 import com.acite.axlranko.model.CheckpointExport
 import com.acite.axlranko.model.CheckpointItem
+import com.acite.axlranko.model.CheckpointSend
+import com.acite.axlranko.model.CheckpointSendResult
 import com.acite.axlranko.model.clearSamplesConfirmText
 import com.acite.axlranko.model.DashboardUiState
 import com.acite.axlranko.model.GeneratedSampleJob
@@ -152,6 +156,7 @@ import com.acite.axlranko.pages.components.batchRangeError
 import com.acite.axlranko.pages.components.CheckpointLossSpark
 import com.acite.axlranko.pages.components.CheckpointSparkMinHeight
 import com.acite.axlranko.pages.components.CheckpointSparkWidth
+import com.acite.axlranko.pages.components.MAX_PINNED_ROUNDS
 import com.acite.axlranko.pages.components.SparkPoint
 import com.acite.axlranko.pages.components.checkpointPanelWidth
 import com.acite.axlranko.pages.components.smoothAvgLoss
@@ -205,6 +210,8 @@ import kotlin.math.roundToInt
 @Composable
 fun DashboardScreen(
     viewModel: DashboardScreenViewModel = metroViewModel(),
+    /** What a checkpoint card's "Send to Automation" hands the Automation page. */
+    onSendToAutomation: (CheckpointSend) -> Unit = {},
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
@@ -331,6 +338,8 @@ fun DashboardScreen(
                         onStepSpan = viewModel::setStepSpan,
                         onOutlierClip = viewModel::setOutlierClip,
                         onSmoothExtra = viewModel::setSmoothExtraDp,
+                        onSmoothing = viewModel::setSmoothing,
+                        onChartStroke = viewModel::setChartStroke,
                         onChartViewFinished = viewModel::saveChartView,
                         onResetChartView = viewModel::resetChartView,
                         onResizeTopHeight = viewModel::resizeChartHeightTop,
@@ -358,6 +367,16 @@ fun DashboardScreen(
                 item {
                     DashboardSectionHeader("Checkpoints")
                     Spacer(Modifier.height(4.dp))
+                    // The thumbnail edge this section's cards draw at; released and stored with the
+                    // rest of the run's chart view (`sample_thumb_dp`).
+                    HeaderSlider(
+                        label = "Sample Size: ${uiState.sampleThumbSize.roundToInt()} dp",
+                        value = uiState.sampleThumbSize,
+                        range = 80f..360f,
+                        onChange = viewModel::setSampleThumbSize,
+                        onChangeFinished = viewModel::saveChartView,
+                        modifier = Modifier.widthIn(max = 340.dp),
+                    )
                 }
 
                 val pinnedPaths = uiState.checkpointPins.map { it.path }.toSet()
@@ -456,6 +475,8 @@ fun DashboardScreen(
                             pinnedCount = pinnedCount,
                             starting = uiState.isStartingPinnedBatch,
                             canStart = gpuFree && runningBatchJob == null,
+                            roundIndex = uiState.pinnedRoundIndex,
+                            roundTotal = uiState.pinnedRoundsTotal,
                             onGeneratePinned = viewModel::startPinnedSampleBatch,
                         )
                     }
@@ -493,6 +514,8 @@ fun DashboardScreen(
                             pinEnabled = uiState.pinningPath == null,
                             exportInFlightPath = uiState.exportInFlightPath,
                             exportResult = uiState.exportResult,
+                            sendInFlightPath = uiState.sendInFlightPath,
+                            sendResult = uiState.sendResult,
                             clearingSamples = uiState.clearingSamplesPath != null,
                             clearSamplesResult = uiState.clearSamplesResult
                                 ?.takeIf { it.path == row.checkpoint?.path },
@@ -505,6 +528,11 @@ fun DashboardScreen(
                             onOpenEvaluation = viewModel::showEvaluation,
                             onTogglePin = viewModel::toggleCheckpointPin,
                             onSaveAs = viewModel::saveCheckpointAs,
+                            onSendToAutomation = { cp ->
+                                viewModel.sendCheckpointToAutomation(cp) { send ->
+                                    onSendToAutomation(send)
+                                }
+                            },
                             onClearSamples = viewModel::clearCheckpointSamples,
                         )
                     }
@@ -729,34 +757,6 @@ private fun DashboardHeader(
             CompactMetric("Base Model", uiState.config.string("pretrained_model_name_or_path"))
         }
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            HeaderSlider(
-                label = "Curve Smoothing: ${((uiState.smoothing * 100).roundToInt() / 100.0)}",
-                value = uiState.smoothing,
-                range = 0f..0.99f,
-                onChange = viewModel::setSmoothing,
-                modifier = Modifier.weight(1f),
-            )
-            HeaderSlider(
-                label = "Chart Line: ${((uiState.chartStroke * 10).roundToInt() / 10.0)}",
-                value = uiState.chartStroke,
-                range = 1f..8f,
-                onChange = viewModel::setChartStroke,
-                modifier = Modifier.weight(1f),
-            )
-            HeaderSlider(
-                label = "Sample Size: ${uiState.sampleThumbSize.roundToInt()} dp",
-                value = uiState.sampleThumbSize,
-                range = 80f..360f,
-                onChange = viewModel::setSampleThumbSize,
-                onChangeFinished = viewModel::saveChartView,
-                modifier = Modifier.weight(1f),
-            )
-        }
-
         uiState.errorMessage?.let { message ->
             PorcelainCard {
                 Text(
@@ -841,6 +841,8 @@ private fun ChartsSection(
     onStepSpan: (Float) -> Unit,
     onOutlierClip: (Float) -> Unit,
     onSmoothExtra: (Float) -> Unit,
+    onSmoothing: (Float) -> Unit,
+    onChartStroke: (Float) -> Unit,
     onChartViewFinished: () -> Unit,
     onResetChartView: () -> Unit,
     onResizeTopHeight: (Float) -> Unit,
@@ -897,6 +899,27 @@ private fun ChartsSection(
                     range = 0f..6f,
                     onChange = onSmoothExtra,
                     onChangeFinished = onChartViewFinished,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            // Curve smoothing and line thickness belong to the charts they change, not the page
+            // header; unlike the three above, they are session-only.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                HeaderSlider(
+                    label = "Curve Smoothing: ${((uiState.smoothing * 100).roundToInt() / 100.0)}",
+                    value = uiState.smoothing,
+                    range = 0f..0.99f,
+                    onChange = onSmoothing,
+                    modifier = Modifier.weight(1f),
+                )
+                HeaderSlider(
+                    label = "Chart Line: ${((uiState.chartStroke * 10).roundToInt() / 10.0)}",
+                    value = uiState.chartStroke,
+                    range = 1f..8f,
+                    onChange = onChartStroke,
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -1335,33 +1358,71 @@ internal fun PinnedSampleRow(
     pinnedCount: Int,
     starting: Boolean,
     canStart: Boolean,
-    onGeneratePinned: () -> Unit,
+    /** 1-based round the VM is on and how many were asked for; 0/0 while nothing runs. */
+    roundIndex: Int = 0,
+    roundTotal: Int = 0,
+    onGeneratePinned: (Int) -> Unit,
 ) {
     val colors = rankoColors
-    Row(
-        // The row follows the sample-range block, whose own error line can sit right above it.
-        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        CapsuleButton(
-            text = if (starting) "Starting…" else "Generate pinned samples",
-            onClick = onGeneratePinned,
-            enabled = canStart && !starting,
-            compact = true,
+    // How many passes over the pins one click starts. The helper renders one pass per call, so the
+    // VM starts them one after another; "1" keeps the button's old meaning.
+    var rounds by remember { mutableStateOf("1") }
+    val parsedRounds = rounds.trim().toIntOrNull()
+    val roundsError = if (parsedRounds == null || parsedRounds !in 1..MAX_PINNED_ROUNDS) {
+        "rounds must be 1–$MAX_PINNED_ROUNDS"
+    } else {
+        null
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(
+            // The row follows the sample-range block, whose own error line can sit right above it.
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            CapsuleButton(
+                text = if (starting) "Starting…" else "Generate pinned samples",
+                onClick = { parsedRounds?.let(onGeneratePinned) },
+                enabled = canStart && !starting && roundsError == null,
+                compact = true,
+            ) {
+                Text(
+                    if (starting) "Starting…" else "Generate pinned samples",
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    softWrap = false,
+                )
+            }
+            OutlinedTextField(
+                value = rounds,
+                onValueChange = { text -> rounds = text.filter { it.isDigit() }.take(2) },
+                singleLine = true,
+                enabled = !starting,
+                modifier = Modifier.width(80.dp),
+                label = { Text("rounds") },
+                textStyle = MaterialTheme.typography.bodySmall,
+                colors = rankoFieldColors(),
+                shape = rankoTokens.panel,
+            )
             Text(
-                if (starting) "Starting…" else "Generate pinned samples",
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                softWrap = false,
+                text = if (roundTotal > 1 && roundIndex > 0) {
+                    "round $roundIndex/$roundTotal"
+                } else if (pinnedCount == 1) {
+                    "1 pinned checkpoint"
+                } else {
+                    "$pinnedCount pinned checkpoints"
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.textDim,
             )
         }
-        Text(
-            text = if (pinnedCount == 1) "1 pinned checkpoint" else "$pinnedCount pinned checkpoints",
-            style = MaterialTheme.typography.labelSmall,
-            color = colors.textDim,
-        )
+        roundsError?.let { message ->
+            Text(
+                text = message,
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.qualityRed,
+            )
+        }
     }
 }
 
@@ -1476,6 +1537,48 @@ internal fun CheckpointExportStatus(inFlight: Boolean, result: CheckpointExport?
 }
 
 /**
+ * One checkpoint's "Send to Automation" state: the copy (and the trigger guess) in flight, what
+ * landed in ComfyUI's LoRA folder, or why the send stopped before the page could switch.
+ */
+@Composable
+internal fun SendToAutomationStatus(inFlight: Boolean, result: CheckpointSendResult?) {
+    val colors = rankoColors
+    if (inFlight) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            LinearProgressIndicator(
+                color = colors.accentPink,
+                trackColor = colors.accentPink.copy(alpha = 0.18f),
+                modifier = Modifier.weight(1f).height(4.dp),
+            )
+            Text("Sending…", style = MaterialTheme.typography.labelSmall, color = colors.accentPink)
+        }
+    }
+    result?.error?.let { message ->
+        Text(
+            text = "Send failed: $message",
+            style = MaterialTheme.typography.labelSmall,
+            color = colors.qualityRed,
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+    if (result != null && result.error == null) {
+        val where = if (result.copied) "Copied to ComfyUI" else "Already in ComfyUI"
+        Text(
+            text = "$where · ${result.loraName} · trigger ${result.trigger.ifBlank { "(none)" }}",
+            style = MaterialTheme.typography.labelSmall,
+            color = colors.qualityGreen,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/**
  * One card per LoRA checkpoint of the run being shown, with the images written at its step (the
  * training ones and any generated pass). A checkpoint with no images yet is still listed — that is
  * the point of a retunable cadence and an optional sampling switch — and can be sampled from here
@@ -1513,6 +1616,10 @@ internal fun CheckpointRowCard(
     pinEnabled: Boolean,
     exportInFlightPath: String?,
     exportResult: CheckpointExport?,
+    /** Checkpoint whose "Send to Automation" is copying or guessing, if any. */
+    sendInFlightPath: String? = null,
+    /** What the last send put in ComfyUI and guessed, or why it stopped. */
+    sendResult: CheckpointSendResult? = null,
     /** True while any card's clear is on its way to the helper, so the others stay inert. */
     clearingSamples: Boolean,
     /** What the last clear removed for this checkpoint, or why it failed. */
@@ -1525,6 +1632,7 @@ internal fun CheckpointRowCard(
     onOpenEvaluation: (String) -> Unit,
     onTogglePin: (CheckpointItem) -> Unit,
     onSaveAs: (CheckpointItem) -> Unit,
+    onSendToAutomation: (CheckpointItem) -> Unit,
     onClearSamples: (CheckpointItem) -> Unit,
 ) {
     val colors = rankoColors
@@ -1534,7 +1642,12 @@ internal fun CheckpointRowCard(
     val thumbHeight = thumbWidth * SAMPLE_THUMB_ASPECT
     val saving = exportInFlightPath != null && exportInFlightPath == checkpoint?.path
     val saveResult = exportResult?.takeIf { it.path == checkpoint?.path }
+    val sending = sendInFlightPath != null && sendInFlightPath == checkpoint?.path
+    val sentResult = sendResult?.takeIf { it.path == checkpoint?.path }
     var confirmClear by remember(checkpoint?.path) { mutableStateOf(false) }
+    // A card's images are long when a run rendered many passes; the header row above them folds
+    // the grid away. Expanded is what the card always did before the button existed.
+    var samplesExpanded by remember(checkpoint?.path) { mutableStateOf(true) }
 
     PorcelainCard(emphasized = row.pinned) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1670,6 +1783,26 @@ internal fun CheckpointRowCard(
                             Text(saveLabel, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
                         }
                     }
+                    // Copies the LoRA into ComfyUI's models/loras when it is not there yet and
+                    // hands it, with a guessed character trigger, to Automation → Universal (Beta).
+                    // One send at a time, so the other cards wait for the one in flight.
+                    val sendLabel = if (sending) "Sending…" else "Send to Automation"
+                    CapsuleButton(
+                        text = sendLabel,
+                        onClick = { onSendToAutomation(checkpoint) },
+                        enabled = sendInFlightPath == null,
+                        compact = true,
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.Send,
+                            contentDescription = if (portrait) sendLabel else null,
+                            modifier = Modifier.size(14.dp),
+                        )
+                        if (!portrait) {
+                            Spacer(Modifier.width(6.dp))
+                            Text(sendLabel, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
+                        }
+                    }
                     val label = if (starting) "Starting…" else "Generate samples"
                     CapsuleButton(
                         text = label,
@@ -1777,19 +1910,41 @@ internal fun CheckpointRowCard(
                     color = colors.textDim,
                 )
             } else {
-                FlowRow(
+                Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    slots.forEach { slot ->
-                        SampleSlotCard(
-                            slot = slot,
-                            width = thumbWidth,
-                            height = thumbHeight,
-                            setBadge = if (showSetBadges) sampleSetBadge(slot.item.setIndex) else null,
-                            onOpen = { onOpen(slot.item) },
-                        )
+                    Text(
+                        text = if (slots.size == 1) "1 image" else "${slots.size} images",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.textDim,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    CapsuleButton(
+                        text = if (samplesExpanded) "Hide" else "Show",
+                        onClick = { samplesExpanded = !samplesExpanded },
+                        compact = true,
+                    )
+                }
+                if (samplesExpanded) {
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        slots.forEach { slot ->
+                            SampleSlotCard(
+                                slot = slot,
+                                width = thumbWidth,
+                                height = thumbHeight,
+                                setBadge = if (showSetBadges) sampleSetBadge(slot.item.setIndex) else null,
+                                onOpen = { onOpen(slot.item) },
+                            )
+                        }
                     }
                 }
             }
@@ -1844,6 +1999,9 @@ internal fun CheckpointRowCard(
 
             if (checkpoint != null) {
                 CheckpointExportStatus(inFlight = saving, result = saveResult)
+            }
+            if (checkpoint != null) {
+                SendToAutomationStatus(inFlight = sending, result = sentResult)
             }
             if (checkpoint != null) {
                 ClearedSamplesStatus(result = clearSamplesResult)

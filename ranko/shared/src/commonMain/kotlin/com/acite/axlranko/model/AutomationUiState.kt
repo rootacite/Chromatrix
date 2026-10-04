@@ -74,6 +74,16 @@ data class AutomationSettingsDraft(
     )
 }
 
+/**
+ * What the Dashboard's Checkpoints card hands the Automation page when it sends a checkpoint: the
+ * LoRA's name under ComfyUI's `models/loras` (copied there when missing) and the character trigger
+ * guessed from the run's sampling prompts (blank when the guess failed).
+ */
+data class CheckpointSend(
+    val loraName: String,
+    val trigger: String,
+)
+
 data class PromptProfileItem(
     val name: String,
     val version: Int? = null,

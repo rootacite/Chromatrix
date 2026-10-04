@@ -17,6 +17,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.acite.axlranko.model.CheckpointExport
 import com.acite.axlranko.model.CheckpointItem
+import com.acite.axlranko.model.CheckpointSendResult
 import com.acite.axlranko.model.EvaluationGroup
 import com.acite.axlranko.model.EvaluationPromptsResponse
 import com.acite.axlranko.model.EvaluationScores
@@ -73,6 +74,12 @@ class CheckpointsSectionRenderTest {
         /** The checkpoint whose Save As is open or copying, and where the last one landed. */
         val exportingPath: String? = null,
         val exportResult: CheckpointExport? = null,
+        /** The checkpoint whose "Send to Automation" is copying or guessing, and where it landed. */
+        val sendingPath: String? = null,
+        val sendResult: CheckpointSendResult? = null,
+        /** The round the pinned-sample run is on, for the "round n/m" line. */
+        val pinnedRoundIndex: Int = 0,
+        val pinnedRoundsTotal: Int = 0,
         /** The checkpoint whose evaluation is being started, if any. */
         val evaluatingPath: String? = null,
         /** The evaluation job the panel is open on, drawn over the section like the page does. */
@@ -258,7 +265,9 @@ class CheckpointsSectionRenderTest {
                                             pinnedCount = pinnedCount,
                                             starting = current.startingPinnedBatch,
                                             canStart = current.gpuFree && runningBatch(current.jobs) == null,
-                                            onGeneratePinned = {},
+                                            roundIndex = current.pinnedRoundIndex,
+                                            roundTotal = current.pinnedRoundsTotal,
+                                            onGeneratePinned = { _ -> },
                                         )
                                     }
                                 }
@@ -289,6 +298,8 @@ class CheckpointsSectionRenderTest {
                                             pinEnabled = current.pinningPath == null,
                                             exportInFlightPath = current.exportingPath,
                                             exportResult = current.exportResult,
+                                            sendInFlightPath = current.sendingPath,
+                                            sendResult = current.sendResult,
                                             onOpen = {},
                                             onGenerate = {},
                                             onEvaluate = { _, _, _ -> },
@@ -298,6 +309,7 @@ class CheckpointsSectionRenderTest {
                                             clearSamplesResult = current.clearSamplesResult,
                                             onTogglePin = {},
                                             onSaveAs = {},
+                                            onSendToAutomation = {},
                                             onClearSamples = {},
                                         )
                                     }
@@ -503,6 +515,48 @@ class CheckpointsSectionRenderTest {
                         path = checkpoint(3050).path,
                         error = "ValueError: destination is the same file as the source",
                     ),
+                ),
+                // Send to Automation: copying, copied with a guessed trigger, already present, and
+                // refused because no ComfyUI process answered.
+                Case(checkpoints = listOf(checkpoint(3050)), sendingPath = checkpoint(3050).path),
+                Case(
+                    checkpoints = listOf(checkpoint(3050)),
+                    sendResult = CheckpointSendResult(
+                        path = checkpoint(3050).path,
+                        loraName = "rein.safetensors",
+                        trigger = "yui_character",
+                        copied = true,
+                    ),
+                ),
+                Case(
+                    checkpoints = listOf(checkpoint(3050)),
+                    sendResult = CheckpointSendResult(
+                        path = checkpoint(3050).path,
+                        loraName = "chars/rein.safetensors",
+                        trigger = "",
+                        copied = false,
+                    ),
+                ),
+                Case(
+                    checkpoints = listOf(checkpoint(3050)),
+                    sendResult = CheckpointSendResult(
+                        path = checkpoint(3050).path,
+                        error = "ComfyUI's LoRA folder was not found",
+                    ),
+                ),
+                // A card with many images: the header row (count + Hide/Show) sits above a grid that
+                // would otherwise fill the page.
+                Case(
+                    checkpoints = listOf(checkpoint(3050)),
+                    samples = mapOf("3050" to (0 until 24).map { sample(3050, it % 6, it / 6) }),
+                ),
+                // A pinned-sample run of several rounds: the row says which round is in flight.
+                Case(
+                    checkpoints = listOf(checkpoint(3050)),
+                    pinnedPaths = setOf(checkpoint(3050).path),
+                    startingPinnedBatch = true,
+                    pinnedRoundIndex = 2,
+                    pinnedRoundsTotal = 3,
                 ),
                 // Evaluations: one running (rendering its top-up, with its Cancel), one tagging an
                 // already deep enough checkpoint, one scored with its details opened, one failed,

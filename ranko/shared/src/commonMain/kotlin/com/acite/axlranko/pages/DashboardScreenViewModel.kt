@@ -10,6 +10,8 @@ import com.acite.axlranko.data.TrainerIpcClient
 import com.acite.axlranko.model.ChartPickState
 import com.acite.axlranko.model.CheckpointExport
 import com.acite.axlranko.model.CheckpointItem
+import com.acite.axlranko.model.CheckpointSend
+import com.acite.axlranko.model.CheckpointSendResult
 import com.acite.axlranko.model.DashboardUiState
 import com.acite.axlranko.model.EvaluationTarget
 import com.acite.axlranko.model.GeneratedSampleJob
@@ -21,9 +23,11 @@ import com.acite.axlranko.model.UnpinnedClearResult
 import com.acite.axlranko.model.SampleItem
 import com.acite.axlranko.model.SampleSetForm
 import com.acite.axlranko.model.TrainStatus
+import com.acite.axlranko.model.guessCharacterTrigger
 import com.acite.axlranko.model.sampleSetInfos
 import com.acite.axlranko.pages.components.JOB_ERROR
 import com.acite.axlranko.pages.components.JOB_RUNNING
+import com.acite.axlranko.pages.components.MAX_PINNED_ROUNDS
 import com.acite.axlranko.pages.components.checkpointRows
 import com.acite.axlranko.pages.components.checkpointsForRun
 import com.acite.axlranko.pages.components.clampChartHeight
@@ -37,6 +41,7 @@ import com.acite.axlranko.pages.components.newlyFailedJob
 import com.acite.axlranko.pages.components.StepChartInteractionStore
 import com.acite.axlranko.pages.components.sectionImages
 import com.acite.axlranko.util.PathPicker
+import com.acite.axlranko.util.TagLexicon
 import com.acite.axlranko.util.checkpointSaveName
 import com.acite.axlranko.util.ensureSafetensorsExtension
 import com.acite.axlranko.util.formatBytes
@@ -547,36 +552,89 @@ class DashboardScreenViewModel(
     }
 
     /**
-     * "Generate pinned samples": one detached job that renders the config's sample sets for every
-     * valid pinned checkpoint of the shown run, in the pin file's own order. The helper drops pins
-     * whose file is gone, so a stale pin cannot fail the batch.
+     * "Generate pinned samples": the detached pass over every valid pinned checkpoint of the shown
+     * run, in the pin file's own order — repeated [rounds] times. The helper renders one pass per
+     * call and refuses while another generation is running, so the rounds are sequenced here: the
+     * next one starts only once the previous job has stopped. A round that failed, or that the user
+     * stopped, ends the sequence. A stale pin cannot fail the batch: the helper drops it.
      */
-    fun startPinnedSampleBatch() {
+    fun startPinnedSampleBatch(rounds: Int = 1) {
         if (_uiState.value.isStartingPinnedBatch) return
-        _uiState.update { it.copy(isStartingPinnedBatch = true, batchError = null) }
+        val total = rounds.coerceIn(1, MAX_PINNED_ROUNDS)
+        _uiState.update {
+            it.copy(
+                isStartingPinnedBatch = true,
+                pinnedRoundIndex = 1,
+                pinnedRoundsTotal = total,
+                batchError = null,
+            )
+        }
         viewModelScope.launch {
-            try {
+            var failure: String? = null
+            for (round in 1..total) {
+                _uiState.update { it.copy(pinnedRoundIndex = round) }
                 val selected = _uiState.value.selectedRun
-                val response = withContext(IoDispatcher) {
-                    ipc.generatePinnedCheckpointSamples(
-                        name = selected?.outputName,
-                        runId = selected?.runId ?: _uiState.value.runId,
-                    )
+                val runId = selected?.runId ?: _uiState.value.runId
+                val started = try {
+                    withContext(IoDispatcher) {
+                        ipc.generatePinnedCheckpointSamples(name = selected?.outputName, runId = runId)
+                    }
+                } catch (e: Exception) {
+                    failure = e.message ?: e.toString()
+                    break
                 }
-                sessionJobIds += response.job.id
+                sessionJobIds += started.job.id
                 _uiState.update { state ->
                     state.copy(
                         sessionJobIds = sessionJobIds.toSet(),
-                        isStartingPinnedBatch = false,
-                        generatedJobs = (listOf(response.job) + state.generatedJobs).distinctBy { it.id },
+                        generatedJobs = (listOf(started.job) + state.generatedJobs).distinctBy { it.id },
                     )
                 }
                 startGeneratedPolling()
-            } catch (e: Exception) {
-                _uiState.update {
-                    it.copy(isStartingPinnedBatch = false, batchError = e.message ?: e.toString())
+                if (round == total) break
+                val finished = awaitGeneratedJob(started.job.id, runId)
+                if (finished == null) break
+                if (finished.state == JOB_ERROR) {
+                    failure = finished.error ?: "the pinned-sample pass failed"
+                    break
                 }
+                if (finished.cancelRequested) break
             }
+            _uiState.update {
+                it.copy(
+                    isStartingPinnedBatch = false,
+                    pinnedRoundIndex = 0,
+                    pinnedRoundsTotal = 0,
+                    batchError = failure ?: it.batchError,
+                )
+            }
+        }
+    }
+
+    /**
+     * Waits for one generation job to stop, reading `list_generated_samples` at the poller's own
+     * cadence. Null when the job can no longer be followed — the run on screen changed, or the
+     * helper kept reporting nothing for it — which ends the round sequence quietly.
+     */
+    private suspend fun awaitGeneratedJob(jobId: String, runId: String?): GeneratedSampleJob? {
+        var misses = 0
+        while (true) {
+            delay(GENERATED_POLL_MILLIS.milliseconds)
+            val state = _uiState.value
+            if ((state.selectedRun?.runId ?: state.runId) != runId) return null
+            val jobs = withContext(IoDispatcher) {
+                runCatching {
+                    ipc.listGeneratedSamples(name = state.selectedRun?.outputName, runId = runId).jobs
+                }.getOrNull()
+            }
+            val job = jobs?.firstOrNull { it.id == jobId }
+            if (job == null) {
+                misses += 1
+                if (misses > GENERATED_JOB_MISS_LIMIT) return null
+                continue
+            }
+            if (job.state != JOB_RUNNING) return job
+            misses = 0
         }
     }
 
@@ -1073,6 +1131,74 @@ class DashboardScreenViewModel(
         }
     }
 
+    /**
+     * "Send to Automation" for one checkpoint: make sure the LoRA file sits under the listening
+     * ComfyUI's `models/loras` (copy it there when the name is missing), guess the character
+     * trigger from the shown run's sampling prompts, then hand both to the Automation page through
+     * [onOpenUniversal] — which runs only once the file is in place.
+     *
+     * The copy is a server-local `checkpoint_export`, which claims the destination file and needs
+     * no GPU, so a send may run while training. A guess that fails sends an empty trigger; the
+     * Universal section's own start check is what asks for one.
+     */
+    fun sendCheckpointToAutomation(
+        checkpoint: CheckpointItem,
+        onOpenUniversal: (CheckpointSend) -> Unit,
+    ) {
+        if (_uiState.value.sendInFlightPath != null) return
+        val source = checkpoint.path
+        _uiState.update { it.copy(sendInFlightPath = source, sendResult = null) }
+        viewModelScope.launch {
+            val result = try {
+                withContext(IoDispatcher) { prepareCheckpointSend(checkpoint) }
+            } catch (e: Exception) {
+                CheckpointSendResult(path = source, error = e.message ?: e.toString())
+            }
+            _uiState.update { it.copy(sendInFlightPath = null, sendResult = result) }
+            if (result.error == null) {
+                onOpenUniversal(CheckpointSend(result.loraName, result.trigger))
+            }
+        }
+    }
+
+    /** The copy and the guess behind [sendCheckpointToAutomation]. */
+    private suspend fun prepareCheckpointSend(checkpoint: CheckpointItem): CheckpointSendResult {
+        val server = runCatching { ipc.automationConfigGet().settings.server }.getOrDefault("")
+        val listed = ipc.automationLoras(server)
+        if (listed.error.isNotBlank() || listed.root.isBlank()) {
+            return CheckpointSendResult(
+                path = checkpoint.path,
+                error = listed.error.ifBlank { "ComfyUI's LoRA folder was not found" },
+            )
+        }
+        val existing = listed.loras.firstOrNull { it.substringAfterLast('/') == checkpoint.filename }
+        val name = existing ?: checkpoint.filename
+        val copied = existing == null
+        if (copied) {
+            ipc.checkpointExport(checkpoint.path, "${listed.root.trimEnd('/')}/${checkpoint.filename}")
+        }
+        return CheckpointSendResult(
+            path = checkpoint.path,
+            loraName = name,
+            trigger = guessTrigger(),
+            copied = copied,
+        )
+    }
+
+    /** The trigger guess, best-effort: the shown run's prompts against `selected_tags.csv`. */
+    private suspend fun guessTrigger(): String {
+        val state = _uiState.value
+        val shown = displayedRun(state.runs, state.selectedRun, state.runId)
+        val runId = shown?.runId ?: state.runId
+        val sets = state.samplePrompts?.takeIf { it.runId == runId }?.sets
+            ?: runId?.let {
+                runCatching { ipc.samplePrompts(name = shown?.outputName, runId = it).sets }.getOrNull()
+            }
+            ?: return ""
+        val lexicon = runCatching { TagLexicon.load(ipc.tagLexicon().text) }.getOrNull() ?: return ""
+        return guessCharacterTrigger(sets, lexicon::isKnownTag) ?: ""
+    }
+
     fun previewNext() = movePreview(1)
 
     fun previewPrev() = movePreview(-1)
@@ -1399,6 +1525,9 @@ internal fun previewList(
 private const val HARDWARE_HISTORY_CAP = 360
 private const val BYTES_PER_GIB = 1024.0 * 1024.0 * 1024.0
 private const val GENERATED_POLL_MILLIS = 1_500L
+
+/** How many polls a finished pinned round may stay missing from the list before the sequence stops. */
+private const val GENERATED_JOB_MISS_LIMIT = 40
 
 internal fun appendHardwareHistory(
     history: HardwareHistory,

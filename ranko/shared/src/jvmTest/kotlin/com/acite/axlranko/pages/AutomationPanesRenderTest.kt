@@ -243,6 +243,19 @@ class AutomationPanesRenderTest {
                     loras = listOf("Yui_s002850.safetensors", "chars/Kano.safetensors"),
                     checkpoints = listOf("illustriousXLV20_v20Stable.safetensors", "chars/NewBase.safetensors"),
                 ),
+                // The shape a Checkpoints card's "Send to Automation" lands in: the LoRA's name as
+                // ComfyUI lists it, and a blank trigger because the guess found none.
+                AutomationUiState(
+                    section = AutomationSection.Universal,
+                    settings = AutomationSettingsDraft(
+                        server = "http://127.0.0.1:8188",
+                        universalLora = "chars/rein_s003050.safetensors",
+                        universalTrigger = "",
+                    ),
+                    comfy = comfy,
+                    loras = listOf("chars/rein_s003050.safetensors"),
+                    checkpoints = listOf("illustriousXLV20_v20Stable.safetensors"),
+                ),
                 AutomationUiState(section = AutomationSection.ComfyUi, workflowsLoading = true),
                 gallery,
                 galleryPreview,

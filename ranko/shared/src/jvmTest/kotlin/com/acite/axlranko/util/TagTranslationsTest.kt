@@ -47,6 +47,27 @@ class TagTranslationsTest {
     }
 
     @Test
+    fun membershipKeepsTagsWithNoTranslation() {
+        val lex = TagLexicon.parse(sample)
+        assertTrue(lex.isKnownTag("christmas")) // present in the CSV, blank translation
+        assertTrue(lex.isKnownTag("CHRISTMAS"))
+        assertTrue(lex.isKnownTag("long_hair"))
+        assertFalse(lex.isKnownTag("my_original_character"))
+    }
+
+    @Test
+    fun membershipWorksWithoutATranslationColumn() {
+        val lex = TagLexicon.parse(
+            """
+            tag_id,name,category,count
+            1girl,1girl,0,1
+            """.trimIndent(),
+        )
+        assertTrue(lex.isKnownTag("1girl"))
+        assertNull(lex.chinese("1girl"))
+    }
+
+    @Test
     fun quotedCsvFieldKeepsInnerQuotes() {
         val quoted = "tag_id,name,category,count,name,Translated\n" +
             "zh,\"don't say \"\"lazy\"\"\",0,1,\"don't say \"\"lazy\"\"\",切勿说“懒惰”\n"

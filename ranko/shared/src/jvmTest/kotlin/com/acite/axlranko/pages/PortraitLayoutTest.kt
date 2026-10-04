@@ -418,6 +418,7 @@ class PortraitLayoutTest {
                     onOpenEvaluation = {},
                     onTogglePin = {},
                     onSaveAs = {},
+                    onSendToAutomation = {},
                     onClearSamples = {},
                 )
             }

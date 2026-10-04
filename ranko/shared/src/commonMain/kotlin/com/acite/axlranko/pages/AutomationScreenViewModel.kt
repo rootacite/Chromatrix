@@ -12,6 +12,7 @@ import com.acite.axlranko.data.TrainerIpcClient
 import com.acite.axlranko.data.decodeBase64
 import com.acite.axlranko.model.AutomationSection
 import com.acite.axlranko.model.AutomationSettingsDraft
+import com.acite.axlranko.model.CheckpointSend
 import com.acite.axlranko.model.GalleryImageAction
 import com.acite.axlranko.model.GalleryImagePrompt
 import com.acite.axlranko.model.GalleryImageRef
@@ -84,6 +85,13 @@ class AutomationScreenViewModel(
     private var entered = false
     private var pollJob: Job? = null
     private val watchedJobs = mutableSetOf<String>()
+
+    /**
+     * A checkpoint the Dashboard sent before this page ever read `automation/settings.json`. The
+     * load merges it into what it read (so the read cannot overwrite the send), saves it, and
+     * clears it.
+     */
+    private var pendingUniversal: CheckpointSend? = null
 
     /** First entry loads what the page needs; later entries keep the wizard's state. */
     fun onEnter() {
@@ -602,25 +610,79 @@ class AutomationScreenViewModel(
         }
     }
 
+    /**
+     * The Dashboard's Checkpoints card handing over a LoRA and its guessed trigger: show the
+     * Universal (Beta) section with both filled in and save them, so the values are what the next
+     * job uses even after a restart.
+     *
+     * When `automation/settings.json` has not been read yet (this page was never opened) the
+     * payload waits in [pendingUniversal] for [loadAutomationConfig], which `onEnter` starts; that
+     * load merges it into what it read. Otherwise a file read landing after the send would put the
+     * saved values back over the ones just sent.
+     */
+    fun applyCheckpointSend(send: CheckpointSend) {
+        _uiState.update {
+            it.copy(section = AutomationSection.Universal, jobError = null, settingsNotice = null)
+        }
+        if (!_uiState.value.settingsLoaded) {
+            pendingUniversal = send
+            // A first visit loads through onEnter; an earlier load that failed (or is still in
+            // flight) would otherwise never pick the payload up.
+            if (entered && !_uiState.value.settingsSaving) loadAutomationConfig()
+            return
+        }
+        _uiState.update {
+            it.copy(settings = it.settings.copy(universalLora = send.loraName, universalTrigger = send.trigger))
+        }
+        persistUniversalSettings()
+        refreshLoras()
+        refreshCheckpoints()
+    }
+
     /** Loads `automation/settings.json`, the uploaded workflows, the prompt sets and the job list. */
     fun loadAutomationConfig() {
         viewModelScope.launch {
             _uiState.update { it.copy(settingsSaving = true, settingsError = null) }
+            var applied = false
             try {
                 val config = ipc.automationConfigGet()
+                val pending = pendingUniversal
+                pendingUniversal = null
+                applied = pending != null
+                val draft = AutomationSettingsDraft.of(config.settings)
                 _uiState.update {
                     it.copy(
                         settingsSaving = false,
                         settingsLoaded = true,
-                        settings = AutomationSettingsDraft.of(config.settings),
+                        settings = pending?.let { send ->
+                            draft.copy(universalLora = send.loraName, universalTrigger = send.trigger)
+                        } ?: draft,
                     )
                 }
             } catch (e: Exception) {
                 _uiState.update { it.copy(settingsSaving = false, settingsError = e.message ?: "读取设置失败") }
             }
+            if (applied) {
+                persistUniversalSettings()
+                refreshLoras()
+                refreshCheckpoints()
+            }
             refreshWorkflows()
             refreshPromptSets()
             refreshJobs()
+        }
+    }
+
+    /** Writes the current draft and adopts whatever the helper normalized it to. */
+    private fun persistUniversalSettings() {
+        val draft = _uiState.value.settings
+        viewModelScope.launch {
+            try {
+                val saved = ipc.automationConfigSave(draft.toSettings())
+                _uiState.update { it.copy(settings = AutomationSettingsDraft.of(saved.settings)) }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(settingsError = e.message ?: "保存设置失败") }
+            }
         }
     }
 

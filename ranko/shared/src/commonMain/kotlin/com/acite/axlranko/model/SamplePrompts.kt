@@ -1,5 +1,7 @@
 package com.acite.axlranko.model
 
+import com.acite.axlranko.util.normalizeTag
+
 /**
  * The pure rules behind the Dashboard's Sampling Prompts section, its editor and a checkpoint
  * card's "clear samples" action. Nothing here touches Compose or IPC, so all of it is unit-tested
@@ -129,3 +131,43 @@ internal fun SampleSetInfo.toForm(): SampleSetForm = SampleSetForm(
 /** `6.0` rather than `6`, `0.6` kept as it is: what the field shows and what a request carries. */
 internal fun sampleValueLabel(value: Float): String =
     if (value == value.toInt().toFloat()) value.toInt().toString() else value.toString()
+
+/**
+ * The character trigger a run's sampling prompts suggest, for the Checkpoints card's "Send to
+ * Automation": the tag every set shares, that `tagger/selected_tags.csv` does not know
+ * ([isKnownTag]), and that comes first in the first set. Null when nothing qualifies — the card
+ * then sends an empty trigger and leaves the field for the user.
+ *
+ * Positions are compared after [normalizeTag], so `yui_character` in one set matches
+ * `yui character` in another; a `(tag:1.1)` weight wrapper is unwrapped first.
+ */
+internal fun guessCharacterTrigger(
+    sets: List<SampleSetInfo>,
+    isKnownTag: (String) -> Boolean,
+): String? {
+    if (sets.isEmpty()) return null
+    val perSet = sets.map { promptTags(it.prompt) }
+    if (perSet.any { it.isEmpty() }) return null
+    val normalized = perSet.map { tags -> tags.map { normalizeTag(it) } }
+    val first = perSet.first()
+    val firstNormalized = normalized.first()
+    for (index in first.indices) {
+        val candidate = firstNormalized[index]
+        if (normalized.any { !it.contains(candidate) }) continue
+        if (isKnownTag(first[index])) continue
+        return first[index]
+    }
+    return null
+}
+
+/** One prompt's comma-separated tags, trimmed, with a `(tag:1.1)` weight wrapper unwrapped. */
+private fun promptTags(prompt: String): List<String> =
+    prompt.split(',').mapNotNull { raw ->
+        val trimmed = raw.trim()
+        val tag = if (trimmed.startsWith('(') && trimmed.endsWith(')')) {
+            trimmed.substring(1, trimmed.length - 1).substringBeforeLast(':').trim()
+        } else {
+            trimmed
+        }
+        tag.takeIf { it.isNotEmpty() }
+    }

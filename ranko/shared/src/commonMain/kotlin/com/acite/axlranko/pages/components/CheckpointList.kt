@@ -4,6 +4,9 @@ import com.acite.axlranko.model.CheckpointItem
 import com.acite.axlranko.model.GeneratedSampleJob
 import com.acite.axlranko.model.SampleItem
 
+/** Upper bound of the pinned-sample row's "生成轮数" field. */
+internal const val MAX_PINNED_ROUNDS: Int = 99
+
 /**
  * One line of the Dashboard's Checkpoints section: a LoRA checkpoint with the samples written at
  * its step, or — when [checkpoint] is null — a step that only has images left (the weights were

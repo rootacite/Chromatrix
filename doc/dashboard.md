@@ -74,7 +74,7 @@ See [Configuration](configuration.md) for the meaning of every field.
 
 The heart of the app. It spawns `api.py` on first use and polls it (every 1 s while a run is live, otherwise 3 s). The hardware panel polls `hardware_status` on its own 1 s cadence while the tab is visible.
 
-- **Header**: connected/disconnected indicator, auto-refresh switch, Refresh button, dataset / target / base-model compact metrics, and sliders for **Curve Smoothing** (EMA 0–0.99), **Chart Line** (stroke 1–8), and **Sample Size** (80–360 px thumbnails, default 120).
+- **Header**: connected/disconnected indicator, auto-refresh switch, Refresh button, and dataset / target / base-model compact metrics. The sliders live with what they change: **Curve Smoothing** (EMA 0–0.99) and **Chart Line** (stroke 1–8) in **Training charts**, **Sample Size** (80–360 px thumbnails) in **Checkpoints**.
 - **Run history**: the selector under the header is what the page is showing. Its first entry, **Current run**, follows `state.json` — a freshly started run is picked up on its own, and the collapsed box keeps the title `Current run` while it does, with the run it resolved to on the second line — and every other entry pins the page to that run (the box then titles that run's id). A trainer that has no run recorded (a cleaned runtime directory, or one Reset cleared) shows **Current run** with `Nothing started yet` and no badge, and no run's step count or size under it: the page follows the trainer, so a run the trainer is not on comes from the list. The list is built from the run directories of `output_dir` and `logging_dir` whatever `output_name` they were created with, newest first, and each entry carries the run's timestamp, its newest step, how many samples and checkpoints it has, its size, and one of two badges: **Live** while that run's process is running, **Stopped** once it is not (no badge at all while there is no run to show yet). Switching runs reloads the charts, the sample thumbnails and the checkpoint panel for that run; the Training Control card names the run being shown, so a run with no logs and no samples is still identified by the name its run id was built from. A run whose TensorBoard directory is gone — Reset used to delete it, or `logging_dir` has moved since — is still listed and still shows its samples, because a run's step count is read from its sample filenames and checkpoint directories, not from an event file.
 - **Training control card**:
   - Status chip (idle / starting / encoding / training / sampling / pausing / paused / resuming / stopping / finished / error), plus transient **gpu-out** / **gpu-in** chips with swap progress while offloading/loading.
@@ -97,7 +97,7 @@ disk belong on the card — and only a job that is still running is the progress
 evaluation rides the same card whether or not it rendered anything: a scored result whose checkpoint
 already held enough images has no thumbnail of its own, and its score is what the card is showing.
 
-Clicking a thumbnail opens the same fullscreen preview as everywhere else (Esc closes, ←/→ navigate). The preview cycles the section's own images in the section's own order — a card's training samples, then the images of the passes that joined it, then the `samples only` rows — so whatever the section draws can be opened, a generated pass recorded without a step included. When a run used several prompt sets, every thumbnail carries a small `P1`/`P2` badge saying which `[[validation.samples]]` entry rendered it (a single-set run and a run from before this feature show no badge).
+Clicking a thumbnail opens the same fullscreen preview as everywhere else (Esc closes, ←/→ navigate). The preview cycles the section's own images in the section's own order — a card's training samples, then the images of the passes that joined it, then the `samples only` rows — so whatever the section draws can be opened, a generated pass recorded without a step included. When a run used several prompt sets, every thumbnail carries a small `P1`/`P2` badge saying which `[[validation.samples]]` entry rendered it (a single-set run and a run from before this feature show no badge). Above the grid the card names how many images it holds and offers **Hide** / **Show**, which folds the thumbnails away and back — a checkpoint with many passes stops pushing the next card off the page. The section's own **Sample Size** slider (80–360 dp, default 180; released values land in the run's `chart_view.json` as `sample_thumb_dp`) sizes the thumbnails.
   - **Pin**: every checkpoint card carries a pin button. Pinning lifts that card to the top of the
     section, where it is drawn on an accent-tinted surface with an accent border and a `Pinned`
     badge — visibly a different card, not just a reordered one — with a labelled divider between the
@@ -116,10 +116,27 @@ Clicking a thumbnail opens the same fullscreen preview as everywhere else (Esc c
     failure — when it is done. One save runs at a time (there is one dialog), so every other card's
     button is off until it finishes. Chromatrix never reads the file: `config.toml`'s relative
     `output_dir` is not a path Chromatrix could open anyway, which is why the copy is the helper's job.
+  - **Send to Automation**: every card also copies its LoRA into the ComfyUI install the Automation
+    page discovers — `models/loras` of the process listening on the configured server
+    (`automation_loras`) — when a file of that name is not already there, then opens **Automation →
+    Universal (Beta)** with that LoRA selected and the character trigger filled in. The lookup is by
+    file name, so an existing copy under a subfolder is reused instead of copied again. The copy is
+    the helper's server-local `checkpoint_export`, so it needs no GPU and may run while training.
+    The trigger is guessed from the run's sampling prompts: the tag that every
+    `[[validation.samples]]` set shares, that `tagger/selected_tags.csv` does not know, and that
+    comes first in the first set (a `(tag:1.1)` weight is unwrapped). When nothing qualifies — or the
+    prompts or the lexicon cannot be read — the field is left blank and the Universal section's own
+    start check asks for a trigger. The card shows `Sending…`, then `Copied to ComfyUI · <name> ·
+    trigger <tag>` (or `Already in ComfyUI · …`), or why the send stopped; a refused send stays on
+    the Dashboard. Both values are saved to `automation/settings.json` (`universal_lora`,
+    `universal_trigger`), so a restart keeps what was sent.
   - **Generate pinned samples**: once anything is pinned, a button under the sample-range row
     renders the whole pass for **every pinned checkpoint of the run, in the order they were pinned**,
     as one detached job that loads the model once — the bulk counterpart of a card's own
-    **Generate samples**. It shares the range batch's progress line (which then reads `Pinned
+    **Generate samples**. The **rounds** field beside it (default 1, 1–99) repeats that whole pass
+    that many times, one detached job after another; the sequence stops early if a round fails or the
+    round in flight is stopped, and the label beside the button reads `round 2/3` meanwhile. It
+    shares the range batch's progress line (which then reads `Pinned
     samples · …`) and its **Stop** button, and is off while the GPU is busy with training or another
     generation. A pin whose file is gone (weights deleted, checkpoint moved) is skipped rather than
     failing the batch, and if nothing pinned is left the helper's refusal is shown where the range
@@ -387,7 +404,7 @@ LoRA or a trigger is refused. Redraws and appends reuse the values stored on tha
 - **Pan**: drag horizontally/vertically.
 - **Zoom X**: `Ctrl` + mouse wheel (anchored at the cursor).
 - **Zoom Y**: `Shift` + mouse wheel.
-- **Default window**: a chart whose x axis counts steps opens on the newest **800 steps** of the run (shorter runs show everything). The Steps slider above the charts changes that window (100–8000). The Y clip slider changes the percentile tail used for Avg Loss and Train/Loss and defaults to **15%**. The Smooth + slider adds that many dp to the smoothed stroke (default **1.2 dp**, range 0–6). Steps, Y clip, Smooth + and Sample Size (default **180 dp**, range 80–360) are stored in the run's `chart_view.json` under its log directory. In automatic mode, widening Steps refits the curves into that window as the slider moves; in `Detach` it waits for `Reset`. The y range is fitted to the smoothed points inside the window and then expanded so the newest point stays visible. Hardware charts, whose x axis is time, keep their whole range and are not clipped.
+- **Default window**: a chart whose x axis counts steps opens on the newest **800 steps** of the run (shorter runs show everything). The Steps slider above the charts changes that window (100–8000). The Y clip slider changes the percentile tail used for Avg Loss and Train/Loss and defaults to **15%**. The Smooth + slider adds that many dp to the smoothed stroke (default **1.2 dp**, range 0–6). The Curve Smoothing slider is the charts' EMA weight (0–0.99) and the Chart Line slider the stroke width in dp (1–8); both sit in the Training charts block and are session-only. Steps, Y clip, Smooth + and the **Checkpoints** section's Sample Size (default **180 dp**, range 80–360) are stored in the run's `chart_view.json` under its log directory. In automatic mode, widening Steps refits the curves into that window as the slider moves; in `Detach` it waits for `Reset`. The y range is fitted to the smoothed points inside the window and then expanded so the newest point stays visible. Hardware charts, whose x axis is time, keep their whole range and are not clipped.
 - **Checkpoint pick**: `Ctrl` + left click on **Train / Avg Loss** (a click, not a drag) resolves the checkpoint nearest to the clicked step and opens a floating panel (see below). A left **double click** does the same and is the trigger without a keyboard: two clicks within 400 ms, *wherever* they land — only the interval counts, not the distance between them — and the panel opens at the **second** click. A `Ctrl`+click picks immediately and never pairs with a following plain click; a third quick click starts a new pair rather than picking again; the click that fires must be inside the plot (the first one may be anywhere on the chart). The chart then marks the clicked step with a dashed line and the step the pick actually matched with a bold accent line, a dot, an axis flag and a `ckpt <step>` label, so the snapping is visible. Both marks disappear when the panel is closed.
 - Series are EMA-smoothed (slider), downsampled with LTTB to ≤500 points, and the initial viewport clips outlier percentiles.
 

@@ -5,10 +5,17 @@ package com.acite.axlranko.util
  *
  * Chromatrix still stores captions as English; this is display (and search) only.
  */
-class TagLexicon(private val chineseByEnglish: Map<String, String>) {
+class TagLexicon(
+    private val chineseByEnglish: Map<String, String>,
+    /** Every normalized `name` column of the CSV, whether it carries a translation or not. */
+    private val englishNames: Set<String> = emptySet(),
+) {
 
     fun chinese(tag: String): String? =
         chineseByEnglish[normalizeTag(tag)]?.takeIf { it.isNotEmpty() }
+
+    /** True when the tag is a row of `selected_tags.csv` — a known Danbooru tag. */
+    fun isKnownTag(tag: String): Boolean = normalizeTag(tag) in englishNames
 
     /** `english [chinese]` when a distinct translation exists; otherwise the tag as stored. */
     fun display(tag: String): String {
@@ -32,18 +39,22 @@ class TagLexicon(private val chineseByEnglish: Map<String, String>) {
             val header = parseCsvLine(iterator.next())
             val nameIdx = header.indexOf("name").takeIf { it >= 0 } ?: 1
             val zhIdx = header.indexOf("Translated")
-            if (zhIdx < 0) return TagLexicon(emptyMap())
 
+            val names = linkedSetOf<String>()
             val map = linkedMapOf<String, String>()
             for (line in iterator) {
                 val row = parseCsvLine(line)
-                if (row.size <= maxOf(nameIdx, zhIdx)) continue
+                if (row.size <= nameIdx) continue
                 val english = normalizeTag(row[nameIdx])
+                if (english.isEmpty()) continue
+                // A tag with no translation is still a known tag; only the display map skips it.
+                names += english
+                if (zhIdx < 0 || row.size <= zhIdx) continue
                 val chinese = row[zhIdx].trim()
-                if (english.isEmpty() || chinese.isEmpty()) continue
+                if (chinese.isEmpty()) continue
                 if (english !in map) map[english] = chinese
             }
-            return TagLexicon(map)
+            return TagLexicon(map, names)
         }
 
         fun load(text: String): TagLexicon = parse(text)

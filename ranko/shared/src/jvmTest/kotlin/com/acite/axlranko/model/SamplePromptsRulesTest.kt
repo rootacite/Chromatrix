@@ -54,6 +54,57 @@ class SamplePromptsRulesTest {
     )
 
     @Test
+    fun triggerGuessPicksTheSharedUnknownTag() {
+        val sets = listOf(
+            set(prompt = "1girl, solo, my_character, long hair", name = "a"),
+            set(prompt = "solo, my_character, looking at viewer", name = "b"),
+        )
+        val known = setOf("1girl", "solo", "long hair", "looking at viewer")
+        assertEquals("my_character", guessCharacterTrigger(sets) { it in known })
+    }
+
+    @Test
+    fun triggerGuessSkipsKnownTags() {
+        val sets = listOf(set(prompt = "1girl, solo"), set(prompt = "1girl, solo"))
+        assertNull(guessCharacterTrigger(sets) { it in setOf("1girl", "solo") })
+    }
+
+    @Test
+    fun triggerGuessTakesTheLeftmostQualifyingTag() {
+        val sets = listOf(
+            set(prompt = "first_tag, second_tag", name = "a"),
+            set(prompt = "second_tag, first_tag", name = "b"),
+        )
+        assertEquals("first_tag", guessCharacterTrigger(sets) { false })
+    }
+
+    @Test
+    fun triggerGuessUnwrapsAWeightedTag() {
+        val sets = listOf(
+            set(prompt = "1girl, (my_character:1.1)", name = "a"),
+            set(prompt = "1girl, my_character", name = "b"),
+        )
+        assertEquals("my_character", guessCharacterTrigger(sets) { it == "1girl" })
+    }
+
+    @Test
+    fun triggerGuessMatchesUnderscoreAndSpaceAcrossSets() {
+        val sets = listOf(
+            set(prompt = "yui_character, 1girl", name = "a"),
+            set(prompt = "yui character, 1girl", name = "b"),
+        )
+        assertEquals("yui_character", guessCharacterTrigger(sets) { false })
+    }
+
+    @Test
+    fun triggerGuessNeedsEverySetAndANonEmptyPrompt() {
+        val known = { _: String -> false }
+        assertNull(guessCharacterTrigger(listOf(set(prompt = "a, b"), set(prompt = "c, d")), known))
+        assertNull(guessCharacterTrigger(listOf(set(prompt = ""), set(prompt = "a")), known))
+        assertNull(guessCharacterTrigger(emptyList(), known))
+    }
+
+    @Test
     fun aSetRoundTripsThroughTheEditor() {
         val original = set(prompt = "a prompt", name = "named", seed = 42, repeat = 3)
         val back = sampleSetInfos(listOf(original.toForm()))?.single()

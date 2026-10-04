@@ -620,6 +620,20 @@ data class CheckpointExport(
     val error: String? = null,
 )
 
+/**
+ * The outcome of one "Send to Automation": [path] is the checkpoint that was sent, [loraName] the
+ * name it has under ComfyUI's `models/loras`, [trigger] the guessed character trigger (blank when
+ * the guess failed) and [copied] whether the file had to be copied there. Shown only on the card
+ * it belongs to; [error] is why the send stopped, in which case the page does not switch.
+ */
+data class CheckpointSendResult(
+    val path: String,
+    val loraName: String = "",
+    val trigger: String = "",
+    val copied: Boolean = false,
+    val error: String? = null,
+)
+
 data class DashboardUiState(
     val isLoading: Boolean = false,
     val errorMessage: String? = null,
@@ -668,6 +682,10 @@ data class DashboardUiState(
     val exportInFlightPath: String? = null,
     /** Where the last "Save As" landed, or why it failed. */
     val exportResult: CheckpointExport? = null,
+    /** Checkpoint whose "Send to Automation" is copying or guessing; one send at a time. */
+    val sendInFlightPath: String? = null,
+    /** Where the last "Send to Automation" landed, or why it failed. */
+    val sendResult: CheckpointSendResult? = null,
     /** Its one-off generation jobs, newest first, as stored under `{name}_samples/generated/`. */
     val generatedJobs: List<GeneratedSampleJob> = emptyList(),
     val generatedError: String? = null,
@@ -688,6 +706,10 @@ data class DashboardUiState(
     val isStartingBatch: Boolean = false,
     /** True while the pinned-checkpoint batch is being handed to the helper. */
     val isStartingPinnedBatch: Boolean = false,
+    /** 1-based round of the pinned-sample run in flight, 0 when none. Set by the round count. */
+    val pinnedRoundIndex: Int = 0,
+    /** Rounds the user asked for; 1 unless the pinned row's "生成轮数" field says otherwise. */
+    val pinnedRoundsTotal: Int = 0,
     val batchError: String? = null,
     /** The checkpoint the evaluation panel is open for, if any. */
     val evaluationTarget: EvaluationTarget? = null,
