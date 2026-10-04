@@ -236,9 +236,12 @@ class AutomationPanesRenderTest {
                     settings = AutomationSettingsDraft(
                         server = "http://127.0.0.1:8188",
                         universalLora = "Yui_s002850.safetensors",
+                        universalCheckpoint = "illustriousXLV20_v20Stable.safetensors",
                         universalTrigger = "(yui_character:1.1)",
                     ),
                     comfy = comfy,
+                    loras = listOf("Yui_s002850.safetensors", "chars/Kano.safetensors"),
+                    checkpoints = listOf("illustriousXLV20_v20Stable.safetensors", "chars/NewBase.safetensors"),
                 ),
                 AutomationUiState(section = AutomationSection.ComfyUi, workflowsLoading = true),
                 gallery,

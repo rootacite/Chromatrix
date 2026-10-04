@@ -2145,6 +2145,19 @@ def handle_automation_loras(params: dict[str, Any]) -> dict[str, Any]:
     return comfy.loras_for_server(server)
 
 
+def handle_automation_checkpoints(params: dict[str, Any]) -> dict[str, Any]:
+    """Checkpoints under the listening ComfyUI's `models/checkpoints`."""
+    server = str(params.get("server") or "").strip()
+    if not server:
+        server = str(automation.load_settings().get("server") or "").strip()
+    if not server:
+        found = comfy.discover()
+        if not found.get("found"):
+            return {"root": "", "checkpoints": [], "error": "no ComfyUI found listening on this machine"}
+        server = str(found.get("url") or "")
+    return comfy.checkpoints_for_server(server)
+
+
 def handle_automation_workflow_list(_params: dict[str, Any]) -> dict[str, Any]:
     settings = automation.load_settings()
     object_info = _automation_object_info(settings["server"])
@@ -2271,8 +2284,12 @@ def handle_automation_job_start(params: dict[str, Any]) -> dict[str, Any]:
 
     lora_name = ""
     trigger = ""
+    checkpoint_name = ""
     if universal:
         lora_name = str(params.get("lora_name") or settings.get("universal_lora") or "").strip()
+        checkpoint_name = str(
+            params.get("checkpoint_name") or settings.get("universal_checkpoint") or ""
+        ).strip()
         trigger = str(params.get("trigger") or settings.get("universal_trigger") or "").strip()
         if not lora_name:
             raise ValueError("pick a LoRA file first")
@@ -2342,6 +2359,7 @@ def handle_automation_job_start(params: dict[str, Any]) -> dict[str, Any]:
     if universal:
         job["mode"] = run_automation.UNIVERSAL_MODE
         job["lora_name"] = lora_name
+        job["checkpoint_name"] = checkpoint_name
         job["trigger"] = trigger
     automation.write_job(job, output_dir)
     pid = _spawn_automation_job(job_id, output_dir)
@@ -2673,6 +2691,7 @@ _HANDLERS = {
     "automation_config_save": handle_automation_config_save,
     "automation_discover": handle_automation_discover,
     "automation_loras": handle_automation_loras,
+    "automation_checkpoints": handle_automation_checkpoints,
     "automation_workflow_list": handle_automation_workflow_list,
     "automation_workflow_validate": handle_automation_workflow_validate,
     "automation_workflow_save": handle_automation_workflow_save,

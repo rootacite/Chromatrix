@@ -12,8 +12,8 @@ private val UI_TEXT: Map<String, Pair<String, String>> = mapOf(
     "section_prompts" to ("向导、档案与生成结果" to "Wizard, profiles and the prompts they generate"),
     "section_comfy" to ("连接服务、选择工作流，把提示词批量送进去出图" to "Connect, pick a workflow, run the prompt batch"),
     "section_universal" to (
-        "固定工作流：选择 LoRA 和角色触发词，再跑同一批提示词" to
-            "Fixed workflow: pick a LoRA and a trigger, then run the same batch"
+        "固定工作流：选择 checkpoint、LoRA 和角色触发词，再跑同一批提示词" to
+            "Fixed workflow: pick a checkpoint, a LoRA and a trigger, then run the same batch"
         ),
     "section_gallery" to ("浏览生成结果：任务、缩略图、单张保存" to "Browse the results: jobs, thumbnails, save one"),
     "placeholder_comfy_1" to (
@@ -84,6 +84,12 @@ private val UI_TEXT: Map<String, Pair<String, String>> = mapOf(
         "已交给 ComfyUI 和 Universal (Beta)：{n} 条" to
             "Sent {n} prompts to ComfyUI and Universal (Beta)"
         ),
+    "checkpoint" to ("Checkpoint 模型" to "Checkpoint"),
+    "checkpoint_hint" to (
+        "列出该 ComfyUI 进程安装目录下 models/checkpoints 里的模型文件，写入 CheckpointLoaderSimple 的 ckpt_name。" to
+            "The model files under models/checkpoints in that ComfyUI process's install directory, written to CheckpointLoaderSimple's ckpt_name."
+        ),
+    "checkpoint_default" to ("沿用工作流默认" to "Keep the workflow's default"),
     "lora" to ("LoRA 文件" to "LoRA file"),
     "lora_hint" to (
         "列出该 ComfyUI 进程安装目录下 models/loras 里的 .safetensors。" to

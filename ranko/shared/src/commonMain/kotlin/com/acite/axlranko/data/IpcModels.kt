@@ -174,6 +174,7 @@ data class AutomationSettings(
     val poll: Double = 0.5,
     @SerialName("output_dir") val outputDir: String = "",
     @SerialName("universal_lora") val universalLora: String = "",
+    @SerialName("universal_checkpoint") val universalCheckpoint: String = "",
     @SerialName("universal_trigger") val universalTrigger: String = "",
 )
 
@@ -208,6 +209,13 @@ data class ComfyCheckedEntry(
 data class ComfyLoraList(
     val root: String = "",
     val loras: List<String> = emptyList(),
+    val error: String = "",
+)
+
+@Serializable
+data class ComfyCheckpointList(
+    val root: String = "",
+    val checkpoints: List<String> = emptyList(),
     val error: String = "",
 )
 

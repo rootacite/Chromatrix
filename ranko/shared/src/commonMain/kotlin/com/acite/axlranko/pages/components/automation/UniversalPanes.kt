@@ -48,6 +48,7 @@ fun UniversalPane(
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         ServerCard(state, viewModel)
+        CheckpointCard(state, viewModel)
         LoraCard(state, viewModel)
         BatchCard(
             state = state,
@@ -63,6 +64,100 @@ fun UniversalPane(
             onSaveSet = { name -> viewModel.savePromptSet(name, state.universalManual) },
         )
         JobLogCard(state, viewModel)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CheckpointCard(state: AutomationUiState, viewModel: AutomationScreenViewModel) {
+    val colors = rankoColors
+    val lang = state.language
+    var expanded by remember { mutableStateOf(false) }
+    val options = buildList {
+        val current = state.settings.universalCheckpoint
+        if (current.isNotBlank() && current !in state.checkpoints) add(current)
+        addAll(state.checkpoints)
+    }
+    PorcelainCard {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = uiText(lang, "checkpoint"),
+                color = colors.text,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 13.sp,
+            )
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ExposedDropdownMenuBox(
+                    expanded = expanded && options.isNotEmpty(),
+                    onExpandedChange = { if (options.isNotEmpty()) expanded = it },
+                    modifier = Modifier.weight(1f),
+                ) {
+                    OutlinedTextField(
+                        value = state.settings.universalCheckpoint,
+                        onValueChange = {},
+                        readOnly = true,
+                        singleLine = true,
+                        placeholder = { Text(uiText(lang, "checkpoint_default"), fontSize = 12.sp) },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                        colors = rankoFieldColors(),
+                        modifier = Modifier.fillMaxWidth().menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
+                    )
+                    ExposedDropdownMenu(
+                        expanded = expanded && options.isNotEmpty(),
+                        onDismissRequest = { expanded = false },
+                        modifier = Modifier.heightIn(max = 320.dp),
+                    ) {
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = uiText(lang, "checkpoint_default"),
+                                    fontSize = 12.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            },
+                            onClick = {
+                                viewModel.setUniversalCheckpoint("")
+                                expanded = false
+                            },
+                        )
+                        options.forEach { name ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = name,
+                                        fontSize = 12.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                },
+                                onClick = {
+                                    viewModel.setUniversalCheckpoint(name)
+                                    expanded = false
+                                },
+                            )
+                        }
+                    }
+                }
+                if (state.checkpointsLoading) {
+                    CircularProgressIndicator(modifier = Modifier.size(14.dp))
+                }
+                CapsuleButton(
+                    text = uiText(lang, "refresh"),
+                    onClick = viewModel::refreshCheckpoints,
+                    enabled = !state.checkpointsLoading,
+                    compact = true,
+                )
+            }
+            Text(text = uiText(lang, "checkpoint_hint"), color = colors.textDim, fontSize = 11.sp)
+            if (state.checkpointRoot.isNotBlank()) {
+                Text(text = state.checkpointRoot, color = colors.textDim, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            state.checkpointsError?.let { Text(it, color = colors.qualityRed, fontSize = 11.sp) }
+        }
     }
 }
 

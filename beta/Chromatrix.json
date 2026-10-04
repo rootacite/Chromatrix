@@ -39,7 +39,7 @@
         0
       ],
       "vae": [
-        "207:218",
+        "207:266",
         2
       ]
     },
@@ -149,26 +149,17 @@
       "title": "Int to String (Mikey)"
     }
   },
-  "207:218": {
-    "inputs": {
-      "model_path": "waillu_170"
-    },
-    "class_type": "DiffusersLoader",
-    "_meta": {
-      "title": "Load Diffusers Model (DEPRECATED)"
-    }
-  },
   "207:219": {
     "inputs": {
       "lora_name": "Yui_s002850.safetensors",
       "strength_model": 1,
       "strength_clip": 1,
       "model": [
-        "207:218",
+        "207:266",
         0
       ],
       "clip": [
-        "207:218",
+        "207:266",
         1
       ]
     },
@@ -188,6 +179,15 @@
     "class_type": "RescaleCFG",
     "_meta": {
       "title": "RescaleCFG"
+    }
+  },
+  "207:266": {
+    "inputs": {
+      "ckpt_name": "illustriousXLV20_v20Stable.safetensors"
+    },
+    "class_type": "CheckpointLoaderSimple",
+    "_meta": {
+      "title": "Load Checkpoint"
     }
   },
   "198:41": {
@@ -238,7 +238,7 @@
         0
       ],
       "vae": [
-        "207:218",
+        "207:266",
         2
       ],
       "upscale_model": [
@@ -348,7 +348,7 @@
         1
       ],
       "vae": [
-        "207:218",
+        "207:266",
         2
       ],
       "positive": [
@@ -412,7 +412,7 @@
         1
       ],
       "vae": [
-        "207:218",
+        "207:266",
         2
       ],
       "positive": [

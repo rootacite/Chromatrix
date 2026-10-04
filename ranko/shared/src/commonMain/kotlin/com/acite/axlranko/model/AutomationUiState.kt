@@ -44,6 +44,7 @@ data class AutomationSettingsDraft(
     val poll: String = "0.5",
     val outputDir: String = "",
     val universalLora: String = "",
+    val universalCheckpoint: String = "",
     val universalTrigger: String = "",
 ) {
     companion object {
@@ -55,6 +56,7 @@ data class AutomationSettingsDraft(
             poll = settings.poll.toString(),
             outputDir = settings.outputDir,
             universalLora = settings.universalLora,
+            universalCheckpoint = settings.universalCheckpoint,
             universalTrigger = settings.universalTrigger,
         )
     }
@@ -67,6 +69,7 @@ data class AutomationSettingsDraft(
         poll = poll.toDoubleOrNull() ?: 0.5,
         outputDir = outputDir.trim(),
         universalLora = universalLora.trim(),
+        universalCheckpoint = universalCheckpoint.trim(),
         universalTrigger = universalTrigger.trim(),
     )
 }
@@ -145,6 +148,11 @@ data class AutomationUiState(
     val loraRoot: String = "",
     val lorasLoading: Boolean = false,
     val lorasError: String? = null,
+    /** Checkpoint file names under the ComfyUI process's `models/checkpoints`. */
+    val checkpoints: List<String> = emptyList(),
+    val checkpointRoot: String = "",
+    val checkpointsLoading: Boolean = false,
+    val checkpointsError: String? = null,
 
     // --- Gallery section ---
     val jobs: List<AutomationJobSummary> = emptyList(),

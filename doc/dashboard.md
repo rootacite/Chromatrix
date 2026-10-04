@@ -301,14 +301,16 @@ of the app uses, so no new image path exists.
   already landed.
 
 **Universal (Beta)** — the same server, batch and Gallery as ComfyUI, with the workflow fixed to
-`beta/Chromatrix.json`. There is no workflow picker and no positive-node picker. The card asks for
-a LoRA, chosen from a list of the `.safetensors` under `models/loras` in the install directory
-of the ComfyUI process (the listen port's process; its cwd, or the directory of `main.py` when
-that is where `models/loras` lives), and a character trigger. On each queued prompt the runner sets node `207:219`'s
-`lora_name`, replaces the first comma-separated segment of node `198:259` (the upscale prompt)
-with the trigger, and writes the batch line into node `215` whole. LoRA and trigger are stored in
-`settings.json` as `universal_lora` and `universal_trigger`. Starting without either is refused.
-Redraws and appends reuse the values stored on that job.
+`beta/Chromatrix.json`. There is no workflow picker and no positive-node picker. The cards ask for
+a checkpoint, a LoRA and a character trigger, the first two chosen from lists of the model files
+under `models/checkpoints` and `models/loras` in the install directory of the ComfyUI process (the
+listen port's process; its cwd, or the directory of `main.py` when that is where `models/loras`
+lives). On each queued prompt the runner sets node `207:266`'s `ckpt_name` when a checkpoint was
+chosen, node `207:219`'s `lora_name`, replaces the first comma-separated segment of node `198:259`
+(the upscale prompt) with the trigger, and writes the batch line into node `215` whole. Checkpoint,
+LoRA and trigger are stored in `settings.json` as `universal_checkpoint`, `universal_lora` and
+`universal_trigger`; a blank checkpoint keeps the bundled workflow's own, and starting without a
+LoRA or a trigger is refused. Redraws and appends reuse the values stored on that job.
 
 **Gallery** — the jobs and their images:
 

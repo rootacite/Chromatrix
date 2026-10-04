@@ -733,6 +733,12 @@ class TrainerIpcClient {
         return json.decodeFromJsonElement(result)
     }
 
+    suspend fun automationCheckpoints(server: String = ""): ComfyCheckpointList {
+        val params = if (server.isBlank()) JsonObject(emptyMap()) else buildJsonObject { put("server", server) }
+        val result = call("automation_checkpoints", params)
+        return json.decodeFromJsonElement(result)
+    }
+
     suspend fun automationDiscover(server: String = ""): ComfyDiscovery {
         val params = if (server.isBlank()) JsonObject(emptyMap()) else buildJsonObject { put("server", server) }
         val result = call("automation_discover", params)

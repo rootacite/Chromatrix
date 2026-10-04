@@ -137,7 +137,10 @@ class AutomationScreenViewModel(
 
     fun selectSection(section: AutomationSection) {
         _uiState.update { it.copy(section = section) }
-        if (section == AutomationSection.Universal) refreshLoras()
+        if (section == AutomationSection.Universal) {
+            refreshLoras()
+            refreshCheckpoints()
+        }
     }
 
     fun setLanguage(language: PromptLang) {
@@ -541,6 +544,8 @@ class AutomationScreenViewModel(
 
     fun setUniversalLora(value: String) = updateSettings { it.copy(universalLora = value) }
 
+    fun setUniversalCheckpoint(value: String) = updateSettings { it.copy(universalCheckpoint = value) }
+
     fun setUniversalTrigger(value: String) = updateSettings { it.copy(universalTrigger = value) }
 
     /** Lists `.safetensors` under `models/loras` of the ComfyUI process for the current server. */
@@ -560,6 +565,27 @@ class AutomationScreenViewModel(
                 }
             } catch (e: Exception) {
                 _uiState.update { it.copy(lorasLoading = false, lorasError = e.message ?: "读取 LoRA 失败") }
+            }
+        }
+    }
+
+    /** Lists checkpoint files under `models/checkpoints` of the ComfyUI process for the current server. */
+    fun refreshCheckpoints() {
+        val server = _uiState.value.settings.server.trim()
+        viewModelScope.launch {
+            _uiState.update { it.copy(checkpointsLoading = true, checkpointsError = null) }
+            try {
+                val listed = ipc.automationCheckpoints(server)
+                _uiState.update {
+                    it.copy(
+                        checkpointsLoading = false,
+                        checkpoints = listed.checkpoints,
+                        checkpointRoot = listed.root,
+                        checkpointsError = listed.error.ifBlank { null },
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(checkpointsLoading = false, checkpointsError = e.message ?: "读取 checkpoint 失败") }
             }
         }
     }
@@ -637,6 +663,7 @@ class AutomationScreenViewModel(
                 if (found.found) {
                     refreshWorkflows()
                     refreshLoras()
+                    refreshCheckpoints()
                 }
             } catch (e: Exception) {
                 _uiState.update { it.copy(discovering = false, discoverError = e.message ?: "探测失败") }
@@ -905,6 +932,7 @@ class AutomationScreenViewModel(
         if (settings.server.isNotBlank()) put("server", settings.server)
         put("mode", "universal")
         put("lora_name", settings.universalLora)
+        if (settings.universalCheckpoint.isNotBlank()) put("checkpoint_name", settings.universalCheckpoint)
         put("trigger", settings.universalTrigger)
         put("count", settings.count)
         put("poll", settings.poll)

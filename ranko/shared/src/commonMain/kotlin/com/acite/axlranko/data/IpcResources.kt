@@ -317,6 +317,7 @@ internal object IpcResources {
         "prompt_matrix" to { _ -> emptyList() },
         "automation_discover" to { _ -> emptyList() },
         "automation_loras" to { _ -> emptyList() },
+        "automation_checkpoints" to { _ -> emptyList() },
         "automation_workflow_validate" to { _ -> emptyList() },
         "automation_prompt_list" to { _ -> emptyList() },
         "automation_prompt_get" to { _ -> emptyList() },

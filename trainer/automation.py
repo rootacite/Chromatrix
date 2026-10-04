@@ -105,6 +105,7 @@ def default_settings() -> dict[str, Any]:
         "poll": 0.5,
         "output_dir": str(default_output_dir()),
         "universal_lora": "",
+        "universal_checkpoint": "",
         "universal_trigger": "",
     }
 
@@ -208,6 +209,7 @@ def normalize_settings(payload: Mapping[str, Any]) -> dict[str, Any]:
         "poll": poll,
         "output_dir": str(output),
         "universal_lora": str(payload.get("universal_lora") or "").strip(),
+        "universal_checkpoint": str(payload.get("universal_checkpoint") or "").strip(),
         "universal_trigger": str(payload.get("universal_trigger") or "").strip(),
     }
 

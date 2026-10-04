@@ -196,36 +196,72 @@ def process_install_root(pid: int, proc_root: str = "/proc") -> Optional[Path]:
     return ordered[0] if ordered else None
 
 
-def list_lora_files(install_root: Path) -> list[str]:
-    """`.safetensors` under `models/loras`, as the relative names `LoraLoader` expects."""
-    folder = Path(install_root) / "models" / "loras"
-    if not folder.is_dir():
+LORA_SUFFIXES = (".safetensors",)
+# ComfyUI's own checkpoint dropdown, from `folder_paths.supported_pt_extensions`.
+CHECKPOINT_SUFFIXES = (".ckpt", ".pt", ".pt2", ".pth", ".bin", ".safetensors")
+
+
+def _model_files(folder: Path, suffixes: Iterable[str]) -> list[str]:
+    """Files under `folder` whose suffix is one of `suffixes`, as relative posix names."""
+    root = Path(folder)
+    if not root.is_dir():
         return []
     names: list[str] = []
-    for path in folder.rglob("*"):
-        if path.is_file() and path.suffix.lower() == ".safetensors":
-            names.append(path.relative_to(folder).as_posix())
+    for path in root.rglob("*"):
+        if path.is_file() and path.suffix.lower() in suffixes:
+            names.append(path.relative_to(root).as_posix())
     names.sort(key=str.lower)
     return names
 
 
-def loras_for_server(server: str, proc_root: str = "/proc") -> dict[str, Any]:
-    """LoRA names for the ComfyUI listening at `server`, found from that process's directory."""
+def _models_for_server(
+    server: str,
+    folder_name: str,
+    suffixes: Iterable[str],
+    listed: str,
+    proc_root: str = "/proc",
+) -> tuple[str, list[str], str]:
+    """`(install root, names, error)` for one `models/<folder_name>` of the ComfyUI at `server`."""
     port = server_port(server)
     pid = pid_for_listen_port(port, proc_root)
     if pid is None:
-        return {"root": "", "loras": [], "error": f"no process is listening on port {port}"}
+        return "", [], f"no process is listening on port {port}"
     install = process_install_root(pid, proc_root)
     if install is None:
-        return {"root": "", "loras": [], "error": f"could not read the directory of process {pid}"}
-    folder = install / "models" / "loras"
-    names = list_lora_files(install)
-    error = ""
+        return "", [], f"could not read the directory of process {pid}"
+    folder = install / "models" / folder_name
+    names = _model_files(folder, suffixes)
     if not folder.is_dir():
-        error = f"no models/loras under {install}"
+        error = f"no models/{folder_name} under {install}"
     elif not names:
-        error = f"no .safetensors in {folder}"
-    return {"root": str(install), "loras": names, "error": error}
+        error = f"no {listed} in {folder}"
+    else:
+        error = ""
+    return str(install), names, error
+
+
+def list_lora_files(install_root: Path) -> list[str]:
+    """`.safetensors` under `models/loras`, as the relative names `LoraLoader` expects."""
+    return _model_files(Path(install_root) / "models" / "loras", LORA_SUFFIXES)
+
+
+def list_checkpoint_files(install_root: Path) -> list[str]:
+    """Checkpoints under `models/checkpoints`, as the relative names `CheckpointLoaderSimple` expects."""
+    return _model_files(Path(install_root) / "models" / "checkpoints", CHECKPOINT_SUFFIXES)
+
+
+def loras_for_server(server: str, proc_root: str = "/proc") -> dict[str, Any]:
+    """LoRA names for the ComfyUI listening at `server`, found from that process's directory."""
+    root, names, error = _models_for_server(server, "loras", LORA_SUFFIXES, ".safetensors", proc_root)
+    return {"root": root, "loras": names, "error": error}
+
+
+def checkpoints_for_server(server: str, proc_root: str = "/proc") -> dict[str, Any]:
+    """Checkpoint names for the ComfyUI listening at `server`, found from that process's directory."""
+    root, names, error = _models_for_server(
+        server, "checkpoints", CHECKPOINT_SUFFIXES, "checkpoint files", proc_root
+    )
+    return {"root": root, "checkpoints": names, "error": error}
 
 
 def listening_ports(

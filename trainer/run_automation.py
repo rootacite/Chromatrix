@@ -46,10 +46,11 @@ except ImportError:
 MAX_CONSECUTIVE_FAILURES = 3
 
 # The bundled `beta/Chromatrix.json` graph. Generation text is node 215; the upscale
-# prompt is node 198:259; the LoRA name is node 207:219.
+# prompt is node 198:259; the LoRA name is node 207:219; the checkpoint is node 207:266.
 UNIVERSAL_MODE = "universal"
 UNIVERSAL_POSITIVE_NODE = "215"
 UNIVERSAL_LORA_NODE = "207:219"
+UNIVERSAL_CHECKPOINT_NODE = "207:266"
 UNIVERSAL_UPSCALE_NODE = "198:259"
 
 
@@ -70,14 +71,23 @@ def require_universal_nodes(workflow: Mapping[str, Any]) -> None:
         raise comfy.ComfyError(
             f"upscale prompt {UNIVERSAL_UPSCALE_NODE!r} has no first segment to replace"
         )
+    checkpoint = workflow.get(UNIVERSAL_CHECKPOINT_NODE)
+    checkpoint_inputs = checkpoint.get("inputs") if isinstance(checkpoint, dict) else None
+    if not isinstance(checkpoint_inputs, dict) or "ckpt_name" not in checkpoint_inputs:
+        raise comfy.ComfyError(f"checkpoint node {UNIVERSAL_CHECKPOINT_NODE!r} has no ckpt_name input")
     positive = workflow.get(UNIVERSAL_POSITIVE_NODE)
     positive_inputs = positive.get("inputs") if isinstance(positive, dict) else None
     if not isinstance(positive_inputs, dict) or "text" not in positive_inputs:
         raise comfy.ComfyError(f"generation prompt {UNIVERSAL_POSITIVE_NODE!r} has no text input")
 
 
-def apply_universal(workflow: dict[str, Any], lora_name: str, trigger: str) -> None:
-    """Set the LoRA name and the first segment of the upscale prompt. The generation node is separate."""
+def apply_universal(
+    workflow: dict[str, Any],
+    lora_name: str,
+    trigger: str,
+    checkpoint_name: str = "",
+) -> None:
+    """Set the LoRA name, the first segment of the upscale prompt, and the checkpoint when one is given."""
     lora = str(lora_name or "").strip()
     word = str(trigger or "").strip()
     if not lora:
@@ -86,6 +96,9 @@ def apply_universal(workflow: dict[str, Any], lora_name: str, trigger: str) -> N
         raise comfy.ComfyError("a character trigger is required")
     require_universal_nodes(workflow)
     workflow[UNIVERSAL_LORA_NODE]["inputs"]["lora_name"] = lora
+    checkpoint = str(checkpoint_name or "").strip()
+    if checkpoint:
+        workflow[UNIVERSAL_CHECKPOINT_NODE]["inputs"]["ckpt_name"] = checkpoint
     text = str(workflow[UNIVERSAL_UPSCALE_NODE]["inputs"]["text"])
     _head, sep, tail = text.partition(",")
     workflow[UNIVERSAL_UPSCALE_NODE]["inputs"]["text"] = word + sep + tail
@@ -395,6 +408,7 @@ def run_job(spec_path: Path, only_failed: bool = False, target: Optional[Mapping
                             workflow,
                             str(spec.get("lora_name") or ""),
                             str(spec.get("trigger") or ""),
+                            str(spec.get("checkpoint_name") or ""),
                         )
                     set_batch_size(workflow, plan["batch"])
                     changed_seeds = set_seed(workflow, seed)

@@ -61,10 +61,14 @@ def stub_workflow() -> dict:
 
 
 def universal_mini_workflow() -> dict:
-    """The stub graph plus the three nodes a Universal job rewrites. SaveImage stays node 5."""
+    """The stub graph plus the four nodes a Universal job rewrites. SaveImage stays node 5."""
     workflow = stub_workflow()
     workflow["215"] = {"class_type": "CLIPTextEncode", "inputs": {"text": "old prompt", "clip": ["1", 1]}}
     workflow["216"] = {"class_type": "CLIPTextEncode", "inputs": {"text": "worst quality", "clip": ["1", 1]}}
+    workflow["207:266"] = {
+        "class_type": "CheckpointLoaderSimple",
+        "inputs": {"ckpt_name": "bundled.safetensors"},
+    }
     workflow["207:219"] = {
         "class_type": "LoraLoader",
         "inputs": {"lora_name": "old.safetensors", "strength_model": 1, "strength_clip": 1},
@@ -613,6 +617,7 @@ class RunnerTest(unittest.TestCase):
                 "positive_node": "215",
                 "mode": "universal",
                 "lora_name": "Yui_s002850.safetensors",
+                "checkpoint_name": "chars/NewBase.safetensors",
                 "trigger": "(yui_character:1.1)",
                 "count": 1,
                 "poll": 0.1,
@@ -631,6 +636,7 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual("worst quality", queued["216"]["inputs"]["text"])
         self.assertEqual("placeholder", queued["2"]["inputs"]["text"])
         self.assertEqual("Yui_s002850.safetensors", queued["207:219"]["inputs"]["lora_name"])
+        self.assertEqual("chars/NewBase.safetensors", queued["207:266"]["inputs"]["ckpt_name"])
         self.assertEqual(
             "(yui_character:1.1), best quality, anime illustration",
             queued["198:259"]["inputs"]["text"],
@@ -663,6 +669,7 @@ class RunnerTest(unittest.TestCase):
         queued = self.stub.queued[0]
         self.assertEqual("plain line", queued["2"]["inputs"]["text"])
         self.assertEqual("old.safetensors", queued["207:219"]["inputs"]["lora_name"])
+        self.assertEqual("bundled.safetensors", queued["207:266"]["inputs"]["ckpt_name"])
         self.assertTrue(queued["198:259"]["inputs"]["text"].startswith("(yui_character:1.1),"))
 
     def test_a_single_seed_drives_every_seed_input(self):
@@ -1364,6 +1371,19 @@ class UniversalPatchTest(unittest.TestCase):
         )
         self.assertEqual("old prompt", workflow["215"]["inputs"]["text"])
 
+    def test_the_checkpoint_is_written_only_when_one_is_given(self):
+        chosen = universal_mini_workflow()
+        run_automation.apply_universal(chosen, "a.safetensors", "trigger", "chars/Base.safetensors")
+        self.assertEqual("chars/Base.safetensors", chosen["207:266"]["inputs"]["ckpt_name"])
+        # A blank checkpoint (the default) leaves the bundled workflow's own name in place.
+        kept = universal_mini_workflow()
+        run_automation.apply_universal(kept, "a.safetensors", "trigger", "")
+        self.assertEqual("bundled.safetensors", kept["207:266"]["inputs"]["ckpt_name"])
+        # The whitespace-only form counts as blank too.
+        spaced = universal_mini_workflow()
+        run_automation.apply_universal(spaced, "a.safetensors", "trigger", "   ")
+        self.assertEqual("bundled.safetensors", spaced["207:266"]["inputs"]["ckpt_name"])
+
     def test_a_missing_comma_or_name_is_refused(self):
         broken = universal_mini_workflow()
         broken["198:259"]["inputs"]["text"] = "no comma here"
@@ -1374,10 +1394,11 @@ class UniversalPatchTest(unittest.TestCase):
         with self.assertRaises(comfy.ComfyError):
             run_automation.apply_universal(universal_mini_workflow(), "a.safetensors", "  ")
 
-    def test_the_shipped_workflow_has_the_three_nodes(self):
+    def test_the_shipped_workflow_has_the_four_nodes(self):
         workflow = json.loads((REPO / "beta" / "Chromatrix.json").read_text(encoding="utf-8"))
         run_automation.require_universal_nodes(workflow)
         self.assertEqual("LoraLoader", workflow["207:219"]["class_type"])
+        self.assertEqual("CheckpointLoaderSimple", workflow["207:266"]["class_type"])
         self.assertIn(",", workflow["198:259"]["inputs"]["text"])
         self.assertEqual("CLIPTextEncode", workflow["215"]["class_type"])
 
@@ -1419,6 +1440,26 @@ class LoraDiscoveryTest(unittest.TestCase):
         self.assertEqual(str(install.resolve()), found["root"])
         self.assertEqual(["chars/Kano.safetensors", "Yui_s002850.safetensors"], found["loras"])
         self.assertEqual("", found["error"])
+
+    def test_the_process_also_lists_the_checkpoints_folder(self):
+        install = Path(self.tmp.name) / "ComfyUI"
+        proc = self._proc(install, install, ["python", "main.py"])
+        (install / "models" / "checkpoints" / "old.ckpt").write_bytes(b"ckpt")
+        (install / "models" / "checkpoints" / "notes.txt").write_text("no", encoding="utf-8")
+        found = comfy.checkpoints_for_server("http://127.0.0.1:8188", proc_root=str(proc))
+        self.assertEqual(str(install.resolve()), found["root"])
+        self.assertEqual(["base.safetensors", "old.ckpt"], found["checkpoints"])
+        self.assertEqual("", found["error"])
+
+    def test_a_missing_checkpoints_folder_is_an_error(self):
+        install = Path(self.tmp.name) / "ComfyUI"
+        proc = self._proc(install, install, ["python", "main.py"])
+        folder = install / "models" / "checkpoints"
+        (folder / "base.safetensors").unlink()
+        folder.rmdir()
+        found = comfy.checkpoints_for_server("127.0.0.1:8188", proc_root=str(proc))
+        self.assertEqual([], found["checkpoints"])
+        self.assertIn("models/checkpoints", found["error"])
 
     def test_an_absolute_main_py_wins_when_the_cwd_is_not_the_install(self):
         install = Path(self.tmp.name) / "ComfyUI"

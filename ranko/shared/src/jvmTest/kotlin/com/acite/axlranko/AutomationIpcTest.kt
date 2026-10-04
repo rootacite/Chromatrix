@@ -3,7 +3,9 @@ package com.acite.axlranko
 import com.acite.axlranko.data.AutomationConfigResult
 import com.acite.axlranko.data.AutomationJobDetail
 import com.acite.axlranko.data.AutomationJobListResult
+import com.acite.axlranko.data.AutomationSettings
 import com.acite.axlranko.data.AutomationWorkflow
+import com.acite.axlranko.data.ComfyCheckpointList
 import com.acite.axlranko.data.ComfyDiscovery
 import com.acite.axlranko.data.PromptMatrixDocument
 import com.acite.axlranko.data.PromptProfileDocument
@@ -246,6 +248,28 @@ class AutomationIpcTest {
         assertEquals("198:259", workflow.textNodes[1].id)
         assertTrue(workflow.positiveNodeGuessed)
         assertEquals("missing.pth", workflow.missingModels.first().value)
+    }
+
+    @Test
+    fun theCheckpointListAndSettingParse() {
+        val listed = json.decodeFromString(
+            ComfyCheckpointList.serializer(),
+            """{"root": "/opt/ComfyUI", "checkpoints": ["base.safetensors", "chars/NewBase.safetensors"],
+                "error": ""}""",
+        )
+        assertEquals("/opt/ComfyUI", listed.root)
+        assertEquals(listOf("base.safetensors", "chars/NewBase.safetensors"), listed.checkpoints)
+        assertEquals("", listed.error)
+
+        val settings = AutomationSettings(universalCheckpoint = "chars/NewBase.safetensors")
+        assertEquals(
+            "chars/NewBase.safetensors",
+            AutomationSettingsDraft.of(settings).universalCheckpoint,
+        )
+        assertEquals(
+            "chars/NewBase.safetensors",
+            AutomationSettingsDraft.of(settings).toSettings().universalCheckpoint,
+        )
     }
 
     @Test
