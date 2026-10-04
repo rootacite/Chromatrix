@@ -108,6 +108,23 @@ class ChartAxisTest {
     }
 
     @Test
+    fun aHiddenCurveLeavesItsOwnAxisUncomputedWithoutMovingTheOthers() {
+        val result = assignAxisDomains(
+            series = threeScales(),
+            axisCount = 3,
+            windowX = 0f to 390f,
+            outlierClip = 0.15f,
+            smoothing = 0f,
+            hiddenLabels = setOf("TE LR"),
+        )
+
+        assertNotNull(result[0].domainMin)
+        assertNull(result[1].domainMin)
+        assertNull(result[1].domainMax)
+        assertNotNull(result[2].domainMin)
+    }
+
+    @Test
     fun anExplicitDomainIsKept() {
         // A series that already declares its range (`domainMin`/`domainMax`) keeps it, and that
         // range is its axis.

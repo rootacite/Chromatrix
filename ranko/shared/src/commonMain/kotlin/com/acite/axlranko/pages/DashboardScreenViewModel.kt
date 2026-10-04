@@ -1,5 +1,6 @@
 package com.acite.axlranko.pages
 
+import androidx.compose.ui.unit.dp
 import com.acite.axlranko.IoDispatcher
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -25,6 +26,7 @@ import com.acite.axlranko.pages.components.JOB_ERROR
 import com.acite.axlranko.pages.components.JOB_RUNNING
 import com.acite.axlranko.pages.components.checkpointRows
 import com.acite.axlranko.pages.components.checkpointsForRun
+import com.acite.axlranko.pages.components.clampChartHeight
 import com.acite.axlranko.pages.components.displayedRun
 import com.acite.axlranko.pages.components.evaluationPrefillSelection
 import com.acite.axlranko.pages.components.generateFormDefaults
@@ -32,6 +34,7 @@ import com.acite.axlranko.pages.components.generateFormError
 import com.acite.axlranko.pages.components.generatedSampleItems
 import com.acite.axlranko.pages.components.nearestCheckpoint
 import com.acite.axlranko.pages.components.newlyFailedJob
+import com.acite.axlranko.pages.components.StepChartInteractionStore
 import com.acite.axlranko.pages.components.sectionImages
 import com.acite.axlranko.util.PathPicker
 import com.acite.axlranko.util.checkpointSaveName
@@ -65,6 +68,9 @@ class DashboardScreenViewModel(
 
     private val _uiState = MutableStateFlow(DashboardUiState())
     val uiState: StateFlow<DashboardUiState> = _uiState.asStateFlow()
+
+    /** Survives LazyColumn chart disposal and dashboard polling; never serialized to disk. */
+    internal val chartInteractions = StepChartInteractionStore()
 
     private var pollingJob: Job? = null
     private var hardwareJob: Job? = null
@@ -115,6 +121,7 @@ class DashboardScreenViewModel(
      * pick panel and preview are dropped rather than left pointing at another run's images.
      */
     fun selectRun(runId: String?) {
+        chartInteractions.resetAll()
         val run = runId?.let { id -> _uiState.value.runs.firstOrNull { it.runId == id } }
         _uiState.update {
             it.copy(
@@ -199,6 +206,27 @@ class DashboardScreenViewModel(
     fun setSmoothExtraDp(value: Float) {
         val tenths = (value * 10f).roundToInt().coerceIn(0, 60)
         _uiState.update { it.copy(smoothExtraDp = tenths / 10f, chartViewError = null) }
+    }
+
+    /** The Avg Loss card's grip: apply one drag's vertical delta (dp) to its session height. */
+    fun resizeChartHeightTop(deltaDp: Float) {
+        if (!deltaDp.isFinite()) return
+        _uiState.update {
+            it.copy(chartHeightTop = clampChartHeight(it.chartHeightTop.value + deltaDp).dp)
+        }
+    }
+
+    /** The Train/Loss and Learning Rate cards share one height, so either grip moves both. */
+    fun resizeChartHeightSide(deltaDp: Float) {
+        if (!deltaDp.isFinite()) return
+        _uiState.update {
+            it.copy(chartHeightSide = clampChartHeight(it.chartHeightSide.value + deltaDp).dp)
+        }
+    }
+
+    /** Detach's Reset button: return every step chart to its automatic viewport. */
+    fun resetChartView() {
+        chartInteractions.resetView()
     }
 
     /**
@@ -1235,6 +1263,9 @@ class DashboardScreenViewModel(
                 }.getOrNull()
             }
             val trainStatus = withContext(IoDispatcher) { ipc.trainStatus() }
+            if (_uiState.value.runId != null && _uiState.value.runId != dashboard.runId) {
+                chartInteractions.resetAll()
+            }
             _uiState.update { state ->
                 val generated = generatedJobs
                 // The preview list is the section's own images in the section's own order, so the

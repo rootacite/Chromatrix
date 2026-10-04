@@ -1,7 +1,9 @@
 package com.acite.axlranko.model
 
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.dp
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
@@ -633,6 +635,10 @@ data class DashboardUiState(
     val outlierClip: Float = 0.15f,
     /** Extra thickness of the smoothed stroke, in dp. Saved with [outlierClip] in the run's logs. */
     val smoothExtraDp: Float = 1.2f,
+    /** Height of the Avg Loss card, as the user dragged its grip. Session-only. */
+    val chartHeightTop: Dp = 280.dp,
+    /** Height shared by the Train/Loss and Learning Rate cards. Session-only. */
+    val chartHeightSide: Dp = 220.dp,
     /** Why the last chart-view save failed, if it did. */
     val chartViewError: String? = null,
     /** Epoch length of the run on screen, from `dashboard`. */

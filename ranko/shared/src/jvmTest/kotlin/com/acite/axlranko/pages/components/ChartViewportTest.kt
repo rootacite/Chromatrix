@@ -152,6 +152,24 @@ class ChartViewportTest {
     }
 
     @Test
+    fun yBoundsCoverEveryMappedCurveValue() {
+        val bounds = chartYBounds(listOf(-3f, 20f, 120f), normalized = false)
+        assertEquals(-3f, bounds.min)
+        assertEquals(120f, bounds.max)
+    }
+
+    @Test
+    fun normalizedYBoundsKeepTheBaseRangeAndOutsidePoints() {
+        val base = chartYBounds(listOf(20f, 30f), normalized = true)
+        assertEquals(0f, base.min)
+        assertEquals(100f, base.max)
+
+        val expanded = chartYBounds(listOf(-10f, 120f), normalized = true)
+        assertEquals(-10f, expanded.min)
+        assertEquals(120f, expanded.max)
+    }
+
+    @Test
     fun epochLinesNameTheEpochToTheRightAndSkipTheOrigin() {
         val marks = epochBoundaries(stepsPerEpoch = 10, lastStep = 25f)
         assertEquals(listOf(EpochMark(10f, 2), EpochMark(20f, 3)), marks)

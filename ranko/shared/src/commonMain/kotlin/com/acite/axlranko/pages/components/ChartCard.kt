@@ -2,6 +2,7 @@ package com.acite.axlranko.pages.components
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,10 +14,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -41,6 +44,7 @@ import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.isCtrlPressed
 import androidx.compose.ui.input.pointer.isPrimaryPressed
 import androidx.compose.ui.input.pointer.isShiftPressed
+import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -53,8 +57,10 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.acite.axlranko.model.CheckpointPin
 import com.acite.axlranko.model.MetricPoint
 import com.acite.axlranko.ui.components.PorcelainCard
+import com.acite.axlranko.ui.pointerIconVerticalResize
 import com.acite.axlranko.ui.theme.rankoColors
 import kotlin.math.abs
 import kotlin.math.floor
@@ -64,24 +70,6 @@ import kotlin.math.pow
 import kotlin.math.roundToInt
 
 private data class ChartPoint(val step: Float, val value: Float)
-
-private data class Viewport(
-    val xMin: Float,
-    val xMax: Float,
-    val yMin: Float,
-    val yMax: Float,
-) {
-    val xRange get() = (xMax - xMin).coerceAtLeast(1e-6f)
-    val yRange get() = (yMax - yMin).coerceAtLeast(1e-6f)
-
-    fun clampToBounds(bounds: Viewport): Viewport {
-        val w = xRange.coerceAtMost(bounds.xRange)
-        val h = yRange.coerceAtMost(bounds.yRange)
-        val x0 = if (w >= bounds.xRange) bounds.xMin else xMin.coerceIn(bounds.xMin, bounds.xMax - w)
-        val y0 = if (h >= bounds.yRange) bounds.yMin else yMin.coerceIn(bounds.yMin, bounds.yMax - h)
-        return copy(xMin = x0, xMax = x0 + w, yMin = y0, yMax = y0 + h)
-    }
-}
 
 // Compose Desktop reports ~1.0 per mouse-wheel notch (preciseWheelRotation), not pixels.
 private const val WHEEL_ZOOM_STEP = 1.15f
@@ -126,6 +114,29 @@ internal fun epochBoundaries(stepsPerEpoch: Int?, lastStep: Float): List<EpochMa
     }
     return marks
 }
+
+/**
+ * Steps worth a pinned marker on a chart: pins recorded with a step, deduplicated and ascending.
+ * A pin whose step is unknown (the file is gone) draws nothing — its step is all the marker has.
+ */
+internal fun pinnedMarkerSteps(pins: List<CheckpointPin>): List<Int> =
+    pins.mapNotNull { it.step }.distinct().sorted()
+
+/**
+ * The checkpoint step a pick at [step] would match, mirroring `nearestCheckpoint`'s step rule:
+ * closest wins, a tie prefers the lower step (the state at or before the click). Null when there
+ * is nothing to match.
+ */
+internal fun nearestMarkedStep(steps: List<Int>, step: Float): Int? =
+    steps.minWithOrNull(compareBy({ abs(it - step) }, { it }))
+
+/** The range a chart's height drag accepts, in dp. */
+internal const val CHART_HEIGHT_MIN_DP = 160f
+internal const val CHART_HEIGHT_MAX_DP = 600f
+
+/** Clamp one height drag's result into [CHART_HEIGHT_MIN_DP]..[CHART_HEIGHT_MAX_DP]. */
+internal fun clampChartHeight(dp: Float): Float =
+    dp.coerceIn(CHART_HEIGHT_MIN_DP, CHART_HEIGHT_MAX_DP)
 
 /** Room the right-hand labels of a multi-axis chart need, per axis, mirroring the left padding. */
 internal const val PLOT_RIGHT_PADDING = 52f
@@ -174,12 +185,21 @@ internal fun assignAxisDomains(
     windowX: Pair<Float, Float>,
     outlierClip: Float,
     smoothing: Float,
+    hiddenLabels: Set<String> = emptySet(),
 ): List<ChartSeries> {
-    if (axisCount < 2) return series
+    if (axisCount < 2) {
+        return series.map { item ->
+            if (item.label in hiddenLabels) item.copy(domainMin = null, domainMax = null) else item
+        }
+    }
     val result = series.toMutableList()
     var lastAxisDomain: Pair<Float, Float>? = null
     for (index in series.indices) {
         val item = series[index]
+        if (item.label in hiddenLabels) {
+            result[index] = item.copy(domainMin = null, domainMax = null)
+            continue
+        }
         val explicit = if (item.domainMin != null && item.domainMax != null) {
             item.domainMin to item.domainMax
         } else {
@@ -236,6 +256,21 @@ internal fun axisTickValue(
     domainMin: Float,
     domainMax: Float,
 ): Float = domainMin + ((viewportMin + fraction * viewportSpan) / 100f) * (domainMax - domainMin)
+
+/** Y bounds for every mapped curve, keeping the normalized 0..100 base range when one is used. */
+internal fun chartYBounds(values: List<Float>, normalized: Boolean): ChartWindow {
+    val finite = values.filter { it.isFinite() }
+    if (finite.isEmpty()) {
+        return if (normalized) ChartWindow(0f, 100f) else ChartWindow(0f, 1f)
+    }
+    val min = finite.min()
+    val max = finite.max()
+    return if (normalized) {
+        ChartWindow(minOf(0f, min), maxOf(100f, max))
+    } else {
+        ChartWindow(min, max)
+    }
+}
 
 private fun zoomRange(current: Float, factor: Float, minRange: Float, fullRange: Float): Float {
     if (fullRange <= 1e-9f) return 0f
@@ -398,7 +433,7 @@ data class ChartPickMarkers(
 )
 
 @Composable
-fun ChartCard(
+internal fun ChartCard(
     title: String,
     points: List<MetricPoint>,
     color: Color,
@@ -417,8 +452,16 @@ fun ChartCard(
     showHoverStep: Boolean = false,
     pickMarkers: ChartPickMarkers? = null,
     epochMarks: List<EpochMark> = emptyList(),
+    /** Pinned checkpoint steps, each marked with a permanent "★ step" cursor. */
+    pinnedSteps: List<Int> = emptyList(),
+    /** Checkpoint steps a hover previews the pick at; empty keeps hover to its step readout. */
+    pickSnapSteps: List<Int> = emptyList(),
     /** Extra thickness of the smoothed stroke, in dp. */
     smoothExtraDp: Float = DEFAULT_SMOOTH_EXTRA_DP,
+    chartId: String? = null,
+    interaction: StepChartInteractionStore? = null,
+    /** Vertical drag of the card's bottom grip, in dp; null draws no grip. */
+    onResizeHeight: ((Float) -> Unit)? = null,
 ) {
     MultiSeriesChartCard(
         title = title,
@@ -434,12 +477,17 @@ fun ChartCard(
         showHoverStep = showHoverStep,
         pickMarkers = pickMarkers,
         epochMarks = epochMarks,
+        pinnedSteps = pinnedSteps,
+        pickSnapSteps = pickSnapSteps,
         smoothExtraDp = smoothExtraDp,
+        chartId = chartId,
+        interaction = interaction,
+        onResizeHeight = onResizeHeight,
     )
 }
 
 @Composable
-fun MultiSeriesChartCard(
+internal fun MultiSeriesChartCard(
     title: String,
     series: List<ChartSeries>,
     smoothing: Float,
@@ -460,10 +508,24 @@ fun MultiSeriesChartCard(
     showHoverStep: Boolean = false,
     pickMarkers: ChartPickMarkers? = null,
     epochMarks: List<EpochMark> = emptyList(),
+    /** Pinned checkpoint steps, each marked with a permanent "★ step" cursor. */
+    pinnedSteps: List<Int> = emptyList(),
+    /** Checkpoint steps a hover previews the pick at; empty keeps hover to its step readout. */
+    pickSnapSteps: List<Int> = emptyList(),
     /** Extra thickness of the smoothed stroke, in dp. */
     smoothExtraDp: Float = DEFAULT_SMOOTH_EXTRA_DP,
+    chartId: String? = null,
+    interaction: StepChartInteractionStore? = null,
+    /** Vertical drag of the card's bottom grip, in dp; null draws no grip. */
+    onResizeHeight: ((Float) -> Unit)? = null,
 ) {
     val hasData = series.any { it.points.isNotEmpty() }
+    val hiddenLabels = if (interaction != null && chartId != null) {
+        interaction.hiddenSeries(chartId)
+    } else {
+        emptySet()
+    }
+    val hasVisibleData = series.any { it.label !in hiddenLabels && it.points.isNotEmpty() }
     val colors = rankoColors
     PorcelainCard(modifier = modifier.height(chartHeight)) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -478,45 +540,55 @@ fun MultiSeriesChartCard(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     series.forEach { item ->
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(8.dp)
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(item.color)
-                            )
-                            Text(
-                                item.label,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = colors.textDim,
-                            )
-                        }
+                        SeriesToggleButton(
+                            label = item.label,
+                            color = item.color,
+                            visible = item.label !in hiddenLabels,
+                            onClick = if (interaction != null && chartId != null) {
+                                { interaction.toggleSeries(chartId, item.label) }
+                            } else {
+                                null
+                            },
+                        )
                     }
                 }
             } else {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = if (interaction != null && chartId != null && series.isNotEmpty()) {
+                        Modifier.clickable {
+                            interaction.toggleSeries(chartId, series.first().label)
+                        }
+                    } else {
+                        Modifier
+                    },
                 ) {
                     series.firstOrNull()?.let { item ->
                         Box(
                             modifier = Modifier
                                 .size(10.dp)
                                 .clip(RoundedCornerShape(5.dp))
-                                .background(item.color)
+                                .background(
+                                    item.color.copy(
+                                        alpha = if (item.label in hiddenLabels) 0.35f else 1f,
+                                    ),
+                                )
                         )
                     }
                     Text(
                         title,
                         style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                        color = if (series.firstOrNull()?.label in hiddenLabels) {
+                            colors.textDim.copy(alpha = 0.55f)
+                        } else {
+                            Color.Unspecified
+                        },
                     )
                 }
             }
             Spacer(modifier = Modifier.height(8.dp))
-            if (hasData) {
+            if (hasVisibleData) {
                 InteractiveLineChart(
                     series = series,
                     smoothing = smoothing,
@@ -529,7 +601,12 @@ fun MultiSeriesChartCard(
                     showHoverStep = showHoverStep,
                     pickMarkers = pickMarkers,
                     epochMarks = epochMarks,
+                    pinnedSteps = pinnedSteps,
+                    pickSnapSteps = pickSnapSteps,
                     smoothExtraDp = smoothExtraDp,
+                    hiddenLabels = hiddenLabels,
+                    chartId = chartId,
+                    interaction = interaction,
                 )
             } else {
                 Box(
@@ -537,13 +614,75 @@ fun MultiSeriesChartCard(
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        "No Data",
+                        if (hasData) "No visible series" else "No Data",
                         color = colors.textDim,
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
             }
+            if (onResizeHeight != null) {
+                ChartHeightGrip(onResizeHeight = onResizeHeight)
+            }
         }
+    }
+}
+
+/** Bottom grip: vertical drag resizes the chart card for the rest of the session. */
+@Composable
+private fun ChartHeightGrip(onResizeHeight: (Float) -> Unit) {
+    val colors = rankoColors
+    val density = LocalDensity.current
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(8.dp)
+            .pointerHoverIcon(pointerIconVerticalResize)
+            .pointerInput(onResizeHeight) {
+                detectDragGestures { change, dragAmount ->
+                    change.consume()
+                    onResizeHeight(with(density) { dragAmount.y.toDp().value })
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .width(36.dp)
+                .height(2.dp)
+                .clip(RoundedCornerShape(1.dp))
+                .background(colors.textDim.copy(alpha = 0.55f)),
+        )
+    }
+}
+
+@Composable
+private fun SeriesToggleButton(
+    label: String,
+    color: Color,
+    visible: Boolean,
+    onClick: (() -> Unit)?,
+) {
+    val colors = rankoColors
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        modifier = if (onClick != null) {
+            Modifier.clickable(onClick = onClick)
+        } else {
+            Modifier
+        },
+    ) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .background(color.copy(alpha = if (visible) 1f else 0.35f))
+        )
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = if (visible) colors.textDim else colors.textDim.copy(alpha = 0.5f),
+        )
     }
 }
 
@@ -570,6 +709,7 @@ private fun smoothPoints(points: List<ChartPoint>, smoothing: Float): List<Chart
 }
 
 private data class PreparedSeries(
+    val label: String,
     val color: Color,
     val raw: List<ChartPoint>,
     val smooth: List<ChartPoint>,
@@ -588,18 +728,26 @@ private fun InteractiveLineChart(
     showHoverStep: Boolean = false,
     pickMarkers: ChartPickMarkers? = null,
     epochMarks: List<EpochMark> = emptyList(),
+    pinnedSteps: List<Int> = emptyList(),
+    pickSnapSteps: List<Int> = emptyList(),
     smoothExtraDp: Float = DEFAULT_SMOOTH_EXTRA_DP,
+    hiddenLabels: Set<String> = emptySet(),
+    chartId: String? = null,
+    interaction: StepChartInteractionStore? = null,
 ) {
-    val rawSeries = remember(series) {
+    val rawSeriesAll = remember(series) {
         series.mapNotNull { item ->
             if (item.points.isEmpty()) return@mapNotNull null
             item to item.points.map { ChartPoint(it.step.toFloat(), it.value) }.sortedBy { it.step }
         }
     }
+    val rawSeries = remember(rawSeriesAll, hiddenLabels) {
+        rawSeriesAll.filterNot { (item, _) -> item.label in hiddenLabels }
+    }
     if (rawSeries.isEmpty()) return
 
-    val fullX = remember(rawSeries) {
-        val all = rawSeries.flatMap { it.second }
+    val fullX = remember(rawSeriesAll) {
+        val all = rawSeriesAll.flatMap { it.second }
         all.minOf { it.step } to all.maxOf { it.step }
     }
     // The window the chart opens on — the newest `defaultStepSpan` steps, or the whole range.
@@ -610,14 +758,24 @@ private fun InteractiveLineChart(
     // A multi-axis chart draws each of its first `axisCount` curves through that curve's own range
     // *inside the opening window* — fitted and clipped on that curve alone (`assignAxisDomains`), so
     // curves of different magnitudes are each readable against their own scale.
-    val chartSeries = remember(rawSeries, axisCount, windowX, smoothing, outlierClip) {
+    val autoChartSeries = remember(rawSeriesAll, axisCount, windowX, smoothing, outlierClip, hiddenLabels) {
         assignAxisDomains(
-            series = rawSeries.map { it.first },
+            series = series,
             axisCount = axisCount,
             windowX = windowX,
             outlierClip = outlierClip,
             smoothing = smoothing,
+            hiddenLabels = hiddenLabels,
         )
+    }
+    val frozenDomains = interaction?.state?.axisDomains?.get(chartId)
+    val detached = interaction?.state?.detached == true
+    val chartSeries = remember(autoChartSeries, chartId, interaction, frozenDomains, detached) {
+        if (interaction != null && chartId != null) {
+            interaction.effectiveSeries(chartId, autoChartSeries)
+        } else {
+            autoChartSeries
+        }
     }
     val axisDomains = remember(chartSeries) {
         chartSeries.map { item ->
@@ -629,13 +787,19 @@ private fun InteractiveLineChart(
     // Axis 0 labels the left edge in series 0's units even when that curve has nothing to draw (a
     // run from before the tag was logged); the right-hand axes follow in series order.
     val leftAxis = if (axisCount >= 2) {
-        axisDomains.getOrNull(0)?.let { ChartAxis(it.first, it.second, chartSeries[0].color) }
+        chartSeries.getOrNull(0)
+            ?.takeIf { it.label !in hiddenLabels }
+            ?.let { item -> axisDomains.getOrNull(0)?.let { ChartAxis(it.first, it.second, item.color) } }
     } else {
         null
     }
     val rightAxes = if (axisCount >= 2) {
-        axisDomains.drop(1).take(axisCount - 1).mapIndexedNotNull { offset, domain ->
-            domain?.let { ChartAxis(it.first, it.second, chartSeries[offset + 1].color) }
+        chartSeries.drop(1).take(axisCount - 1).mapIndexedNotNull { offset, item ->
+            if (item.label in hiddenLabels) {
+                null
+            } else {
+                axisDomains.getOrNull(offset + 1)?.let { ChartAxis(it.first, it.second, item.color) }
+            }
         }
     } else {
         emptyList()
@@ -643,41 +807,53 @@ private fun InteractiveLineChart(
     val rightPad = PLOT_RIGHT_PADDING * rightAxes.size
 
     val prepared = remember(rawSeries, chartSeries, smoothing) {
-        rawSeries.mapIndexed { index, (_, points) ->
-            val item = chartSeries[index]
-            val raw = points.map { ChartPoint(it.step, mapSeriesY(it.value, item)) }
-            PreparedSeries(color = item.color, raw = raw, smooth = smoothPoints(raw, smoothing))
+        rawSeries.mapNotNull { (item, points) ->
+            val preparedItem = chartSeries.firstOrNull { it.label == item.label } ?: item
+            val raw = points.map { ChartPoint(it.step, mapSeriesY(it.value, preparedItem)) }
+            PreparedSeries(
+                label = item.label,
+                color = preparedItem.color,
+                raw = raw,
+                smooth = smoothPoints(raw, smoothing),
+            )
         }
     }
 
-    val allMapped = remember(prepared) { prepared.flatMap { it.raw } }
+    val visiblePrepared = remember(prepared, hiddenLabels) {
+        prepared.filter { it.label !in hiddenLabels }
+    }
+    val allMapped = remember(visiblePrepared) { visiblePrepared.flatMap { it.raw } }
+    if (allMapped.isEmpty()) return
     // A chart whose series carry their own ranges draws in the normalized space (see
     // `chartUsesOwnDomains`), which is what the hardware charts' fixed 0–100 axes rely on.
     val normalized = remember(chartSeries) { chartUsesOwnDomains(chartSeries) }
 
-    val fullBounds = remember(fullX, allMapped, normalized) {
-        Viewport(
+    val fullYBounds = remember(allMapped, normalized) {
+        chartYBounds(allMapped.map { it.value }, normalized)
+    }
+    val fullBounds = remember(fullX, fullYBounds) {
+        ChartViewport(
             xMin = fullX.first,
             xMax = fullX.second,
-            yMin = if (normalized) 0f else allMapped.minOf { it.value },
-            yMax = if (normalized) 100f else allMapped.maxOf { it.value },
+            yMin = fullYBounds.min,
+            yMax = fullYBounds.max,
         )
     }
 
     // The fit reads the smoothed curves inside the window, per series (`fittedYRange` explains why
     // pooling them would trim a sparse validation curve's values off the axis). fullBounds stays the
     // raw min/max, so a pan can still reach a spike this fit clipped.
-    val initialViewport = remember(prepared, windowX, outlierClip, normalized) {
+    val initialViewport = remember(visiblePrepared, windowX, outlierClip, normalized) {
         if (normalized) {
-            Viewport(xMin = windowX.first, xMax = windowX.second, yMin = 0f, yMax = 100f)
+            ChartViewport(xMin = windowX.first, xMax = windowX.second, yMin = 0f, yMax = 100f)
         } else {
-            val windowed = prepared.map { series ->
+            val windowed = visiblePrepared.map { series ->
                 series.smooth
                     .filter { it.step >= windowX.first && it.step <= windowX.second }
                     .map { it.value }
             }
             val fitted = fittedYRange(series = windowed, outlierClip = outlierClip)
-            Viewport(
+            ChartViewport(
                 xMin = windowX.first,
                 xMax = windowX.second,
                 yMin = fitted?.first ?: 0f,
@@ -686,15 +862,52 @@ private fun InteractiveLineChart(
         }
     }
 
-    // The pick handler outlives recompositions, so it reads the viewport through the state
-    // object instead of capturing the value it was composed with.
-    val viewportState = remember(initialViewport) { mutableStateOf(initialViewport) }
-    var viewport by viewportState
+    val autoViewport = initialViewport
+    SideEffect {
+        if (interaction != null && chartId != null) {
+            interaction.reportAuto(
+                chartId = chartId,
+                viewport = autoViewport,
+                domains = autoChartSeries.associate {
+                    it.label to ChartAxisDomain(it.domainMin, it.domainMax)
+                },
+                xBounds = ChartWindow(fullX.first, fullX.second),
+            )
+        }
+    }
+
+    val localViewportState = remember(autoViewport) { mutableStateOf(autoViewport) }
+    val viewport = if (interaction != null && chartId != null) {
+        interaction.effectiveViewport(chartId, autoViewport)
+    } else {
+        localViewportState.value
+    }
+    val viewportState = rememberUpdatedState(viewport)
     val canvasOrigin = remember { mutableStateOf(Offset.Zero) }
     val pickHandler = rememberUpdatedState(onPickStep)
-    // Pointer x while the mouse is over the plot. Read from the draw phase, so moving the mouse
-    // repaints the canvas without recomposing the card.
-    val hoverX = remember { mutableStateOf<Float?>(null) }
+    val localHoverStep = remember { mutableStateOf<Float?>(null) }
+
+    fun commitViewport(next: ChartViewport, xChanged: Boolean, yChanged: Boolean) {
+        val previous = viewportState.value
+        val clamped = if (interaction != null && chartId != null) {
+            val x = next.xWindow.clampTo(interaction.globalXBounds() ?: fullBounds.xWindow)
+            val y = next.yWindow.clampTo(fullBounds.yWindow)
+            ChartViewport(x.min, x.max, y.min, y.max)
+        } else {
+            next.clampToBounds(fullBounds)
+        }
+        if (interaction != null && chartId != null) {
+            interaction.updateViewport(
+                chartId = chartId,
+                previous = previous,
+                next = clamped,
+                xChanged = xChanged,
+                yChanged = yChanged,
+            )
+        } else {
+            localViewportState.value = clamped
+        }
+    }
 
     val avgStepGap = remember(allMapped) {
         val xs = allMapped.map { it.step }.distinct().sorted()
@@ -710,7 +923,7 @@ private fun InteractiveLineChart(
         if (fullBounds.yRange <= 1e-9f) 0f else maxOf(fullBounds.yRange * 0.02f, 1e-6f)
     }
 
-    fun visibleSlice(all: List<ChartPoint>, vp: Viewport): List<ChartPoint> {
+    fun visibleSlice(all: List<ChartPoint>, vp: ChartViewport): List<ChartPoint> {
         if (all.isEmpty()) return emptyList()
         val lo = vp.xMin - vp.xRange * 0.05f
         val hi = vp.xMax + vp.xRange * 0.05f
@@ -723,10 +936,10 @@ private fun InteractiveLineChart(
     // Keyed on the state holder, not only the points. A wider Steps window replaces that holder;
     // a slice still reading the previous one draws the old curve into the new range and leaves
     // the left of the plot empty.
-    val visibleSeries by remember(prepared, viewportState) {
+    val visibleSeries by remember(visiblePrepared, viewportState) {
         derivedStateOf {
             val vp = viewportState.value
-            prepared.map { item ->
+            visiblePrepared.map { item ->
                 item.copy(
                     raw = lttbDownsample(visibleSlice(item.raw, vp), MAX_DRAW_POINTS),
                     smooth = lttbDownsample(visibleSlice(item.smooth, vp), MAX_DRAW_POINTS),
@@ -756,15 +969,19 @@ private fun InteractiveLineChart(
                         return@detectDragGestures
                     }
                     change.consume()
-                    val vp = viewport
+                    val vp = viewportState.value
                     val moveX = -(dx / plotW) * vp.xRange
                     val moveY = (dy / plotH) * vp.yRange
-                    viewport = Viewport(
-                        xMin = vp.xMin + moveX,
-                        xMax = vp.xMax + moveX,
-                        yMin = vp.yMin + moveY,
-                        yMax = vp.yMax + moveY,
-                    ).clampToBounds(fullBounds)
+                    commitViewport(
+                        next = ChartViewport(
+                            xMin = vp.xMin + moveX,
+                            xMax = vp.xMax + moveX,
+                            yMin = vp.yMin + moveY,
+                            yMax = vp.yMax + moveY,
+                        ),
+                        xChanged = dx != 0f,
+                        yChanged = dy != 0f,
+                    )
                 },
             )
         }
@@ -795,9 +1012,10 @@ private fun InteractiveLineChart(
                     val plotW = (size.width.toFloat() - PLOT_LEFT_PADDING - rightPad).coerceAtLeast(1f)
                     val plotH = (size.height.toFloat() - PLOT_BOTTOM_PADDING).coerceAtLeast(1f)
                     val factor = WHEEL_ZOOM_STEP.pow(-amount * WHEEL_ZOOM_INTENSITY)
-                    val vp = viewport
+                    val vp = viewportState.value
+                    val xFullRange = interaction?.globalXBounds()?.range ?: fullBounds.xRange
                     val newXRange = if (zoomX) {
-                        zoomRange(vp.xRange, factor, minXRange, fullBounds.xRange)
+                        zoomRange(vp.xRange, factor, minXRange, xFullRange)
                     } else {
                         vp.xRange
                     }
@@ -815,12 +1033,16 @@ private fun InteractiveLineChart(
                     val newYMin = dataY - (1f - yFrac) * newYRange
 
                     change.consume()
-                    viewport = Viewport(
-                        xMin = newXMin,
-                        xMax = newXMin + newXRange,
-                        yMin = newYMin,
-                        yMax = newYMin + newYRange,
-                    ).clampToBounds(fullBounds)
+                    commitViewport(
+                        next = ChartViewport(
+                            xMin = newXMin,
+                            xMax = newXMin + newXRange,
+                            yMin = newYMin,
+                            yMax = newYMin + newYRange,
+                        ),
+                        xChanged = zoomX,
+                        yChanged = zoomY,
+                    )
                 }
             }
         }
@@ -882,6 +1104,7 @@ private fun InteractiveLineChart(
             }
         }
 
+    val visiblePreparedState = rememberUpdatedState(visiblePrepared)
     val strokeDensity = LocalDensity.current.density
     Canvas(
         modifier = gestureModifier
@@ -895,19 +1118,49 @@ private fun InteractiveLineChart(
                         val event = awaitPointerEvent()
                         val change = event.changes.firstOrNull() ?: continue
                         if (change.type != PointerType.Mouse) continue
-                        hoverX.value = when (event.type) {
+                        when (event.type) {
                             PointerEventType.Enter,
                             PointerEventType.Move,
                             -> {
+                                val plotW = (size.width.toFloat() - PLOT_LEFT_PADDING - rightPad).coerceAtLeast(1f)
                                 val plotH = (size.height.toFloat() - PLOT_BOTTOM_PADDING).coerceAtLeast(1f)
-                                if (change.position.y > plotH || change.position.x < PLOT_LEFT_PADDING) {
+                                val rawStep = if (change.position.y > plotH || change.position.x < PLOT_LEFT_PADDING) {
                                     null
                                 } else {
-                                    change.position.x
+                                    stepAtPlotX(
+                                        change.position.x,
+                                        plotW,
+                                        viewportState.value.xMin,
+                                        viewportState.value.xRange,
+                                    )
+                                }
+                                val anchor = rawStep?.let {
+                                    nearestPointByStep(
+                                        visiblePreparedState.value.firstOrNull()?.raw.orEmpty(),
+                                        it,
+                                    )
+                                }
+                                val hoverStep = anchor?.step ?: rawStep
+                                if (hoverStep == null) {
+                                    if (interaction != null && chartId != null) {
+                                        interaction.clearHover(chartId)
+                                    } else {
+                                        localHoverStep.value = null
+                                    }
+                                } else if (interaction != null && chartId != null) {
+                                    interaction.setHover(chartId, hoverStep)
+                                } else {
+                                    localHoverStep.value = hoverStep
                                 }
                             }
 
-                            PointerEventType.Exit -> null
+                            PointerEventType.Exit -> {
+                                if (interaction != null && chartId != null) {
+                                    interaction.clearHover(chartId)
+                                } else {
+                                    localHoverStep.value = null
+                                }
+                            }
 
                             else -> continue
                         }
@@ -984,6 +1237,37 @@ private fun InteractiveLineChart(
                 }
             }
 
+            // Hover resolves to the checkpoint a pick at this step would match, so the marker a
+            // click would fix is previewed on the spot before the click.
+            val hoverStep = if (interaction != null && chartId != null) {
+                interaction.state.hoverStep
+            } else {
+                localHoverStep.value
+            }
+            val hoverPickStep = if (pickSnapSteps.isEmpty()) {
+                null
+            } else {
+                hoverStep?.takeIf { it.isFinite() }?.let { nearestMarkedStep(pickSnapSteps, it) }
+            }
+            val matchedStep = pickMarkers?.matchedStep
+
+            // A pinned checkpoint keeps a permanent "★ step" cursor on every step chart; the
+            // brighter pick markers take over where both would land on the same step.
+            for (step in pinnedSteps) {
+                if (step == matchedStep || step == hoverPickStep) continue
+                drawPinnedCheckpointMarker(
+                    step = step,
+                    vp = vp,
+                    leftPad = leftPad,
+                    plotW = plotW,
+                    plotH = plotH,
+                    plotRight = w,
+                    textMeasurer = textMeasurer,
+                    labelStyle = labelStyle,
+                    accent = colors.accentPink,
+                )
+            }
+
             // The Ctrl+click that the panel is showing: the clicked step stays subtle, the step the
             // pick actually matched gets the loud marker, so the snapping is visible.
             pickMarkers?.let { markers ->
@@ -997,41 +1281,41 @@ private fun InteractiveLineChart(
                         pathEffect = PathEffect.dashPathEffect(floatArrayOf(5f, 5f)),
                     )
                 }
-                val matched = markers.matchedStep
-                val matchedX = matched?.let { stepToScreenX(it.toFloat(), vp, leftPad, plotW) }
-                if (matched != null && matchedX != null) {
-                    val accent = colors.accentPink
-                    drawLine(accent, Offset(matchedX, 0f), Offset(matchedX, plotH), strokeWidth = 2.5f)
-                    drawCircle(accent, radius = 4.5f, center = Offset(matchedX, 5f))
-                    // Small flag pointing down at the axis, inside the plot rect so it is not clipped.
-                    drawPath(
-                        Path().apply {
-                            moveTo(matchedX, plotH)
-                            lineTo(matchedX - 6f, plotH - 9f)
-                            lineTo(matchedX + 6f, plotH - 9f)
-                            close()
-                        },
-                        accent,
-                    )
-                    drawMarkerLabel(
-                        text = "ckpt $matched",
-                        centerX = matchedX,
-                        topY = 3f,
-                        plotLeft = leftPad,
+                matchedStep?.let { matched ->
+                    drawCheckpointMarker(
+                        step = matched,
+                        vp = vp,
+                        leftPad = leftPad,
+                        plotW = plotW,
+                        plotH = plotH,
                         plotRight = w,
                         textMeasurer = textMeasurer,
-                        style = labelStyle.copy(color = Color.White, fontWeight = FontWeight.Bold),
-                        background = accent.copy(alpha = 0.92f),
+                        labelStyle = labelStyle,
+                        accent = colors.accentPink,
                     )
                 }
             }
 
+            // A hover previews the same marker at 75% strength until a click makes it permanent.
+            if (hoverPickStep != null && hoverPickStep != matchedStep) {
+                drawCheckpointMarker(
+                    step = hoverPickStep,
+                    vp = vp,
+                    leftPad = leftPad,
+                    plotW = plotW,
+                    plotH = plotH,
+                    plotRight = w,
+                    textMeasurer = textMeasurer,
+                    labelStyle = labelStyle,
+                    accent = colors.accentPink,
+                    alpha = 0.75f,
+                )
+            }
+
             // Always-on readout: the exact step under the pointer.
-            hoverX.value?.let { x ->
-                val step = stepAtPlotX(x, plotW, vp.xMin, vp.xRange)
-                val anchor = step?.let { nearestPointByStep(prepared.first().raw, it) }
-                if (anchor != null) {
-                    val lineX = stepToScreenX(anchor.step, vp, leftPad, plotW)
+            hoverStep?.let { step ->
+                if (step.isFinite()) {
+                    val lineX = stepToScreenX(step, vp, leftPad, plotW)
                     if (lineX != null) {
                         drawLine(
                             colors.text.copy(alpha = 0.55f),
@@ -1041,7 +1325,7 @@ private fun InteractiveLineChart(
                         )
                         drawCircle(colors.text, radius = 3f, center = Offset(lineX, plotH))
                         drawMarkerLabel(
-                            text = "step ${anchor.step.roundToInt()}",
+                            text = "step ${step.roundToInt()}",
                             centerX = lineX,
                             topY = plotH - 20f,
                             plotLeft = leftPad,
@@ -1058,7 +1342,7 @@ private fun InteractiveLineChart(
 }
 
 /** Screen x of a data step, or null when it is outside the visible viewport. */
-private fun stepToScreenX(step: Float, vp: Viewport, leftPad: Float, plotW: Float): Float? {
+private fun stepToScreenX(step: Float, vp: ChartViewport, leftPad: Float, plotW: Float): Float? {
     if (step < vp.xMin - 1e-3f || step > vp.xMax + 1e-3f) return null
     return leftPad + ((step - vp.xMin) / vp.xRange) * plotW
 }
@@ -1066,6 +1350,87 @@ private fun stepToScreenX(step: Float, vp: Viewport, leftPad: Float, plotW: Floa
 /** Closest logged step, so the readout always names a step that was actually logged. */
 private fun nearestPointByStep(points: List<ChartPoint>, step: Float): ChartPoint? =
     points.minByOrNull { abs(it.step - step) }
+
+/**
+ * The checkpoint cursor a pick (or a hover preview) marks: a solid vertical line, a dot at the top
+ * and a flag at the axis, with the `ckpt x` label on top. [alpha] fades the hover preview.
+ */
+private fun DrawScope.drawCheckpointMarker(
+    step: Int,
+    vp: ChartViewport,
+    leftPad: Float,
+    plotW: Float,
+    plotH: Float,
+    plotRight: Float,
+    textMeasurer: TextMeasurer,
+    labelStyle: TextStyle,
+    accent: Color,
+    alpha: Float = 1f,
+) {
+    val x = stepToScreenX(step.toFloat(), vp, leftPad, plotW) ?: return
+    drawLine(
+        accent.copy(alpha = alpha),
+        Offset(x, 0f),
+        Offset(x, plotH),
+        strokeWidth = 2.5f,
+    )
+    drawCircle(accent.copy(alpha = alpha), radius = 4.5f, center = Offset(x, 5f))
+    // Small flag pointing down at the axis, inside the plot rect so it is not clipped.
+    drawPath(
+        Path().apply {
+            moveTo(x, plotH)
+            lineTo(x - 6f, plotH - 9f)
+            lineTo(x + 6f, plotH - 9f)
+            close()
+        },
+        accent.copy(alpha = alpha),
+    )
+    drawMarkerLabel(
+        text = "ckpt $step",
+        centerX = x,
+        topY = 3f,
+        plotLeft = leftPad,
+        plotRight = plotRight,
+        textMeasurer = textMeasurer,
+        style = labelStyle.copy(color = Color.White.copy(alpha = alpha), fontWeight = FontWeight.Bold),
+        background = accent.copy(alpha = 0.92f * alpha),
+    )
+}
+
+/**
+ * A pinned checkpoint's permanent cursor: a heavier dashed vertical line with a `★ step` label
+ * on top — the star names the pin without the solid `ckpt x` pick marker's dot and flag.
+ */
+private fun DrawScope.drawPinnedCheckpointMarker(
+    step: Int,
+    vp: ChartViewport,
+    leftPad: Float,
+    plotW: Float,
+    plotH: Float,
+    plotRight: Float,
+    textMeasurer: TextMeasurer,
+    labelStyle: TextStyle,
+    accent: Color,
+) {
+    val x = stepToScreenX(step.toFloat(), vp, leftPad, plotW) ?: return
+    drawLine(
+        accent,
+        Offset(x, 0f),
+        Offset(x, plotH),
+        strokeWidth = 2.2f,
+        pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 6f)),
+    )
+    drawMarkerLabel(
+        text = "★ $step",
+        centerX = x,
+        topY = 3f,
+        plotLeft = leftPad,
+        plotRight = plotRight,
+        textMeasurer = textMeasurer,
+        style = labelStyle.copy(color = Color.White, fontWeight = FontWeight.Bold),
+        background = accent.copy(alpha = 0.92f),
+    )
+}
 
 private fun DrawScope.drawMarkerLabel(
     text: String,
@@ -1093,7 +1458,7 @@ private fun DrawScope.drawMarkerLabel(
 }
 
 private fun DrawScope.drawGridAndLabels(
-    vp: Viewport,
+    vp: ChartViewport,
     plotW: Float,
     plotH: Float,
     leftPad: Float,

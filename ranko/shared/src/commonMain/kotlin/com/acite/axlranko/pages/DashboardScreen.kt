@@ -120,6 +120,7 @@ import com.acite.axlranko.pages.components.ClearedSamplesStatus
 import com.acite.axlranko.pages.components.CompactMetric
 import com.acite.axlranko.pages.components.DashboardSectionHeader
 import com.acite.axlranko.pages.components.epochBoundaries
+import com.acite.axlranko.pages.components.pinnedMarkerSteps
 import com.acite.axlranko.pages.components.EvaluationDialog
 import com.acite.axlranko.pages.components.PAGE_PANEL_MARGIN
 import com.acite.axlranko.pages.components.evaluationRecallHeadline
@@ -140,6 +141,10 @@ import com.acite.axlranko.pages.components.SAMPLES_PER_ROW
 import com.acite.axlranko.pages.components.SAMPLE_SLOT_SPACING
 import com.acite.axlranko.pages.components.SAMPLE_THUMB_ASPECT
 import com.acite.axlranko.pages.components.SampleSlot
+import com.acite.axlranko.pages.components.STEP_CHART_AVG_LOSS
+import com.acite.axlranko.pages.components.STEP_CHART_LEARNING_RATE
+import com.acite.axlranko.pages.components.STEP_CHART_TRAIN_LOSS
+import com.acite.axlranko.pages.components.StepChartInteractionStore
 import com.acite.axlranko.pages.components.TrainControlCard
 import com.acite.axlranko.pages.components.batchProgressLabel
 import com.acite.axlranko.pages.components.batchHeadline
@@ -327,6 +332,10 @@ fun DashboardScreen(
                         onOutlierClip = viewModel::setOutlierClip,
                         onSmoothExtra = viewModel::setSmoothExtraDp,
                         onChartViewFinished = viewModel::saveChartView,
+                        onResetChartView = viewModel::resetChartView,
+                        onResizeTopHeight = viewModel::resizeChartHeightTop,
+                        onResizeSideHeight = viewModel::resizeChartHeightSide,
+                        chartInteractions = viewModel.chartInteractions,
                     )
                 }
 
@@ -591,9 +600,15 @@ fun DashboardScreen(
                 newJobIds = uiState.sessionJobIds,
                 exportInFlightPath = uiState.exportInFlightPath,
                 exportResult = uiState.exportResult,
+                pinned = pick.checkpoint != null &&
+                    uiState.checkpointPins.any { it.path == pick.checkpoint.path },
+                pinning = uiState.pinningPath == pick.checkpoint?.path,
+                pinEnabled = uiState.pinningPath == null,
+                pinsError = uiState.pinsError,
                 onResize = viewModel::setChartPanelSize,
                 onOpenSample = { viewModel.openPreview(it) },
                 onSaveAs = viewModel::saveCheckpointAs,
+                onTogglePin = viewModel::toggleCheckpointPin,
                 onToggleForm = viewModel::toggleGenerateForm,
                 onUpdateForm = viewModel::updateChartPickForm,
                 onGenerate = { rowStep -> viewModel.generateSample(rowStep) },
@@ -821,11 +836,15 @@ internal fun MetricsSection(uiState: DashboardUiState, portrait: Boolean) {
 @Composable
 private fun ChartsSection(
     uiState: DashboardUiState,
+    chartInteractions: StepChartInteractionStore,
     onPickStep: (Float, Offset) -> Unit,
     onStepSpan: (Float) -> Unit,
     onOutlierClip: (Float) -> Unit,
     onSmoothExtra: (Float) -> Unit,
     onChartViewFinished: () -> Unit,
+    onResetChartView: () -> Unit,
+    onResizeTopHeight: (Float) -> Unit,
+    onResizeSideHeight: (Float) -> Unit,
 ) {
     val metrics = uiState.metrics
     val smoothing = uiState.smoothing
@@ -833,6 +852,10 @@ private fun ChartsSection(
     val colors = rankoColors
     val pickMarkers = uiState.chartPick?.let {
         ChartPickMarkers(clickedStep = it.step, matchedStep = it.checkpoint?.step)
+    }
+    val pinnedSteps = remember(uiState.checkpointPins) { pinnedMarkerSteps(uiState.checkpointPins) }
+    val pickSnapSteps = remember(uiState.checkpoints) {
+        uiState.checkpoints.mapNotNull { it.step }.distinct().sorted()
     }
     val avgPoints = metrics["Train/Avg_Loss"].orEmpty()
     val valAvgPoints = metrics["Val/Avg_Loss"].orEmpty()
@@ -877,6 +900,26 @@ private fun ChartsSection(
                     modifier = Modifier.weight(1f),
                 )
             }
+            if (chartInteractions.state.detached) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        text = "Detach · viewport held",
+                        color = colors.accentPink,
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    CapsuleButton(
+                        text = "Reset",
+                        onClick = onResetChartView,
+                        compact = true,
+                        emphasized = true,
+                    )
+                }
+            }
             uiState.chartViewError?.let { message ->
                 Text(
                     text = message,
@@ -900,14 +943,19 @@ private fun ChartsSection(
                 modifier = Modifier.fillMaxWidth(),
                 outlierClip = uiState.outlierClip,
                 strokeWidth = stroke,
-                chartHeight = 280.dp,
+                chartHeight = uiState.chartHeightTop,
                 showLegend = true,
                 defaultStepSpan = uiState.stepSpan,
                 onPickStep = onPickStep,
                 showHoverStep = true,
                 pickMarkers = pickMarkers,
                 epochMarks = epochMarks,
+                pinnedSteps = pinnedSteps,
+                pickSnapSteps = pickSnapSteps,
                 smoothExtraDp = uiState.smoothExtraDp,
+                chartId = STEP_CHART_AVG_LOSS,
+                interaction = chartInteractions,
+                onResizeHeight = onResizeTopHeight,
             )
             if (isWide) {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
@@ -921,6 +969,11 @@ private fun ChartsSection(
                         uiState.outlierClip,
                         uiState.smoothExtraDp,
                         Modifier.weight(1f),
+                        STEP_CHART_TRAIN_LOSS,
+                        chartInteractions,
+                        pinnedSteps,
+                        uiState.chartHeightSide,
+                        onResizeSideHeight,
                     )
                     LearningRateChartCard(
                         metrics = metrics,
@@ -931,6 +984,11 @@ private fun ChartsSection(
                         stepSpan = uiState.stepSpan,
                         smoothExtraDp = uiState.smoothExtraDp,
                         modifier = Modifier.weight(1f),
+                        chartId = STEP_CHART_LEARNING_RATE,
+                        interaction = chartInteractions,
+                        pinnedSteps = pinnedSteps,
+                        chartHeight = uiState.chartHeightSide,
+                        onResizeHeight = onResizeSideHeight,
                     )
                 }
             } else {
@@ -944,6 +1002,11 @@ private fun ChartsSection(
                     uiState.outlierClip,
                     uiState.smoothExtraDp,
                     Modifier.fillMaxWidth(),
+                    STEP_CHART_TRAIN_LOSS,
+                    chartInteractions,
+                    pinnedSteps,
+                    uiState.chartHeightSide,
+                    onResizeSideHeight,
                 )
                 LearningRateChartCard(
                     metrics = metrics,
@@ -954,6 +1017,11 @@ private fun ChartsSection(
                     stepSpan = uiState.stepSpan,
                     smoothExtraDp = uiState.smoothExtraDp,
                     modifier = Modifier.fillMaxWidth(),
+                    chartId = STEP_CHART_LEARNING_RATE,
+                    interaction = chartInteractions,
+                    pinnedSteps = pinnedSteps,
+                    chartHeight = uiState.chartHeightSide,
+                    onResizeHeight = onResizeSideHeight,
                 )
             }
         }
@@ -972,6 +1040,11 @@ private fun TrainingChartCard(
     outlierClip: Float,
     smoothExtraDp: Float,
     modifier: Modifier,
+    chartId: String,
+    interaction: StepChartInteractionStore,
+    pinnedSteps: List<Int>,
+    chartHeight: Dp,
+    onResizeHeight: (Float) -> Unit,
 ) {
     ChartCard(
         title = title,
@@ -984,6 +1057,11 @@ private fun TrainingChartCard(
         defaultStepSpan = stepSpan,
         showHoverStep = true,
         smoothExtraDp = smoothExtraDp,
+        chartId = chartId,
+        interaction = interaction,
+        pinnedSteps = pinnedSteps,
+        chartHeight = chartHeight,
+        onResizeHeight = onResizeHeight,
     )
 }
 
@@ -1004,6 +1082,11 @@ private fun LearningRateChartCard(
     stepSpan: Float,
     smoothExtraDp: Float,
     modifier: Modifier,
+    chartId: String,
+    interaction: StepChartInteractionStore,
+    pinnedSteps: List<Int>,
+    chartHeight: Dp,
+    onResizeHeight: (Float) -> Unit,
 ) {
     val colors = rankoColors
     val variance = rollingPopulationVariance(metrics["Val/Fixed_Loss"].orEmpty(), stepsPerEpoch)
@@ -1023,6 +1106,11 @@ private fun LearningRateChartCard(
         smoothExtraDp = smoothExtraDp,
         axisCount = 3,
         showHoverStep = true,
+        chartId = chartId,
+        interaction = interaction,
+        pinnedSteps = pinnedSteps,
+        chartHeight = chartHeight,
+        onResizeHeight = onResizeHeight,
     )
 }
 
@@ -1834,9 +1922,14 @@ private fun CheckpointPanelOverlay(
     newJobIds: Set<String>,
     exportInFlightPath: String?,
     exportResult: CheckpointExport?,
+    pinned: Boolean,
+    pinning: Boolean,
+    pinEnabled: Boolean,
+    pinsError: String?,
     onResize: (DpSize) -> Unit,
     onOpenSample: (SampleItem) -> Unit,
     onSaveAs: (CheckpointItem) -> Unit,
+    onTogglePin: (CheckpointItem) -> Unit,
     onToggleForm: () -> Unit,
     onUpdateForm: (ChartPickState.() -> ChartPickState) -> Unit,
     onGenerate: (Int?) -> Unit,
@@ -1957,8 +2050,13 @@ private fun CheckpointPanelOverlay(
                         showSetBadges = showsSampleSetBadges(samples),
                         exportInFlightPath = exportInFlightPath,
                         exportResult = exportResult,
+                        pinned = pinned,
+                        pinning = pinning,
+                        pinEnabled = pinEnabled,
+                        pinsError = pinsError,
                         onOpenSample = onOpenSample,
                         onSaveAs = onSaveAs,
+                        onTogglePin = onTogglePin,
                         onToggleForm = onToggleForm,
                         onUpdateForm = onUpdateForm,
                         onGenerate = onGenerate,
@@ -2041,8 +2139,13 @@ private fun CheckpointPanelBody(
     showSetBadges: Boolean,
     exportInFlightPath: String?,
     exportResult: CheckpointExport?,
+    pinned: Boolean,
+    pinning: Boolean,
+    pinEnabled: Boolean,
+    pinsError: String?,
     onOpenSample: (SampleItem) -> Unit,
     onSaveAs: (CheckpointItem) -> Unit,
+    onTogglePin: (CheckpointItem) -> Unit,
     onToggleForm: () -> Unit,
     onUpdateForm: (ChartPickState.() -> ChartPickState) -> Unit,
     onGenerate: (Int?) -> Unit,
@@ -2084,6 +2187,9 @@ private fun CheckpointPanelBody(
     pick.error?.let { message ->
         Text(message, style = MaterialTheme.typography.labelSmall, color = colors.qualityRed)
     }
+    pinsError?.let { message ->
+        Text("Pin failed: $message", style = MaterialTheme.typography.labelSmall, color = colors.qualityRed)
+    }
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -2092,6 +2198,26 @@ private fun CheckpointPanelBody(
     ) {
         val savingCheckpoint = exportInFlightPath != null &&
             exportInFlightPath == pick.checkpoint?.path
+        val pinLabel = when {
+            pinning -> "Pinning…"
+            pinned -> "Unpin"
+            else -> "Pin"
+        }
+        CapsuleButton(
+            text = pinLabel,
+            onClick = { pick.checkpoint?.let(onTogglePin) },
+            enabled = pick.checkpoint != null && pinEnabled,
+            emphasized = pinned,
+            compact = true,
+        ) {
+            Icon(
+                imageVector = if (pinned) Icons.Filled.PushPin else Icons.Outlined.PushPin,
+                contentDescription = pinLabel,
+                modifier = Modifier.size(16.dp),
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(pinLabel, fontWeight = FontWeight.SemiBold)
+        }
         CapsuleButton(
             text = if (savingCheckpoint) "Saving…" else "Save As",
             onClick = { pick.checkpoint?.let(onSaveAs) },
