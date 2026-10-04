@@ -244,6 +244,17 @@ VAL_SAMPLE_COUNT_RANGE = (1, 64)
 VAL_INTERVAL_RANGE = (0, 100000)
 
 
+def custom_validation_path(cfg: Any) -> Optional[Path]:
+    """The configured validation-set directory, or ``None`` when the feature is off.
+
+    A non-empty ``[training].val_data_dir`` is the feature's enable flag. It overrides the
+    percentage split: every training image stays in training and this directory supplies both
+    validation passes instead.
+    """
+    raw = str(getattr(cfg, "val_data_dir", "") or "").strip()
+    return Path(raw).expanduser() if raw else None
+
+
 @dataclass(frozen=True)
 class SampleSet:
     """One `[[validation.samples]]` entry with every key resolved."""
@@ -635,6 +646,9 @@ class TrainConfig:
     val_split_percent: float = get_val("val_split_percent", 10.0)
     val_sample_count: int = get_val("val_sample_count", 8)
     val_interval: int = get_val("val_interval", 5)
+    # Optional validation-set directory. Non-empty enables it and overrides `val_split_percent`:
+    # every training image stays in training and this directory supplies both validation passes.
+    val_data_dir: str = get_val("val_data_dir", "")
 
     # Resume: kohya LoRA .safetensors (or its directory) to load before training
     resume_lora_path: str = get_val("resume_lora_path", "")
@@ -741,6 +755,10 @@ class TrainConfig:
         for key in ("samples", "train_data"):
             if key in declared and key not in values:
                 values[key] = []
+        # A run snapshot from before this feature existed means "no custom validation set", even
+        # when today's repo config happens to name one.
+        if "val_data_dir" in declared and "val_data_dir" not in values:
+            values["val_data_dir"] = ""
         return cls(**values)
 
     def __post_init__(self) -> None:
@@ -789,10 +807,10 @@ class TrainConfig:
         except ValueError as exc:
             raise ValueError(f"val_split_percent: {exc}") from exc
         _check_range("val_split_percent", split_percent, VAL_SPLIT_PERCENT_RANGE)
-        # `val_split_percent = 0` is the feature's off switch: nothing is held out, no pass runs, and
-        # the other two numbers are inert, so their ranges are only enforced while the split is on.
-        # The Utils form greys them in the same state (`validationOptionsEnabled`).
-        if split_percent > 0:
+        # `val_split_percent = 0` is the split's off switch. A custom validation directory is an
+        # independent source and keeps the two pass controls live even when the split is 0.
+        custom_path = custom_validation_path(self)
+        if split_percent > 0 or custom_path is not None:
             for key, value, bounds in (
                 ("val_sample_count", self.val_sample_count, VAL_SAMPLE_COUNT_RANGE),
                 ("val_interval", self.val_interval, VAL_INTERVAL_RANGE),

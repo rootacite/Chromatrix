@@ -11,6 +11,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.unit.dp
 import com.acite.axlranko.model.MetricPoint
+import com.acite.axlranko.ui.theme.SparkCompareLine
 import com.acite.axlranko.ui.theme.SparkSlopeHigh
 import com.acite.axlranko.ui.theme.SparkSlopeLow
 import com.acite.axlranko.ui.theme.rankoColors
@@ -57,6 +58,11 @@ internal data class SparkLayout(
     val plotBottom: Float = 0f,
     val xTicks: List<SparkTick> = emptyList(),
     val yTicks: List<SparkTick> = emptyList(),
+    /**
+     * The gray Val/Avg_Loss curve, in the same plot rectangle and the same y range as [segments].
+     * Empty when the window held fewer than two of its points.
+     */
+    val comparison: List<SparkSegment> = emptyList(),
 )
 
 /**
@@ -202,9 +208,15 @@ internal fun sparkAxisLabel(value: Float): String {
  * step window (possibly downsampled). [scale] is [sparkColorScale] of those same points.
  * [markerSlope] is the central difference of that polyline at the card's step; when it is omitted
  * the drawn series supplies it. A step outside the points clamps the marker to the nearer edge.
+ *
+ * [comparison] is the same run's Val/Avg_Loss, smoothed the same way and cut to the same window. It
+ * is drawn as a second, gray curve that shares this plot's y range: the range covers both curves'
+ * windowed values, so the two are directly comparable on one card. Fewer than two of its points
+ * leaves it out and the range is the training curve's alone.
  */
 internal fun layoutCheckpointSpark(
     points: List<SparkPoint>,
+    comparison: List<SparkPoint> = emptyList(),
     step: Float?,
     width: Float,
     height: Float,
@@ -214,6 +226,7 @@ internal fun layoutCheckpointSpark(
     padBottom: Float,
     scale: Float,
     markerSlope: Float? = null,
+    comparisonColor: Color = SparkCompareLine,
 ): SparkLayout {
     if (points.size < 2 || width <= 0f || height <= 0f) {
         return SparkLayout(emptyList(), null, null, null)
@@ -225,11 +238,15 @@ internal fun layoutCheckpointSpark(
     val plotW = plotRight - plotLeft
     val plotH = plotBottom - plotTop
 
+    // The x range is the training curve's: it is the series the card exists for, and the comparison
+    // line's own ends fall inside or outside that window without stretching the axis.
     val xMin = points.first().step
     val xMax = points.last().step
-    var yLo = points[0].value
-    var yHi = points[0].value
-    for (p in points) {
+    val windowedComparison = if (comparison.size >= 2) comparison else emptyList()
+    val yValues = if (windowedComparison.isEmpty()) points else points + windowedComparison
+    var yLo = yValues[0].value
+    var yHi = yValues[0].value
+    for (p in yValues) {
         if (p.value < yLo) yLo = p.value
         if (p.value > yHi) yHi = p.value
     }
@@ -256,6 +273,14 @@ internal fun layoutCheckpointSpark(
         val b = points[i + 1]
         segments += SparkSegment(xOf(a.step), yOf(a.value), xOf(b.step), yOf(b.value), slopeColor(slopes[i], scale))
     }
+    val comparisonSegments = ArrayList<SparkSegment>(windowedComparison.size)
+    for (i in 0 until windowedComparison.size - 1) {
+        val a = windowedComparison[i]
+        val b = windowedComparison[i + 1]
+        comparisonSegments += SparkSegment(
+            xOf(a.step), yOf(a.value), xOf(b.step), yOf(b.value), comparisonColor,
+        )
+    }
 
     val xSpan = xMax - xMin
     val xTicks = listOf(0f, 0.5f, 1f).map { fraction ->
@@ -277,6 +302,7 @@ internal fun layoutCheckpointSpark(
         plotBottom = plotBottom,
         xTicks = xTicks,
         yTicks = yTicks,
+        comparison = comparisonSegments,
     )
     if (step == null || !step.isFinite()) return frame
     val clamped = step.coerceIn(xMin, xMax)
@@ -306,18 +332,27 @@ internal fun valueAt(points: List<SparkPoint>, step: Float): Float {
 /**
  * The run's smoothed Avg Loss, immediately left of a checkpoint card's Save As button. No hit
  * testing and no tick numbers. [points] is the whole run's 0.85 EMA; the drawn x range is at most
- * `± 2 × [saveEveryNSteps]` around [step].
+ * `± 2 × [saveEveryNSteps]` around [step]. [comparison] is the run's Val/Avg_Loss at the same fixed
+ * smooth, cut to the same window and drawn in gray on the shared y range: the card then shows the
+ * held-out curve beside the training one it is meant to be read against.
  */
 @Composable
 internal fun CheckpointLossSpark(
     points: List<SparkPoint>,
     step: Float,
     saveEveryNSteps: Int,
+    comparison: List<SparkPoint> = emptyList(),
     modifier: Modifier = Modifier,
 ) {
     val windowed = remember(points, step, saveEveryNSteps) { windowSpark(points, step, saveEveryNSteps) }
     if (windowed.size < 2) return
+    val windowedComparison = remember(comparison, step, saveEveryNSteps) {
+        windowSpark(comparison, step, saveEveryNSteps)
+    }
     val drawn = remember(windowed, step) { downsampleSpark(windowed, SPARK_MAX_POINTS, step) }
+    val drawnComparison = remember(windowedComparison, step) {
+        downsampleSpark(windowedComparison, SPARK_MAX_POINTS, step)
+    }
     val scale = remember(drawn) { sparkColorScale(drawn) }
     val markerSlope = remember(drawn, step) { slopeCovering(drawn, step) }
     val colors = rankoColors
@@ -328,6 +363,7 @@ internal fun CheckpointLossSpark(
         drawRoundRect(color = colors.boardBg.copy(alpha = 0.35f), cornerRadius = corner)
         val layout = layoutCheckpointSpark(
             points = drawn,
+            comparison = drawnComparison,
             step = step,
             width = size.width,
             height = size.height,
@@ -356,6 +392,17 @@ internal fun CheckpointLossSpark(
                     start = Offset(markerX, layout.plotTop),
                     end = Offset(markerX, layout.plotBottom),
                     strokeWidth = 1.dp.toPx(),
+                )
+            }
+            // The held-out curve goes under the slope-colored one: the training curve is the card's
+            // subject, and where the two overlap the gray must not hide it.
+            for (segment in layout.comparison) {
+                drawLine(
+                    color = segment.color,
+                    start = Offset(segment.x0, segment.y0),
+                    end = Offset(segment.x1, segment.y1),
+                    strokeWidth = stroke,
+                    cap = StrokeCap.Round,
                 )
             }
             for (segment in layout.segments) {

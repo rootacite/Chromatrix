@@ -263,11 +263,55 @@ class ChartCtrlClickTest {
         }
     }
 
+    /**
+     * The `Learning Rate` card's real shape: three curves of very different magnitudes, each fitted
+     * and labelled on an axis of its own, with the two right-hand label columns drawn in the
+     * gutter. The mapping, the clip and the label positions are `ChartAxisTest`'s; this is the draw
+     * path in a window, which is where a bad domain or an unplaceable label finally throws.
+     */
+    @Test
+    fun theThreeAxisLearningRateCardComposes() {
+        if (GraphicsEnvironment.isHeadless()) return
+        val unet = (0..400 step 20).map { MetricPoint(step = it, value = 1.0e-4f * (1f - it / 900f)) }
+        val te = unet.map { it.copy(value = it.value / 10f) }
+        val variance = (0..400 step 20).map { MetricPoint(step = it, value = 0.01f + (it % 120) / 4_000f) }
+
+        val window = onEdtGet {
+            ComposeWindow().apply {
+                setContent {
+                    MultiSeriesChartCard(
+                        title = "Learning Rate",
+                        series = listOf(
+                            ChartSeries("UNet LR", unet, Color(0xFF7EB0D4)),
+                            ChartSeries("TE LR", te, Color(0xFFF0D39A)),
+                            ChartSeries("Val Fixed Var", variance, Color(0xFF10B981)),
+                        ),
+                        smoothing = 0f,
+                        modifier = Modifier.fillMaxSize(),
+                        axisCount = 3,
+                        showHoverStep = true,
+                    )
+                }
+                setSize(560, 320)
+                setLocation(0, 0)
+                isVisible = true
+            }
+        }
+        try {
+            settle()
+            // Force the full draw (grid, both right-hand label columns, three curves) again.
+            onEdt { window.contentPane.repaint() }
+            settle()
+            assertTrue(window.isVisible, "the window was not kept up while the three-axis chart drew")
+        } finally {
+            onEdt { window.dispose() }
+        }
+    }
+
     private fun withChart(
         seriesCount: Int = 1,
         block: (ComposeWindow, MutableList<Pair<Float, Offset>>) -> Unit,
-    ) {
-        if (GraphicsEnvironment.isHeadless()) return
+    ) {        if (GraphicsEnvironment.isHeadless()) return
 
         val picks = Collections.synchronizedList(mutableListOf<Pair<Float, Offset>>())
         val window = onEdtGet {

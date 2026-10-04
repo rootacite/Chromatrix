@@ -17,10 +17,33 @@ Latent cache: one per dataset folder, `<folder>/.latents_cache/{sha1(abs_path::b
 
 `tools/` scripts are mostly **in-place / destructive** (`tools/vpred_reference.py` is the exception: a read-only renderer that implements ComfyUI's own sampling recipe, for checking a sample the trainer produced against ComfyUI's code path). Prefer `ranko/tools/agent.py --dry-run` for agent-driven edits. `ui.py` is a **deprecated** Streamlit viewer; do not extend it.
 
+## Where the validation images come from
+
+Two sources, one contract, chosen by `custom_validation_path(cfg)`:
+
+- **A percentage split** (the default): `select_validation` leaves `ceil(val_split_percent/100 × images)`
+  whole images out of every training folder, and the passes draw from those. The held-out images keep
+  their records and their place in `cache_entries()` (so the warm cache still encodes them) but their
+  draws leave `self.buckets`, so the epoch shrinks by exactly that much.
+- **A custom directory** (`[training].val_data_dir` non-empty): nothing is held out, and the
+  directory supplies every validation image. It is read recursively with the same extensions, the
+  same `{stem}.txt` captions and the same `.mask.png` / alpha rules, one record per image with
+  `repeat = 1`, into `self.val_buckets` and its own `<dir>/.latents_cache` (a folder's cache is keyed
+  by absolute path, so the two never collide). Training images therefore keep every draw, and the
+  validation records are unreachable from the training buckets by construction — the probe in
+  `test/test_validation_split.py` walks three epochs of real batches in both directions.
+  A path that is not a directory, or one holding no usable image, fails the run with the path in the
+  message; `dataset_counts` reports the same two reasons as `val_data_error` for the Utils form.
+
+The two loss curves read only `val_buckets`, so switching sources changes which images are scored and
+nothing else: `sample_validation_indices` (pass 1) and `fixed_validation_indices` (pass 2) are
+subsets of those records either way, and `val_image_count` is the pool both passes see.
+
 ## Picking the fixed validation sample
 
 `trainer/validation_split.py::select_diverse_subset` chooses the sample the `Val/Fixed_Loss` curve
-scores, once per dataset, from the held-out images only. A plain random draw routinely pairs
+scores, once per dataset, from the validation pool only (the held-out images, or the custom
+directory's). A plain random draw routinely pairs
 near-copies — a burst from one pose lands in one folder — and a curve built on near-identical images
 says less than one built on images that differ.
 

@@ -780,7 +780,7 @@ def run_sample_batch(spec: dict, generated: Path) -> None:
         error = None
     else:
         state = genjob.STATE_ERROR
-        error = f"none of the {len(entries)} checkpoint(s) of the range could be rendered"
+        error = f"none of the {len(entries)} checkpoint(s) of the batch could be rendered"
     genjob.update_job(
         generated,
         batch_id,

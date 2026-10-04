@@ -1512,6 +1512,59 @@ def handle_generate_checkpoint_samples_batch(params: dict[str, Any]) -> dict[str
     return {"job": _json_safe(job), "log_path": log}
 
 
+def handle_generate_pinned_checkpoint_samples(params: dict[str, Any]) -> dict[str, Any]:
+    """Render the run's sample sets for every valid pinned checkpoint, in one detached batch."""
+    cfg, run_id, output_name, generated = _claim_generation_run(params)
+    log_dir = _log_dir(cfg, run_id)
+    matches = {
+        str(Path(str(item["path"])).resolve()): item
+        for item in discover_checkpoints(str(_output_dir(cfg)), output_name)
+        if item.get("run_id") == run_id
+    }
+    candidates: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for pin in read_pins(log_dir):
+        raw = str(pin.get("path") or "").strip()
+        if not raw:
+            continue
+        key = str(Path(raw).expanduser().resolve())
+        if key in seen:
+            continue
+        seen.add(key)
+        # A pin whose file is gone (or that names another run) is skipped, not a failure: the pin
+        # file is the user's state and outlives a Reset, while the batch is this run's work.
+        item = matches.get(key)
+        if item is not None:
+            candidates.append(item)
+    if not candidates:
+        raise ValueError("no valid pinned checkpoints to sample")
+
+    try:
+        sets = resolve_sample_sets(run_config_mapping(log_dir)[0])
+    except ValueError as exc:
+        raise ValueError(f"this run has no sample prompts to render: {exc}") from exc
+    images_per_checkpoint = sum(sample_set.repeat for sample_set in sets)
+    generated.mkdir(parents=True, exist_ok=True)
+    job = genjob.new_batch_job(
+        run_id=run_id,
+        output_name=output_name,
+        checkpoints=[
+            {
+                "path": str(item["path"]),
+                "step": int(item["step"]) if item.get("step") is not None else None,
+                "dir": str(item["dir"]),
+            }
+            for item in candidates
+        ],
+        images_per_checkpoint=images_per_checkpoint,
+        config_log_dir=str(log_dir),
+        sample_sets=[asdict(sample_set) for sample_set in sets],
+        selection="pinned",
+    )
+    job, log = _spawn_generator(generated, job)
+    return {"job": _json_safe(job), "log_path": log}
+
+
 def _checkpoint_run(
     params: dict[str, Any],
     cfg: dict[str, Any],
@@ -1780,7 +1833,15 @@ def handle_dataset_counts(params: dict[str, Any]) -> dict[str, Any]:
     seed = params.get("seed", cfg.get("seed", 0))
     if isinstance(seed, bool) or not isinstance(seed, (int, float)) or float(seed) != int(seed):
         raise ValueError("seed must be an integer")
-    return _json_safe(estimate.count_train_images(entries, float(percent), int(seed)))
+    val_data_dir = str(params.get("val_data_dir", cfg.get("val_data_dir", "")) or "").strip()
+    return _json_safe(
+        estimate.count_train_images(
+            entries,
+            float(percent),
+            int(seed),
+            val_data_dir=val_data_dir,
+        )
+    )
 
 
 def handle_config_get(_params: dict[str, Any]) -> dict[str, Any]:
@@ -2590,6 +2651,7 @@ _HANDLERS = {
     "generate_sample": handle_generate_sample,
     "generate_checkpoint_samples": handle_generate_checkpoint_samples,
     "generate_checkpoint_samples_batch": handle_generate_checkpoint_samples_batch,
+    "generate_pinned_checkpoint_samples": handle_generate_pinned_checkpoint_samples,
     "clear_checkpoint_samples": handle_clear_checkpoint_samples,
     "clear_unpinned_checkpoints": handle_clear_unpinned_checkpoints,
     "evaluate_checkpoint": handle_evaluate_checkpoint,
@@ -3010,4 +3072,3 @@ def main(argv: Optional[list[str]] = None) -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -235,6 +235,7 @@ internal object IpcResources {
         "generate_sample" to { _ -> listOf(gpu()) },
         "generate_checkpoint_samples" to { _ -> listOf(gpu()) },
         "generate_checkpoint_samples_batch" to { _ -> listOf(gpu()) },
+        "generate_pinned_checkpoint_samples" to { _ -> listOf(gpu()) },
         // An evaluation renders its missing images and then tags them, so it holds the GPU itself.
         "evaluate_checkpoint" to { _ -> listOf(gpu()) },
         // Read-only: the prompts (and their tag frequencies) the evaluation panel's picker draws.
@@ -382,6 +383,7 @@ internal object IpcResources {
         "generate_sample" to 60_000L,
         "generate_checkpoint_samples" to 60_000L,
         "generate_checkpoint_samples_batch" to 60_000L,
+        "generate_pinned_checkpoint_samples" to 60_000L,
         "automation_job_start" to 60_000L,
         "automation_job_retry_failed" to 60_000L,
         "automation_image_regenerate" to 60_000L,

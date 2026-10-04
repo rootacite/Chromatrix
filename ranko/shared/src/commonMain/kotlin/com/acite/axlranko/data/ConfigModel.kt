@@ -92,7 +92,9 @@ data class TrainingConfig(
      */
     @SerialName("val_split_percent") val valSplitPercent: Double = 10.0,
     @SerialName("val_sample_count") val valSampleCount: Int = 8,
-    @SerialName("val_interval") val valInterval: Int = 5
+    @SerialName("val_interval") val valInterval: Int = 5,
+    /** Optional validation-set directory. Non-empty overrides the percentage split. */
+    @SerialName("val_data_dir") val valDataDir: String = ""
 )
 
 @Serializable

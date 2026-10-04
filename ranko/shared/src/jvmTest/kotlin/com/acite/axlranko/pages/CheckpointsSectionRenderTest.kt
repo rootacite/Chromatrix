@@ -65,6 +65,8 @@ class CheckpointsSectionRenderTest {
         val generatingPath: String? = null,
         val gpuFree: Boolean = true,
         val startingBatch: Boolean = false,
+        /** True while the pinned-checkpoint batch is being handed to the helper. */
+        val startingPinnedBatch: Boolean = false,
         val pinnedPaths: Set<String> = emptySet(),
         val pinningPath: String? = null,
         val pinsError: String? = null,
@@ -81,6 +83,8 @@ class CheckpointsSectionRenderTest {
         val clearSamplesResult: SampleClearResult? = null,
         /** Smoothed Avg Loss drawn in the card header. Empty leaves the header as it was. */
         val spark: List<SparkPoint> = emptyList(),
+        /** The run's smoothed Val/Avg_Loss, drawn gray beside [spark]. */
+        val valSpark: List<SparkPoint> = emptyList(),
         /** The run snapshot's save interval. The chart is omitted when this is missing. */
         val saveEveryNSteps: Int? = null,
     )
@@ -104,6 +108,14 @@ class CheckpointsSectionRenderTest {
         SparkPoint(2900f, 0.6f),
         SparkPoint(3050f, 0.4f),
         SparkPoint(3200f, 0.55f),
+    )
+
+    /** The held-out curve at the same steps, above the training one as it usually reads. */
+    private fun heldOutSpark() = listOf(
+        SparkPoint(2700f, 1.4f),
+        SparkPoint(2900f, 1.25f),
+        SparkPoint(3050f, 1.3f),
+        SparkPoint(3200f, 1.1f),
     )
 
     private fun sample(step: Int, set: Int, repeat: Int = 0) = SampleItem(
@@ -240,6 +252,15 @@ class CheckpointsSectionRenderTest {
                                         onSampleRange = { _, _ -> },
                                         onCancel = { _ -> },
                                     )
+                                    val pinnedCount = rows.count { it.pinned }
+                                    if (pinnedCount > 0) {
+                                        PinnedSampleRow(
+                                            pinnedCount = pinnedCount,
+                                            starting = current.startingPinnedBatch,
+                                            canStart = current.gpuFree && runningBatch(current.jobs) == null,
+                                            onGeneratePinned = {},
+                                        )
+                                    }
                                 }
                                 if (rows.any { it.pinned }) {
                                     item { PinnedHintLine("/logs/rein_20260911_120000/checkpoint_pins.json") }
@@ -254,6 +275,7 @@ class CheckpointsSectionRenderTest {
                                         CheckpointRowCard(
                                             row = row,
                                             spark = current.spark,
+                                            valSpark = current.valSpark,
                                             saveEveryNSteps = current.saveEveryNSteps,
                                             thumbSize = 120f,
                                             showSetBadges = true,
@@ -384,6 +406,7 @@ class CheckpointsSectionRenderTest {
                     samples = mapOf("3050" to listOf(sample(3050, 0), sample(3050, 1))),
                     jobs = listOf(setsJob("done_sets_gen_1", 3050, JOB_DONE, done = 6)),
                     spark = lossSpark(),
+                    valSpark = heldOutSpark(),
                     saveEveryNSteps = 200,
                 ),
                 // A checkpoint with nothing yet — the card the sampling switch exists for.
@@ -431,11 +454,30 @@ class CheckpointsSectionRenderTest {
                     ),
                 ),
                 Case(checkpoints = listOf(checkpoint(3050)), startingBatch = true),
+                // A pinned batch: the header names the pin list instead of a step range, and the
+                // bulk button above the cards is the one that starts it.
+                Case(
+                    checkpoints = listOf(checkpoint(3050), checkpoint(3000)),
+                    pinnedPaths = setOf(checkpoint(3050).path, checkpoint(3000).path),
+                    jobs = listOf(
+                        batchJob("rein_pinned_batch_gen_5", index = 1, total = 2).copy(
+                            selection = "pinned",
+                            fromStep = null,
+                            toStep = null,
+                        ),
+                    ),
+                ),
                 // Pinned cards leading the section, one of them mid-pin and one whose pin the
                 // helper refused.
                 Case(
                     checkpoints = listOf(checkpoint(3050), checkpoint(3000), checkpoint(2950)),
                     pinnedPaths = setOf(checkpoint(2950).path, checkpoint(3000).path),
+                ),
+                // The pinned batch being handed to the helper: the bulk button says so.
+                Case(
+                    checkpoints = listOf(checkpoint(3050), checkpoint(3000)),
+                    pinnedPaths = setOf(checkpoint(3050).path),
+                    startingPinnedBatch = true,
                 ),
                 Case(
                     checkpoints = listOf(checkpoint(3050), checkpoint(3000)),

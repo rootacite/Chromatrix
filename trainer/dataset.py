@@ -12,14 +12,14 @@ from PIL import Image
 from torch.utils.data import Dataset, Sampler
 
 try:
-    from config import TrainConfig, TrainDataEntry, resolve_train_data_entries
+    from config import TrainConfig, TrainDataEntry, custom_validation_path, resolve_train_data_entries
     from utils import (
         Geometry, fit_geometry, fit_to_bucket, image_has_alpha, image_to_tensor, list_images,
         load_loss_mask, mask_path_for, pick_bucket_size, read_caption, sha1_text, shuffle_caption,
     )
     from validation_split import select_diverse_subset, select_validation
 except ImportError:
-    from trainer.config import TrainConfig, TrainDataEntry, resolve_train_data_entries
+    from trainer.config import TrainConfig, TrainDataEntry, custom_validation_path, resolve_train_data_entries
     from trainer.utils import (
         Geometry, fit_geometry, fit_to_bucket, image_has_alpha, image_to_tensor, list_images,
         load_loss_mask, mask_path_for, pick_bucket_size, read_caption, sha1_text, shuffle_caption,
@@ -47,8 +47,17 @@ class LoraImageDataset(Dataset):
             self.roots.append(root)
 
         # One latent cache per dataset folder. The key hashes the absolute image path, so two
-        # folders never collide, and a folder's cache is re-encoded or reused on its own.
+        # folders never collide, and a folder's cache is re-encoded or reused on its own. A custom
+        # validation directory gets its own cache for the same reason.
+        self.custom_validation_root = custom_validation_path(cfg)
         self.latent_cache_dirs = [root / ".latents_cache" for root in self.roots]
+        self.validation_cache_dir = (
+            self.custom_validation_root / ".latents_cache"
+            if self.custom_validation_root is not None
+            else None
+        )
+        if self.validation_cache_dir is not None:
+            self.latent_cache_dirs.append(self.validation_cache_dir)
         if cfg.cache_latents and cfg.cache_latents_to_disk:
             for cache_dir in self.latent_cache_dirs:
                 cache_dir.mkdir(parents=True, exist_ok=True)
@@ -76,58 +85,63 @@ class LoraImageDataset(Dataset):
         self._check_bucket_settings()
         # The split is drawn from the folder listings before any record exists, from the same
         # function and the same order the API's `dataset_counts` uses, so the estimate's held-out
-        # count is this one's.
+        # count is this one's. A custom validation directory replaces this split entirely.
         images_per_entry = [list_images(root) for root in self.roots]
         self.entry_image_counts = [len(images) for images in images_per_entry]
-        held_out = select_validation(images_per_entry, cfg.val_split_percent, cfg.seed)
+        held_out = (
+            set()
+            if self.custom_validation_root is not None
+            else select_validation(images_per_entry, cfg.val_split_percent, cfg.seed)
+        )
         for entry_index, (entry, root, cache_dir, images) in enumerate(
             zip(self.entries, self.roots, self.latent_cache_dirs, images_per_entry)
         ):
             for position, image_path in enumerate(images):
                 index = len(self.records)
-                with Image.open(image_path) as img:
-                    src_w, src_h = img.size
-                    has_alpha = image_has_alpha(img)
-                if cfg.enable_bucket:
-                    bucket_w, bucket_h = pick_bucket_size(
-                        src_w, src_h,
-                        min_reso=cfg.min_bucket_reso,
-                        max_reso=cfg.max_bucket_reso,
-                        step=cfg.bucket_reso_steps,
-                        no_upscale=cfg.bucket_no_upscale,
-                        area=cfg.train_resolution ** 2,
-                    )
-                else:
-                    bucket_w = bucket_h = cfg.train_resolution
-                geom = fit_geometry(src_w, src_h, bucket_w, bucket_h)
-                if geom.pad_area > 0:
-                    self.n_padded += 1
-                self._pad_total += geom.pad_area
-                has_mask = mask_path_for(image_path).is_file() or has_alpha
-                if has_mask:
-                    self.n_masked += 1
                 is_val = (entry_index, position) in held_out
-                self.images.append(image_path)
-                self.records.append(
-                    {
-                        "path": image_path,
-                        "root": root,
-                        "cache_dir": cache_dir,
-                        "repeat": entry.repeat,
-                        "src_w": int(src_w),
-                        "src_h": int(src_h),
-                        "bucket_w": int(bucket_w),
-                        "bucket_h": int(bucket_h),
-                        "geom": geom,
-                        "has_mask": has_mask,
-                        "is_val": is_val,
-                    }
+                record = self._build_record(
+                    image_path=image_path,
+                    root=root,
+                    cache_dir=cache_dir,
+                    repeat=entry.repeat,
+                    is_val=is_val,
                 )
+                self.images.append(image_path)
+                self.records.append(record)
                 # The record stays unique; the *epoch* draws it `repeat` times. This is the one
                 # place a directory's repeat reaches training: the sampler (and therefore the
                 # step count, the LR schedule and the progress bars) follows this list length.
                 target = self.val_buckets if is_val else self.buckets
-                target[(int(bucket_w), int(bucket_h))].extend([index] * entry.repeat)
+                target[(int(record["bucket_w"]), int(record["bucket_h"]))].extend(
+                    [index] * entry.repeat
+                )
+
+        if self.custom_validation_root is not None:
+            if not self.custom_validation_root.is_dir():
+                raise RuntimeError(
+                    f"val_data_dir is not a directory: {self.custom_validation_root}"
+                )
+            validation_images = list_images(self.custom_validation_root)
+            if not validation_images:
+                raise RuntimeError(
+                    f"val_data_dir contains no usable images: {self.custom_validation_root}"
+                )
+            validation_cache_dir = self.validation_cache_dir
+            assert validation_cache_dir is not None
+            for image_path in validation_images:
+                index = len(self.records)
+                record = self._build_record(
+                    image_path=image_path,
+                    root=self.custom_validation_root,
+                    cache_dir=validation_cache_dir,
+                    repeat=1,
+                    is_val=True,
+                )
+                self.images.append(image_path)
+                self.records.append(record)
+                self.val_buckets[
+                    (int(record["bucket_w"]), int(record["bucket_h"]))
+                ].append(index)
 
         if not self.records:
             raise RuntimeError(
@@ -137,9 +151,16 @@ class LoraImageDataset(Dataset):
 
         # Samples actually drawn per epoch, repeats included, the held-out ones excluded.
         self.total_samples = sum(len(indices) for indices in self.buckets.values())
-        self.val_image_count = len(held_out)
+        self.val_image_count = (
+            sum(len(indices) for indices in self.val_buckets.values())
+            if self.custom_validation_root is not None
+            else len(held_out)
+        )
         self.val_sample_count = sum(len(indices) for indices in self.val_buckets.values())
         self.mean_pad = self._pad_total / len(self.records) if self.records else 0.0
+        self.train_image_count = sum(self.entry_image_counts) - (
+            self.val_image_count if self.custom_validation_root is None else 0
+        )
 
         # The fixed sample the `Val/Fixed_Loss` curve scores: chosen once, from pixels, so the
         # images are as unlike each other as the held-out set allows and every pass sees the same
@@ -152,6 +173,52 @@ class LoraImageDataset(Dataset):
             int(cfg.val_sample_count),
         )
         self.fixed_val_indices = [held_out_indices[position] for position in self.fixed_val_indices]
+
+    def _build_record(
+        self,
+        *,
+        image_path: Path,
+        root: Path,
+        cache_dir: Path,
+        repeat: int,
+        is_val: bool,
+    ) -> dict[str, Any]:
+        """Open one image, choose its bucket and return the record every reader shares."""
+        cfg = self.cfg
+        with Image.open(image_path) as img:
+            src_w, src_h = img.size
+            has_alpha = image_has_alpha(img)
+        if cfg.enable_bucket:
+            bucket_w, bucket_h = pick_bucket_size(
+                src_w, src_h,
+                min_reso=cfg.min_bucket_reso,
+                max_reso=cfg.max_bucket_reso,
+                step=cfg.bucket_reso_steps,
+                no_upscale=cfg.bucket_no_upscale,
+                area=cfg.train_resolution ** 2,
+            )
+        else:
+            bucket_w = bucket_h = cfg.train_resolution
+        geom = fit_geometry(src_w, src_h, bucket_w, bucket_h)
+        if geom.pad_area > 0:
+            self.n_padded += 1
+        self._pad_total += geom.pad_area
+        has_mask = mask_path_for(image_path).is_file() or has_alpha
+        if has_mask:
+            self.n_masked += 1
+        return {
+            "path": image_path,
+            "root": root,
+            "cache_dir": cache_dir,
+            "repeat": int(repeat),
+            "src_w": int(src_w),
+            "src_h": int(src_h),
+            "bucket_w": int(bucket_w),
+            "bucket_h": int(bucket_h),
+            "geom": geom,
+            "has_mask": has_mask,
+            "is_val": bool(is_val),
+        }
 
     def _check_bucket_settings(self) -> None:
         """The area budget and the axis clamps must bracket each other, or every bucket is a clamp."""

@@ -9,9 +9,9 @@ same recursive walk over each `[[environment.train_data]]` folder — a hand-wri
 import, because `utils.py` pulls torch in. The step arithmetic lives on the Chromatrix side
 (`model/StepEstimate.kt`), which is what makes epoch / batch / GA edits cost no IPC at all.
 
-`count_train_images` also applies the validation split (`validation_split.select_validation`), the
-same function `LoraImageDataset` uses for the real run, and reports the held-out images and draws as
-`val_images` / `val_samples` so the estimate can subtract them.
+`count_train_images` also reports the validation source: a custom `val_data_dir` is counted as
+`val_images` without removing any training draws, while the percentage split uses
+`validation_split.select_validation` and reports the held-out images/draws for subtraction.
 """
 
 from __future__ import annotations
@@ -71,14 +71,16 @@ def count_train_images(
     entries: Iterable[Any],
     val_split_percent: float = 0.0,
     seed: int = 0,
+    val_data_dir: str = "",
 ) -> dict[str, Any]:
     """Image counts per training folder, plus the per-epoch totals a step estimate is built from.
 
     Each entry answers `{path, repeat, images, error}`; a folder that is missing or unreadable
     carries its reason and counts as zero, so one bad path cannot take the whole estimate down.
     `samples` is the per-epoch figure with repeats applied — what `LoraImageDataset.total_samples`
-    holds at run time — and `val_images` / `val_samples` are the part the validation split holds
-    out (unique images, and the draws they would have contributed), which the estimate subtracts.
+    holds at run time. With a custom `val_data_dir`, `val_images` counts that directory and
+    `val_samples` is zero because no training draws are held out. Without one, `val_images` /
+    `val_samples` are the part the validation split holds out, which the estimate subtracts.
     """
     rows: list[dict[str, Any]] = []
     folder_paths: list[list[Path]] = []
@@ -114,6 +116,33 @@ def count_train_images(
         )
         images_total += images
         samples_total += images * repeat
+
+    custom_dir = str(val_data_dir or "").strip()
+    if custom_dir:
+        root = Path(custom_dir).expanduser()
+        if not root.is_dir():
+            return {
+                "entries": rows,
+                "images": int(images_total),
+                "samples": int(samples_total),
+                "val_images": 0,
+                "val_samples": 0,
+                "val_data_error": "not a directory",
+            }
+        try:
+            val_images = len(image_paths(root))
+            val_error = None if val_images else "contains no usable images"
+        except OSError as exc:
+            val_images = 0
+            val_error = str(exc)
+        return {
+            "entries": rows,
+            "images": int(images_total),
+            "samples": int(samples_total),
+            "val_images": int(val_images),
+            "val_samples": 0,
+            **({"val_data_error": val_error} if val_error else {}),
+        }
 
     held_out = select_validation(folder_paths, val_split_percent, seed)
     return {

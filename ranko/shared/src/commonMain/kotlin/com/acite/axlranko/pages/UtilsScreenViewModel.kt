@@ -271,6 +271,7 @@ class UtilsScreenViewModel(
         }
         // The split decides how many of the counted samples are held out, so the same call carries it.
         val valSplitPercent = form.valSplitPercent.trim().toDoubleOrNull() ?: 0.0
+        val valDataDir = form.valDataDir.trim()
         val seed = form.seed.trim().toLongOrNull() ?: 0L
         estimateJob?.cancel()
         estimateJob = viewModelScope.launch {
@@ -278,7 +279,9 @@ class UtilsScreenViewModel(
             _uiState.update { it.copy(datasetCountsLoading = true) }
             if (debounceMillis > 0) delay(debounceMillis)
             try {
-                val counts = withContext(IoDispatcher) { ipc.datasetCounts(dirs, valSplitPercent, seed) }
+                val counts = withContext(IoDispatcher) {
+                    ipc.datasetCounts(dirs, valSplitPercent, seed, valDataDir)
+                }
                 _uiState.update {
                     it.copy(
                         datasetCounts = counts,
@@ -360,8 +363,10 @@ class UtilsScreenViewModel(
         _uiState.update { state ->
             val newForm = state.form.transform()
             foldersChanged = newForm.trainDataDirs != state.form.trainDataDirs
-            // The split and the seed decide which images the helper holds out, so they re-count too.
+            // The split, the seed and a custom validation directory decide what the helper holds
+            // out (or counts separately), so they re-count too.
             splitChanged = newForm.valSplitPercent != state.form.valSplitPercent ||
+                newForm.valDataDir != state.form.valDataDir ||
                 newForm.seed != state.form.seed
             state.copy(
                 form = newForm,
@@ -382,6 +387,20 @@ class UtilsScreenViewModel(
             val selected = pathPicker.pickDirectory("Select directory", current) ?: return@launch
             updateForm { update(selected) }
         }
+    }
+
+    /**
+     * The `Separate validation set` switch. Turning it on asks for the directory and only then
+     * writes the path — a cancelled picker leaves the form as it was — and turning it off clears
+     * the path, which is the feature's own off switch. Both go through `updateForm`, so the step
+     * estimate is recounted from the new answer.
+     */
+    fun setCustomValidation(on: Boolean) {
+        if (!on) {
+            updateForm { copy(valDataDir = "") }
+            return
+        }
+        browseDirectory(_uiState.value.form.valDataDir) { copy(valDataDir = it) }
     }
 
     // The dialog picks a file; the field itself still accepts a directory holding one .safetensors.

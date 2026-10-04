@@ -115,11 +115,21 @@ Rules and failure modes:
 
 ### Validation loss
 
-Set `[training].val_split_percent = 0` to turn the feature off: nothing is held out, neither pass
-runs, no validation scalar is written, and the run log says `Validation: off`. Otherwise the dataset
-keeps `ceil(percent/100 × images)` images out of training — drawn once from the run's `seed` and the
-folder contents, so the run's log line `Validation split: N/M images held out` is reproducible, and
-each held-out image also removes its folder's `repeat` draws per epoch. The first validation step is
+Two ways to supply the validation images, chosen by `[training].val_data_dir`:
+
+- **Empty (the default)** — the percentage split. `val_split_percent = 0` turns the feature off:
+  nothing is held out, neither pass runs, no validation scalar is written, and the run log says
+  `Validation: off`. Otherwise the dataset keeps `ceil(percent/100 × images)` images out of training
+  — drawn once from the run's `seed` and the folder contents, so the run's log line
+  `Validation split: N/M images held out` is reproducible, and each held-out image also removes its
+  folder's `repeat` draws per epoch.
+- **A directory** — set `[training].val_data_dir` to a folder (Utils → Training has the switch and
+  the picker) and that folder supplies both passes instead: every training image stays in training,
+  so the epoch length and the step count are the unsplit ones, and `val_split_percent` is ignored
+  (the log says so). The folder is read recursively with the same extensions, captions and mask
+  rules as a training folder, its images are kept out of the training dataloader by construction,
+  and it gets its own latent cache (so the first run over it pays one encode). A path that is not a
+  directory, or one holding no usable image, fails the run at startup naming the path. The first validation step is
 **step 1**, then one every `val_interval` steps (and never when it is `0`), and each of those runs
 **two passes** over up to `val_sample_count` held-out images:
 

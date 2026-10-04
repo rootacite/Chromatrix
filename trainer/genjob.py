@@ -305,32 +305,42 @@ def new_batch_job(
     run_id: str,
     output_name: str,
     checkpoints: list[dict[str, Any]],
-    from_step: int,
-    to_step: int,
+    from_step: Optional[int] = None,
+    to_step: Optional[int] = None,
     images_per_checkpoint: int,
     config_log_dir: str = "",
     sample_sets: Optional[list[Mapping[str, Any]]] = None,
+    selection: str = "range",
     now: Optional[Union[datetime, float]] = None,
 ) -> dict[str, Any]:
-    """The plan api.py writes before spawning a range batch.
+    """The plan api.py writes before spawning a checkpoint-list batch.
 
     `checkpoints` is the ordered work list (`path` + `step`); the runner creates one `sets` job per
     entry, so the images of each checkpoint are named, shown and followed exactly as a manual pass
-    from that checkpoint would be. This record is the batch's own bookkeeping: what is left, which
-    checkpoint is being rendered, and what failed. `config_log_dir` is the run directory the prompts
-    come from (its own saved config, or the sets the Dashboard edited for it), which the runner
-    resolves once for the whole range.
+    from that checkpoint would be. `selection` is `range` for the step-range request or `pinned`
+    for the explicit pinned work list. `from_step` / `to_step` are present only for a range batch.
+    `config_log_dir` is the run directory the prompts come from (its own saved config, or the sets
+    the Dashboard edited for it), which the runner resolves once for the whole batch.
     """
-    stem = f"{output_name}_s{from_step}-{to_step}"
+    if selection not in ("range", "pinned"):
+        raise ValueError(f"unknown batch selection: {selection}")
+    if selection == "range" and (from_step is None or to_step is None):
+        raise ValueError("a range batch requires from_step and to_step")
+    stem = (
+        f"{output_name}_s{from_step}-{to_step}"
+        if selection == "range"
+        else f"{output_name}_pinned"
+    )
     return {
         "id": new_job_id(stem, mode=MODE_BATCH, now=now),
         "state": STATE_RUNNING,
         "mode": MODE_BATCH,
+        "selection": selection,
         "run_id": run_id,
         "output_name": output_name,
         "checkpoints": [dict(entry) for entry in checkpoints],
-        "from_step": int(from_step),
-        "to_step": int(to_step),
+        "from_step": None if from_step is None else int(from_step),
+        "to_step": None if to_step is None else int(to_step),
         "config_log_dir": str(config_log_dir or ""),
         # The prompt sets the range renders with, recorded the way a single-checkpoint pass records
         # them: whoever planned the batch had them resolved in hand, and the runner must not derive

@@ -961,7 +961,12 @@ def launcher_alloc_conf() -> str:
     return match.group(1) if match else ""
 
 
-def maybe_reexec_under_hook(args: argparse.Namespace, rep: Report, argv_tail: list[str]) -> None:
+def maybe_reexec_under_hook(
+    args: argparse.Namespace,
+    rep: Report,
+    argv_tail: list[str],
+    script: Path | None = None,
+) -> None:
     """Run this process under the allocation patch `[environment].amdfq` selects.
 
     The gfx1201 Tensile over-read described in `doc/troubleshooting.md` kills a bare process
@@ -971,6 +976,9 @@ def maybe_reexec_under_hook(args: argparse.Namespace, rep: Report, argv_tail: li
     times on the path the repo actually trains with. `--no-hook` skips the re-exec and falls back to
     `HSA_SVM_GUARD_PAGES=0` (the documented dodge that removes the page the over-read lands on); the
     report says which of the two was in effect.
+
+    [script] is the file to re-execute, for a sibling probe that reuses this helper: `__file__`
+    here would be *this* probe, and re-executing it would run the wrong experiment.
     """
     if args.no_hook:
         os.environ.setdefault("HSA_SVM_GUARD_PAGES", "0")
@@ -993,11 +1001,11 @@ def maybe_reexec_under_hook(args: argparse.Namespace, rep: Report, argv_tail: li
                  "the fault dodge")
         return
     hook = REPO_ROOT / "start_hook.sh"
+    target = Path(script) if script is not None else Path(__file__).resolve()
     print(f"== re-executing under {hook} ({line.split('|', 1)[0]})", flush=True)
     env = dict(os.environ)
     env[HOOK_MARKER] = "1"
-    os.execve(str(hook), [str(hook), "--", sys.executable, str(Path(__file__).resolve()), *argv_tail],
-              env)
+    os.execve(str(hook), [str(hook), "--", sys.executable, str(target), *argv_tail], env)
 
 
 def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:

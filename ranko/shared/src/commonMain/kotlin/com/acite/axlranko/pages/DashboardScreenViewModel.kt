@@ -519,6 +519,40 @@ class DashboardScreenViewModel(
     }
 
     /**
+     * "Generate pinned samples": one detached job that renders the config's sample sets for every
+     * valid pinned checkpoint of the shown run, in the pin file's own order. The helper drops pins
+     * whose file is gone, so a stale pin cannot fail the batch.
+     */
+    fun startPinnedSampleBatch() {
+        if (_uiState.value.isStartingPinnedBatch) return
+        _uiState.update { it.copy(isStartingPinnedBatch = true, batchError = null) }
+        viewModelScope.launch {
+            try {
+                val selected = _uiState.value.selectedRun
+                val response = withContext(IoDispatcher) {
+                    ipc.generatePinnedCheckpointSamples(
+                        name = selected?.outputName,
+                        runId = selected?.runId ?: _uiState.value.runId,
+                    )
+                }
+                sessionJobIds += response.job.id
+                _uiState.update { state ->
+                    state.copy(
+                        sessionJobIds = sessionJobIds.toSet(),
+                        isStartingPinnedBatch = false,
+                        generatedJobs = (listOf(response.job) + state.generatedJobs).distinctBy { it.id },
+                    )
+                }
+                startGeneratedPolling()
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(isStartingPinnedBatch = false, batchError = e.message ?: e.toString())
+                }
+            }
+        }
+    }
+
+    /**
      * Opens the evaluation panel for one checkpoint. [existingImages] is what the card already
      * shows, and it prefills the depth field — the depth is a floor, so that is the "score what is
      * there" default. [jobId] is the evaluation the panel should report on (a running one, or the

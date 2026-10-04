@@ -165,6 +165,45 @@ class BatchJobTest(unittest.TestCase):
     def test_a_batch_without_recorded_sets_reads_as_empty(self):
         self.assertEqual(self._job()["sample_sets"], [])
 
+    def test_a_range_batch_records_its_selection_and_bounds(self):
+        job = self._job()
+        self.assertEqual(job["selection"], "range")
+        self.assertEqual((job["from_step"], job["to_step"]), (100, 200))
+        self.assertIn("_s100-200_batch_gen_", job["id"])
+
+    def test_a_pinned_batch_names_its_own_work_list_without_a_range(self):
+        # The pinned form passes no bounds: the checkpoints it was given *are* the range, and its
+        # job id says so instead of carrying a meaningless `s0-0`.
+        job = genjob.new_batch_job(
+            run_id="rein_20260101_000000",
+            output_name="rein",
+            checkpoints=[
+                {"path": "/out/rein_s00300/rein.safetensors", "step": 300, "dir": "rein_s00300"},
+                {"path": "/out/rein_s00100/rein.safetensors", "step": 100, "dir": "rein_s00100"},
+            ],
+            images_per_checkpoint=2,
+            selection="pinned",
+        )
+        self.assertEqual(job["selection"], "pinned")
+        self.assertIsNone(job["from_step"])
+        self.assertIsNone(job["to_step"])
+        self.assertIn("_pinned_batch_gen_", job["id"])
+        self.assertEqual([entry["step"] for entry in job["checkpoints"]], [300, 100])
+
+    def test_a_batch_selection_is_validated(self):
+        with self.assertRaises(ValueError) as ctx:
+            self._job(selection="everything")
+        self.assertIn("unknown batch selection", str(ctx.exception))
+        # A range batch without its bounds cannot be planned (its id would name nothing).
+        with self.assertRaises(ValueError) as ctx:
+            genjob.new_batch_job(
+                run_id="rein_20260101_000000",
+                output_name="rein",
+                checkpoints=[{"path": "/out/rein_s00100/rein.safetensors", "step": 100}],
+                images_per_checkpoint=1,
+            )
+        self.assertIn("requires from_step and to_step", str(ctx.exception))
+
 
 class EvaluationJobTest(unittest.TestCase):
     """The record api.py writes before an evaluation: a plan plus the set of images to score."""

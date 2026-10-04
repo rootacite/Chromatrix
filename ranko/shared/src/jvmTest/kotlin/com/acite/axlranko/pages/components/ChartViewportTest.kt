@@ -53,29 +53,23 @@ class ChartViewportTest {
     }
 
     @Test
-    fun aDomainIsFittedToTheWindowNotTheWholeHistory() {
-        val points = listOf(
-            MetricPoint(step = 10, value = 9f),
-            MetricPoint(step = 100, value = 1f),
-            MetricPoint(step = 1_500, value = 2f),
-            MetricPoint(step = 1_900, value = 3f),
-        )
-        val domain = windowDomain(points, 1_200f, 2_000f)
-        assertEquals(1.95f, domain!!.first, 1e-5f)
-        assertEquals(3.05f, domain.second, 1e-5f)
+    fun theAxisFitOnlySeesTheWindowSlice() {
+        // Each axis of a multi-axis chart is fitted to the values inside the opening window
+        // (`assignAxisDomains` hands it that slice), so a value from the rest of the history never
+        // shapes the scale the reader is looking at.
+        val wholeHistory = listOf(0.5f, 0.6f, 9f)
+        val windowed = wholeHistory.filter { it in 0.5f..0.6f }
+        val domain = fittedYRange(listOf(windowed), outlierClip = 0f)!!
+        assertTrue(domain.second < 1f, "a value from outside the window shaped the axis: $domain")
+        assertTrue(domain.first <= 0.5f && domain.second >= 0.6f, "the window's own values were cut: $domain")
     }
 
     @Test
     fun aFlatSeriesStillGetsAReadableSpan() {
-        val points = listOf(MetricPoint(step = 10, value = 7e-6f), MetricPoint(step = 900, value = 7e-6f))
-        val (lo, hi) = windowDomain(points, 0f, 1_000f)!!
+        val values = listOf(7e-6f, 7e-6f)
+        val (lo, hi) = fittedYRange(listOf(values), outlierClip = 0.15f)!!
         assertTrue(lo < 7e-6f && hi > 7e-6f, "flat series collapsed to [$lo, $hi]")
         assertTrue(hi - lo > 1e-9f, "flat series kept a zero span")
-    }
-
-    @Test
-    fun aSeriesWithNoPointsHasNoDomain() {
-        assertNull(windowDomain(emptyList(), 0f, 1_000f))
     }
 
     @Test

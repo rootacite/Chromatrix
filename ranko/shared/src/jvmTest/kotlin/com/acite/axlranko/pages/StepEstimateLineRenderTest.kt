@@ -31,17 +31,33 @@ class StepEstimateLineRenderTest {
 
     private val failures = Collections.synchronizedList(mutableListOf<Throwable>())
 
-    private fun form(epochs: String = "20", batch: String = "2", grad: String = "5") = TrainingConfigForm(
+    private fun form(
+        epochs: String = "20",
+        batch: String = "2",
+        grad: String = "5",
+        valDataDir: String = "",
+    ) = TrainingConfigForm(
         epoch = epochs,
         trainBatchSize = batch,
         gradientAccumulationSteps = grad,
+        valDataDir = valDataDir,
     )
 
-    private fun counts(samples: Int = 3_100, images: Int = 100, error: String? = null) =
+    private fun counts(
+        samples: Int = 3_100,
+        images: Int = 100,
+        error: String? = null,
+        valImages: Int = 0,
+        valSamples: Int = 0,
+        valDataError: String? = null,
+    ) =
         DatasetCountsResponse(
             entries = listOf(DatasetCountEntry(path = "/data/a", repeat = 3, images = images, error = error)),
             images = images,
             samples = samples,
+            valImages = valImages,
+            valSamples = valSamples,
+            valDataError = valDataError,
         )
 
     private fun render(states: List<Pair<UtilsUiState, TrainingConfigForm>>) {
@@ -114,6 +130,16 @@ class StepEstimateLineRenderTest {
                 UtilsUiState(datasetCounts = counts(images = 0, samples = 0, error = "not a directory")) to form(),
                 // The count call itself failed.
                 UtilsUiState(datasetCountsError = "helper is gone") to form(),
+                // A separate validation set: its images are counted beside the training folders
+                // rather than subtracted from them.
+                UtilsUiState(
+                    datasetCounts = counts(valImages = 40, valSamples = 0),
+                ) to form(valDataDir = "/data/val"),
+                // A separate validation set the helper could not read: the same reason-and-Retry
+                // shape, under the directory it applies to.
+                UtilsUiState(
+                    datasetCounts = counts(valDataError = "not a directory"),
+                ) to form(valDataDir = "/data/val/gone"),
             ),
         )
     }

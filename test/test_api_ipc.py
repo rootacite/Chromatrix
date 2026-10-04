@@ -982,6 +982,8 @@ class GeneratedSampleIpcTest(GeneratedFixture, unittest.TestCase):
     def test_dispatch_registered(self):
         self.assertIn("generate_sample", api._HANDLERS)
         self.assertIn("list_generated_samples", api._HANDLERS)
+        self.assertIn("generate_checkpoint_samples_batch", api._HANDLERS)
+        self.assertIn("generate_pinned_checkpoint_samples", api._HANDLERS)
 
     def test_listing_without_generated_dir_is_empty(self):
         result = api.dispatch("list_generated_samples", {})
@@ -1325,6 +1327,113 @@ class GeneratedSampleIpcTest(GeneratedFixture, unittest.TestCase):
         self._write_job("live_gen_1", pid=os.getpid())
         with self.assertRaises(ValueError) as ctx:
             api.handle_generate_checkpoint_samples_batch({"from_step": 0, "to_step": 200})
+        self.assertIn("already running", str(ctx.exception))
+        self.popen.assert_not_called()
+
+    def _pin(self, *steps: int) -> list[dict]:
+        """Pin the given checkpoints through the handler, in the order the calls are made."""
+        pins = []
+        for step in steps:
+            pins = api.handle_checkpoint_pin_set(
+                {
+                    "path": str(self._checkpoint_dir(step)),
+                    "dir": f"rein_s{step:06d}",
+                    "step": step,
+                    "pinned": True,
+                }
+            )["pins"]
+        return pins
+
+    def test_a_pinned_batch_covers_the_valid_pins_in_pin_order(self):
+        self._set_run_samples([
+            {"prompt": "a", "steps": 9, "repeat": 2},
+            {"prompt": "b", "steps": 9, "repeat": 1},
+        ])
+        # Pinned newest first, then an older one: the batch follows the pin file, not the steps.
+        self._pin(300, 100)
+
+        result = api.handle_generate_pinned_checkpoint_samples({})
+        stored = self._spec_written_by_last_spawn()
+
+        self.assertEqual(stored["selection"], "pinned")
+        self.assertEqual(stored["mode"], "batch")
+        self.assertIsNone(stored["from_step"])
+        self.assertIsNone(stored["to_step"])
+        self.assertEqual([entry["step"] for entry in stored["checkpoints"]], [300, 100])
+        self.assertEqual(stored["total_checkpoints"], 2)
+        # Two checkpoints × (2 + 1) images each, and the run's own prompts travel on the record.
+        self.assertEqual(stored["total_images"], 6)
+        self.assertEqual([entry["prompt"] for entry in stored["sample_sets"]], ["a", "b"])
+        self.assertEqual(stored["config_log_dir"], str(self.logs / self.RUN_ID))
+        self.assertIn("_pinned_batch_gen_", stored["id"])
+        self.assertEqual(result["job"]["id"], stored["id"])
+        self.popen.assert_called_once()
+
+    def test_a_pinned_batch_drops_a_stale_pin_and_another_runs_checkpoint(self):
+        self._set_run_samples([{"prompt": "a", "steps": 9, "repeat": 1}])
+        self._pin(100)
+        # A pin whose file is gone (Reset deleted the weights) and one pointing at another run.
+        other = self.out / "elsewhere_20260910_120000" / "rein_s00200" / "rein.safetensors"
+        other.parent.mkdir(parents=True, exist_ok=True)
+        other.write_bytes(b"weights")
+        log_dir = self.logs / self.RUN_ID
+        from trainer.checkpoints import read_pins, write_pins
+
+        write_pins(
+            log_dir,
+            self.RUN_ID,
+            read_pins(log_dir)
+            + [
+                {"path": str(self.run_dir / "rein_s99999" / "rein.safetensors"), "dir": "rein_s99999", "step": 99999},
+                {"path": str(other), "dir": "rein_s00200", "step": 200},
+            ],
+        )
+
+        api.handle_generate_pinned_checkpoint_samples({})
+        stored = self._spec_written_by_last_spawn()
+        self.assertEqual([entry["step"] for entry in stored["checkpoints"]], [100])
+        self.assertEqual(stored["total_checkpoints"], 1)
+
+    def test_a_pinned_batch_without_a_valid_pin_is_refused(self):
+        self._set_run_samples([{"prompt": "a", "steps": 9, "repeat": 1}])
+        with self.assertRaises(ValueError) as ctx:
+            api.handle_generate_pinned_checkpoint_samples({})
+        self.assertIn("no valid pinned checkpoints", str(ctx.exception))
+        self.popen.assert_not_called()
+
+        # A pin whose file is gone is not a work item, so on its own it is the same refusal.
+        from trainer.checkpoints import write_pins
+
+        write_pins(
+            self.logs / self.RUN_ID,
+            self.RUN_ID,
+            [{"path": str(self.run_dir / "rein_s99999" / "rein.safetensors"), "dir": "rein_s99999", "step": 99999}],
+        )
+        with self.assertRaises(ValueError) as ctx:
+            api.handle_generate_pinned_checkpoint_samples({})
+        self.assertIn("no valid pinned checkpoints", str(ctx.exception))
+        self.popen.assert_not_called()
+
+    def test_a_pinned_batch_needs_prompts_and_a_free_gpu(self):
+        from trainer import control
+
+        self._pin(100)
+        self._set_run_samples([{"prompt": "", "steps": 9}])
+        with self.assertRaises(ValueError) as ctx:
+            api.handle_generate_pinned_checkpoint_samples({})
+        self.assertIn("no sample prompts", str(ctx.exception))
+
+        self._set_run_samples([{"prompt": "a", "steps": 9, "repeat": 1}])
+        control.write_state({"status": "training", "pid": os.getpid()}, force=True)
+        with self.assertRaises(ValueError) as ctx:
+            api.handle_generate_pinned_checkpoint_samples({})
+        self.assertIn("GPU", str(ctx.exception))
+        self.popen.assert_not_called()
+
+        control.write_state({"status": "finished", "pid": None}, force=True)
+        self._write_job("live_gen_1", pid=os.getpid())
+        with self.assertRaises(ValueError) as ctx:
+            api.handle_generate_pinned_checkpoint_samples({})
         self.assertIn("already running", str(ctx.exception))
         self.popen.assert_not_called()
 
@@ -2283,6 +2392,61 @@ class DatasetCountsIpcTest(unittest.TestCase):
                 with self.subTest(params=params):
                     with self.assertRaises(ValueError):
                         api.handle_dataset_counts(params)
+
+    def test_a_custom_validation_dir_is_counted_without_a_split(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            train = root / "train"
+            val = root / "val"
+            train.mkdir()
+            val.mkdir()
+            for i in range(10):
+                (train / f"{i:02d}.png").write_bytes(b"x")
+            for i in range(4):
+                (val / f"v{i:02d}.png").write_bytes(b"x")
+
+            params = {
+                "dirs": [{"path": str(train), "repeat": 3}],
+                "val_split_percent": 50.0,
+                "val_data_dir": str(val),
+                "seed": 5,
+            }
+            result = api.handle_dataset_counts(params)
+
+        # Every training draw stays, and the directory's own count is what `val_images` reports.
+        self.assertEqual(result["images"], 10)
+        self.assertEqual(result["samples"], 30)
+        self.assertEqual(result["val_images"], 4)
+        self.assertEqual(result["val_samples"], 0)
+        self.assertNotIn("val_data_error", result)
+
+    def test_a_bad_custom_validation_dir_reports_its_reason(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "1.png").write_bytes(b"x")
+            entries = [{"path": raw, "repeat": 1}]
+            missing = api.handle_dataset_counts(
+                {"dirs": entries, "val_data_dir": str(root / "gone")}
+            )
+            empty = root / "empty_val"
+            empty.mkdir()
+            no_images = api.handle_dataset_counts(
+                {"dirs": entries, "val_data_dir": str(empty)}
+            )
+        self.assertEqual(missing["val_images"], 0)
+        self.assertEqual(missing["val_data_error"], "not a directory")
+        self.assertEqual(no_images["val_data_error"], "contains no usable images")
+
+    def test_the_custom_validation_dir_names_the_error_in_the_report(self):
+        """A path that is a file, not a directory, is the same refusal as a missing one."""
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "1.png").write_bytes(b"x")
+            result = api.handle_dataset_counts(
+                {"dirs": [{"path": raw, "repeat": 1}], "val_data_dir": str(root / "1.png")}
+            )
+        self.assertEqual(result["val_images"], 0)
+        self.assertEqual(result["val_data_error"], "not a directory")
 
 
 class TaggerInfoIpcTest(unittest.TestCase):

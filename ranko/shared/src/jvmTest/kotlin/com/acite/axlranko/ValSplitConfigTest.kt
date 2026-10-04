@@ -7,6 +7,7 @@ import com.acite.axlranko.model.TrainingConfigForm
 import com.acite.axlranko.model.VAL_INTERVAL_RANGE
 import com.acite.axlranko.model.VAL_SAMPLE_COUNT_RANGE
 import com.acite.axlranko.model.VAL_SPLIT_PERCENT_RANGE
+import com.acite.axlranko.model.customValidationEnabled
 import com.acite.axlranko.model.validationEnabled
 import java.nio.file.Files
 import kotlin.test.Test
@@ -129,11 +130,49 @@ class ValSplitConfigTest {
 
     @Test
     fun theKeysBelongToTheTrainingSection() {
-        for (key in listOf("val_split_percent", "val_sample_count", "val_interval")) {
+        for (key in listOf("val_split_percent", "val_sample_count", "val_interval", "val_data_dir")) {
             assertTrue(ConfigSection.Training.owns(key), key)
             assertFalse(ConfigSection.Environment.owns(key), key)
             assertFalse(ConfigSection.Validation.owns(key), key)
         }
+    }
+
+    @Test
+    fun theValidationDirectoryIsReadWrittenAndDefaultsToOff() {
+        // Absent (a snapshot from before the key, or a fresh config): off, which is an empty string.
+        assertEquals("", load().training.valDataDir)
+        assertEquals("", formOf().valDataDir)
+        assertFalse(customValidationEnabled(formOf()))
+
+        val form = formOf("val_data_dir = \"/data/val\"")
+        assertEquals("/data/val", form.valDataDir)
+        assertTrue(customValidationEnabled(form))
+
+        val written = save(writeConfig().readText(), form.copy(valDataDir = "/data/held out"))
+        val line = written.lines().single { it.trim().startsWith("val_data_dir") }
+        assertEquals("val_data_dir = \"/data/held out\"", line.trim())
+        // Written inside [training], like the other three, and replaced rather than duplicated.
+        assertTrue(written.indexOf("val_data_dir") < written.indexOf("[network]"))
+        val again = save(written, form)
+        assertEquals(1, again.lines().count { it.trim().startsWith("val_data_dir") })
+        assertEquals("/data/val", reload(again).training.valDataDir)
+    }
+
+    @Test
+    fun aSeparateValidationSetKeepsThePassControlsLiveAtSplitZero() {
+        // `Val split % = 0` is only the off switch while no directory supplies the passes; with one
+        // the two numbers are read, so they stay enabled in the form and range-checked here.
+        val custom = formOf().copy(valSplitPercent = "0", valDataDir = "/data/val")
+        assertTrue(validationEnabled(custom))
+        assertTrue(custom.copy(valSampleCount = "3", valInterval = "10").validate().isEmpty())
+        assertFalse(custom.copy(valSampleCount = "0").validate().isEmpty())
+        assertFalse(custom.copy(valInterval = "-1").validate().isEmpty())
+        assertTrue(custom.copy(valSampleCount = "0", valInterval = "-1").validate().containsKey("val_sample_count"))
+
+        // Turning the directory back off restores the old rule: percent 0 makes them inert again.
+        val off = custom.copy(valDataDir = "")
+        assertFalse(validationEnabled(off))
+        assertTrue(off.copy(valSampleCount = "0", valInterval = "-4").validate().isEmpty())
     }
 
     private fun reload(configText: String) =

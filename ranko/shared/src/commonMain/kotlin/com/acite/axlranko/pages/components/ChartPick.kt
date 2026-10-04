@@ -290,6 +290,25 @@ internal fun batchProgressLabel(job: GeneratedSampleJob?): String? {
     return parts.joinToString(" · ")
 }
 
+/** `range` for a batch planned from a step range, `pinned` for the explicit pinned work list. */
+internal const val JOB_SELECTION_RANGE = "range"
+internal const val JOB_SELECTION_PINNED = "pinned"
+
+/**
+ * What a running batch's line names: the step range it covers, or `Pinned samples`, with the
+ * checkpoint/image progress after it. A `range` job that records no bounds (a record from before
+ * the batch carried `selection`) keeps the old `steps 0–0` shape rather than a bare dash.
+ */
+internal fun batchHeadline(job: GeneratedSampleJob): String {
+    val what = if (job.selection == JOB_SELECTION_PINNED) {
+        "Pinned samples"
+    } else {
+        "Sampling steps ${job.fromStep ?: 0}–${job.toStep ?: 0}"
+    }
+    val progress = batchProgressLabel(job)
+    return if (progress != null) "$what · $progress" else what
+}
+
 /** The running batch of a job list, if one is going. */
 internal fun runningBatch(jobs: List<GeneratedSampleJob>): GeneratedSampleJob? =
     jobs.firstOrNull { it.mode == JOB_MODE_BATCH && it.state == JOB_RUNNING }

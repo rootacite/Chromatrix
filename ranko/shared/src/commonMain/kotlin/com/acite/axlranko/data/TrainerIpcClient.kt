@@ -423,6 +423,7 @@ class TrainerIpcClient {
         dirs: List<TrainDataCountRequest> = emptyList(),
         valSplitPercent: Double = 0.0,
         seed: Long = 0,
+        valDataDir: String = "",
     ): DatasetCountsResponse {
         val result = call(
             "dataset_counts",
@@ -441,6 +442,7 @@ class TrainerIpcClient {
                 }
                 put("val_split_percent", valSplitPercent)
                 put("seed", seed)
+                put("val_data_dir", valDataDir)
             },
         )
         return json.decodeFromJsonElement(result)
@@ -537,6 +539,21 @@ class TrainerIpcClient {
             buildJsonObject {
                 put("from_step", fromStep)
                 put("to_step", toStep)
+                name?.let { put("name", it) }
+                runId?.let { put("run_id", it) }
+            },
+        )
+        return json.decodeFromJsonElement(result)
+    }
+
+    /** Render the run's complete sample sets for every valid pinned checkpoint in one batch. */
+    suspend fun generatePinnedCheckpointSamples(
+        name: String? = null,
+        runId: String? = null,
+    ): GenerateSampleResponse {
+        val result = call(
+            "generate_pinned_checkpoint_samples",
+            buildJsonObject {
                 name?.let { put("name", it) }
                 runId?.let { put("run_id", it) }
             },

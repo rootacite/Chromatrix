@@ -129,14 +129,17 @@ internal fun sampleSetFormErrors(
 }
 
 /**
- * Whether the validation-set feature is on: `Val split %` above 0.
+ * Whether the validation-set feature is on: `Val split %` above 0 or a custom validation directory.
  *
  * `val_split_percent = 0` is the explicit off switch — nothing is held out, neither pass runs, and
  * no validation scalar is written — so Utils greys `Val samples` and `Val interval` in that state
  * and `validate()` stops range-checking them (they are inert, and the trainer exempts them too).
  */
 fun validationEnabled(form: TrainingConfigForm): Boolean =
-    (form.valSplitPercent.trim().toDoubleOrNull() ?: 0.0) > 0.0
+    (form.valSplitPercent.trim().toDoubleOrNull() ?: 0.0) > 0.0 || form.valDataDir.isNotBlank()
+
+/** A custom validation directory replaces the percentage split and supplies both loss passes. */
+fun customValidationEnabled(form: TrainingConfigForm): Boolean = form.valDataDir.isNotBlank()
 
 data class TrainingConfigForm(
     val pretrainedModelNameOrPath: String = "",
@@ -172,6 +175,8 @@ data class TrainingConfigForm(
     val valSampleCount: String = "8",
     /** Steps between validation passes (the first is step 1); 0 keeps the split but never runs one. */
     val valInterval: String = "5",
+    /** Optional validation-set directory; non-empty overrides `val_split_percent`. */
+    val valDataDir: String = "",
 
     val resumeLoraPath: String = "",
 
@@ -373,6 +378,9 @@ data class TrainingConfigForm(
                 max = VAL_INTERVAL_RANGE.last,
             )
         }
+        if (valDataDir.isNotBlank() && valDataDir.trim().isEmpty()) {
+            errors["val_data_dir"] = "Required"
+        }
 
         val type = networkType.trim().lowercase()
         if (type !in networkTypeOptions) {
@@ -468,6 +476,7 @@ data class TrainingConfigForm(
                 "val_split_percent" to f(valSplitPercent),
                 "val_sample_count" to n(valSampleCount),
                 "val_interval" to n(valInterval),
+                "val_data_dir" to q(valDataDir.trim()),
                 "resume_lora_path" to q(resumeLoraPath.trim())
             ),
             "network" to mapOf(
@@ -623,6 +632,7 @@ data class TrainingConfigForm(
                 valSplitPercent = formatNumber(train.valSplitPercent),
                 valSampleCount = train.valSampleCount.toString(),
                 valInterval = train.valInterval.toString(),
+                valDataDir = train.valDataDir,
                 resumeLoraPath = train.resumeLoraPath,
                 networkType = net.networkType.trim().lowercase().ifBlank { "standard" },
                 networkDim = net.networkDim.toString(),

@@ -62,5 +62,11 @@ val SparkSlopeHigh = Color(0xFFFF4F00)
 /** Checkpoint sparkline: a falling Avg Loss slope, (0, 255, 127). */
 val SparkSlopeLow = Color(0xFF00FF7F)
 
+/** Checkpoint sparkline: the gray Val/Avg_Loss curve drawn beside the slope-colored one. */
+val SparkCompareLine = Color(0xFF9E9E9E)
+
+/** Learning Rate chart: the emerald Val/Fixed_Loss stability curve on its own axis. */
+val ChartVarianceLine = Color(0xFF10B981)
+
 val rankoColors: RankoPalette
     @Composable get() = LocalRankoPalette.current

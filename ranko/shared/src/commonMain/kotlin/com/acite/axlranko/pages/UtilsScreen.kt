@@ -75,6 +75,7 @@ import com.acite.axlranko.model.formatStepCount
 import com.acite.axlranko.model.parseOnlyTags
 import com.acite.axlranko.model.taggerThresholdMarks
 import com.acite.axlranko.model.trainingSamplesPerEpoch
+import com.acite.axlranko.model.customValidationEnabled
 import com.acite.axlranko.model.validationEnabled
 import com.acite.axlranko.model.AppearanceSettings
 import com.acite.axlranko.model.BackgroundStyle
@@ -1123,9 +1124,11 @@ private fun TrainingFields(
     errors: Map<String, String>,
     viewModel: UtilsScreenViewModel
 ) {
-    // `Val split % = 0` is the feature's off switch: the two options below it become inert, so they
-    // are disabled instead of silently ignored.
+    // `Val split % = 0` is the feature's off switch, unless a custom validation directory supplies
+    // the two passes; the options below it are live in either state, so they are disabled only when
+    // nothing will read them.
     val validationPassesOn = validationEnabled(form)
+    val separateValidationSet = customValidationEnabled(form)
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         ConfigTextField(
             label = "Epochs",
@@ -1153,10 +1156,11 @@ private fun TrainingFields(
             label = "Val split %",
             value = form.valSplitPercent,
             error = errors["val_split_percent"],
-            supporting = if (validationPassesOn) {
-                "held out for the validation loss"
-            } else {
-                "0 disables the held-out set and both curves"
+            enabled = !separateValidationSet,
+            supporting = when {
+                separateValidationSet -> "off while a separate validation set is on"
+                validationPassesOn -> "held out for the validation loss"
+                else -> "0 disables the held-out set and both curves"
             },
             onValueChange = { viewModel.updateForm { copy(valSplitPercent = it) } },
             modifier = Modifier.weight(1f)
@@ -1189,6 +1193,26 @@ private fun TrainingFields(
             },
             onValueChange = { viewModel.updateForm { copy(valInterval = it) } },
             modifier = Modifier.weight(1f)
+        )
+    }
+    ConfigSwitch(
+        label = "Separate validation set",
+        checked = separateValidationSet,
+        description = "Score both validation passes on a directory of its own instead of holding " +
+            "images out of training. Every training image stays in training; Val samples and " +
+            "Val interval still apply. Turning this on asks for the directory.",
+        onChecked = { viewModel.setCustomValidation(it) },
+    )
+    if (separateValidationSet) {
+        ConfigPathField(
+            label = "Validation directory",
+            value = form.valDataDir,
+            error = errors["val_data_dir"],
+            supporting = "Read recursively, with the same caption and mask rules as a training folder",
+            onValueChange = { viewModel.updateForm { copy(valDataDir = it) } },
+            onBrowse = {
+                viewModel.browseDirectory(form.valDataDir) { copy(valDataDir = it) }
+            },
         )
     }
     Text("Mixed precision", style = MaterialTheme.typography.labelLarge, color = rankoColors.text)
@@ -2151,6 +2175,7 @@ internal fun StepEstimateLine(
     val problem: String? = when {
         uiState.datasetCountsError != null -> "Could not count the dataset: ${uiState.datasetCountsError}"
         missing != null -> missing
+        counts?.valDataError != null -> "Cannot count the validation set: ${counts.valDataError}"
         noTrainSamples && heldOutSamples > 0 -> "The validation split holds out every sample."
         noTrainSamples -> "The training folders hold no images."
         counts != null && estimate == null ->
@@ -2167,7 +2192,9 @@ internal fun StepEstimateLine(
             Text(
                 text = problem ?: "Counting the dataset…",
                 style = MaterialTheme.typography.bodySmall,
-                color = if (problem != null && (uiState.datasetCountsError != null || missing != null)) {
+                color = if (problem != null &&
+                    (uiState.datasetCountsError != null || missing != null || counts?.valDataError != null)
+                ) {
                     colors.qualityRed
                 } else {
                     colors.textDim
@@ -2190,7 +2217,11 @@ internal fun StepEstimateLine(
         )
         Text(
             text = "${formatStepCount(counts.images)} images × repeats" +
-                if (counts.valImages > 0) {
+                if (customValidationEnabled(form) && counts.valImages > 0) {
+                    // A separate validation set holds nothing out, so it is counted beside the
+                    // training folders rather than subtracted from them.
+                    " · validation set: ${formatStepCount(counts.valImages)} images"
+                } else if (counts.valImages > 0) {
                     " · held out: ${formatStepCount(counts.valImages)} images " +
                         "(${formatStepCount(counts.valSamples)} samples)"
                 } else {

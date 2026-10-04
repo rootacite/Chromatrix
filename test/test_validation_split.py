@@ -27,7 +27,7 @@ from PIL import Image, ImageDraw
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from trainer import control
-from trainer.config import TrainConfig
+from trainer.config import TrainConfig, custom_validation_path
 from trainer.dataset import LoraImageDataset
 from trainer.setup import build_dataloader
 from trainer.validation_split import (
@@ -476,6 +476,235 @@ class DatasetValidationSplitTest(unittest.TestCase):
         _write_images(self.first, 20)
         after = {str(r["path"]) for r in LoraImageDataset(cfg).records if r["is_val"]}
         self.assertNotEqual(before, after)
+
+
+class CustomValidationDirConfigTest(unittest.TestCase):
+    """`[training].val_data_dir`: the enable flag, its snapshot default, and the two live ranges."""
+
+    def test_the_key_is_read_and_an_older_snapshot_means_off(self):
+        cfg = TrainConfig.from_mapping({"val_data_dir": "/data/val"})
+        self.assertEqual(cfg.val_data_dir, "/data/val")
+        self.assertEqual(str(custom_validation_path(cfg)), "/data/val")
+
+        # A run snapshot written before the key existed must not inherit today's repo value: it
+        # trained with the split, so it means "no custom set".
+        older = TrainConfig.from_mapping({"val_split_percent": 0.0, "val_data_dir": "/data/val"})
+        self.assertEqual(older.val_data_dir, "/data/val")
+        restored = TrainConfig.from_mapping({"val_split_percent": 10.0})
+        self.assertEqual(restored.val_data_dir, "")
+
+    def test_blank_or_spaced_values_are_off(self):
+        for value in ("", "   ", None):
+            with self.subTest(value=value):
+                self.assertIsNone(custom_validation_path(TrainConfig.from_mapping({"val_data_dir": value})))
+
+    def test_a_custom_dir_keeps_the_two_pass_controls_live_at_split_zero(self):
+        """Percent 0 with a custom directory is not the off switch: the passes still run."""
+        cfg = TrainConfig.from_mapping(
+            {
+                "val_split_percent": 0.0,
+                "val_data_dir": "/data/val",
+                "val_sample_count": 5,
+                "val_interval": 7,
+            }
+        )
+        self.assertEqual((cfg.val_sample_count, cfg.val_interval), (5, 7))
+        # And their ranges are checked in that state, because both passes read them.
+        with self.assertRaises(ValueError):
+            TrainConfig.from_mapping(
+                {"val_split_percent": 0.0, "val_data_dir": "/data/val", "val_sample_count": 0}
+            )
+        with self.assertRaises(ValueError):
+            TrainConfig.from_mapping(
+                {"val_split_percent": 0.0, "val_data_dir": "/data/val", "val_interval": -1}
+            )
+
+
+class CustomValidationDirDatasetTest(unittest.TestCase):
+    """A separate validation directory: it supplies both passes, and nothing leaves training."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        os.environ["AXL_RUNTIME_DIR"] = self.tmp.name
+        control._state = {}
+        control._last_cmd_seq = 0
+        control._ended = False
+        control.release_lock()
+        root = Path(self.tmp.name)
+        self.first = root / "first"  # 8 images, drawn 3x each
+        self.second = root / "second"  # 4 images, drawn once
+        self.val = root / "val"  # 5 images, recursed into
+        _write_images(self.first, 8)
+        _write_images(self.second, 4)
+        _write_images(self.val, 3)
+        _write_images(self.val / "nested", 2)
+
+    def tearDown(self):
+        control.release_lock()
+        self.tmp.cleanup()
+        os.environ.pop("AXL_RUNTIME_DIR", None)
+
+    def _dataset(self, **overrides) -> LoraImageDataset:
+        defaults = {"val_split_percent": 10.0, "val_sample_count": 8, "seed": 4242, "val_data_dir": str(self.val)}
+        defaults.update(overrides)
+        cfg = _cfg([(self.first, 3), (self.second, 1)], **defaults)
+        return LoraImageDataset(cfg)
+
+    def _train_indices(self, ds: LoraImageDataset) -> set[int]:
+        return {index for index in range(len(ds.records)) if not ds.records[index]["is_val"]}
+
+    def _val_indices(self, ds: LoraImageDataset) -> set[int]:
+        return {index for index in range(len(ds.records)) if ds.records[index]["is_val"]}
+
+    def test_the_split_stays_out_of_the_training_buckets(self):
+        ds = self._dataset()
+        train = self._train_indices(ds)
+        val = self._val_indices(ds)
+        # 12 training images, none of them held out, and the 5 validation images are all records.
+        self.assertEqual(len(train), 12)
+        self.assertEqual(len(val), 5)
+        self.assertEqual(ds.val_image_count, 5)
+        self.assertEqual(ds.val_sample_count, 5)
+        self.assertEqual(ds.total_samples, 8 * 3 + 4 * 1)
+        trained = Counter({index: ds.records[index]["repeat"] for index in train})
+        drawn = Counter(
+            index
+            for indices in ds.buckets.values()
+            for index in indices
+        )
+        self.assertEqual(trained, drawn)
+        # Validation records live in their own buckets, each drawn once per pass — never repeated
+        # into a training epoch.
+        self.assertEqual(
+            sorted(index for indices in ds.val_buckets.values() for index in indices),
+            sorted(val),
+        )
+        self.assertTrue(all(ds.records[index]["repeat"] == 1 for index in val))
+
+    def test_the_validation_images_come_from_the_directory_and_its_subfolders(self):
+        ds = self._dataset()
+        val_paths = {str(ds.records[index]["path"]) for index in self._val_indices(ds)}
+        expected = {str(path) for path in sorted(self.val.rglob("*.png"))}
+        self.assertEqual(val_paths, expected)
+        # The directory's own cache keeps its latents out of the training folders' caches.
+        self.assertEqual(ds.validation_cache_dir, self.val / ".latents_cache")
+        for index in self._val_indices(ds):
+            self.assertEqual(ds.records[index]["cache_dir"], self.val / ".latents_cache")
+
+    def test_val_split_percent_is_ignored_when_a_directory_is_set(self):
+        """Both modes train everything: a leftover percent cannot take an image out of training."""
+        split = self._dataset(val_split_percent=50.0, val_data_dir="")
+        custom = self._dataset(val_split_percent=50.0)
+        self.assertEqual(split.val_image_count, 6)  # ceil(50 % of 12)
+        self.assertEqual(split.total_samples, 8 * 3 + 4 * 1 - split.val_sample_count)
+        self.assertEqual(custom.total_samples, 8 * 3 + 4 * 1)
+        self.assertGreater(custom.total_samples, split.total_samples)
+        self.assertEqual(len(self._train_indices(custom)), 12)
+        self.assertEqual(custom.val_image_count, 5)
+
+    def test_the_fixed_sample_is_picked_from_the_validation_directory(self):
+        ds = self._dataset(val_sample_count=3)
+        val = self._val_indices(ds)
+        fixed = ds.fixed_validation_indices()
+        self.assertEqual(len(fixed), 3)
+        self.assertTrue(set(fixed) <= val)
+        self.assertEqual(sorted(fixed), fixed)
+
+    def test_no_training_image_can_reach_a_validation_pass(self):
+        """The probe, both directions, on real batches from a real loader."""
+        cfg = _cfg(
+            [(self.first, 3), (self.second, 1)],
+            val_split_percent=10.0,
+            val_data_dir=str(self.val),
+            val_sample_count=4,
+        )
+        ds, dataloader = build_dataloader(cfg)
+        train_paths = {str(ds.records[index]["path"]) for index in self._train_indices(ds)}
+        val_paths = {str(ds.records[index]["path"]) for index in self._val_indices(ds)}
+        self.assertEqual(train_paths & val_paths, set())
+
+        for epoch in range(3):
+            ds.set_epoch(epoch)
+            dataloader.batch_sampler.set_epoch(epoch)
+            for batch in dataloader:
+                paths = set(batch["image_path"])
+                self.assertEqual(paths & val_paths, set(), f"a validation image trained in epoch {epoch}")
+                self.assertTrue(paths <= train_paths)
+
+        for step in (1, 4, 9):
+            indices = ds.sample_validation_indices(4, step)
+            self.assertTrue(set(indices) <= self._val_indices(ds))
+            self.assertEqual({str(ds[index]["image_path"]) for index in indices} - val_paths, set())
+
+    def test_every_validation_image_is_still_warmed_into_its_own_cache(self):
+        ds = self._dataset()
+        self.assertEqual(len(ds.cache_entries()), len(ds.records))
+        val_entries = {
+            str(entry["cache_path"])
+            for index, entry in enumerate(ds.cache_entries())
+            if ds.records[index]["is_val"]
+        }
+        self.assertTrue(all(str(self.val / ".latents_cache") in path for path in val_entries))
+
+        from trainer.cache import warm_latent_cache
+
+        self.assertTrue(warm_latent_cache(ds, MockVAE(), ds.cfg, torch.device("cpu"), torch.float32))
+        for index in self._val_indices(ds):
+            self.assertEqual(ds[index]["img_type"], "latent")
+
+    def test_a_missing_or_empty_directory_fails_with_its_path(self):
+        with self.assertRaises(RuntimeError) as ctx:
+            self._dataset(val_data_dir=str(self.val / "gone"))
+        self.assertIn("val_data_dir", str(ctx.exception))
+
+        empty = Path(self.tmp.name) / "empty_val"
+        empty.mkdir()
+        with self.assertRaises(RuntimeError) as ctx:
+            self._dataset(val_data_dir=str(empty))
+        self.assertIn("no usable images", str(ctx.exception))
+
+    def test_the_step_estimate_counts_the_directory_without_shrinking_training(self):
+        from trainer import estimate
+
+        entries = [
+            {"path": str(self.first), "repeat": 3},
+            {"path": str(self.second), "repeat": 1},
+        ]
+        with_split = estimate.count_train_images(entries, 10.0, 4242)
+        with_custom = estimate.count_train_images(entries, 10.0, 4242, val_data_dir=str(self.val))
+        self.assertEqual(with_split["images"], with_custom["images"])
+        self.assertEqual(with_split["val_images"], 2)  # ceil(10 % of 12)
+        # `samples` is the per-epoch draws before any subtraction, so the two modes report the same
+        # number; the split names the draws the client subtracts, the custom set names none.
+        self.assertEqual(with_split["samples"], with_custom["samples"])
+        self.assertGreaterEqual(with_split["val_samples"], 1)
+        self.assertEqual(with_custom["val_images"], 5)
+        self.assertEqual(with_custom["val_samples"], 0)
+
+        missing = estimate.count_train_images(
+            entries, 10.0, 4242, val_data_dir=str(self.val / "gone")
+        )
+        self.assertEqual(missing["val_images"], 0)
+        self.assertEqual(missing["val_samples"], 0)
+        self.assertEqual(missing["val_data_error"], "not a directory")
+
+        empty = Path(self.tmp.name) / "empty_val"
+        empty.mkdir()
+        no_images = estimate.count_train_images(entries, 10.0, 4242, val_data_dir=str(empty))
+        self.assertEqual(no_images["val_data_error"], "contains no usable images")
+
+    def test_a_blank_setting_is_the_off_switch_for_the_estimator(self):
+        from trainer import estimate
+
+        entries = [{"path": str(self.first), "repeat": 1}]
+        self.assertNotIn(
+            "val_data_error",
+            estimate.count_train_images(entries, 10.0, 1, val_data_dir=""),
+        )
+        self.assertEqual(
+            estimate.count_train_images(entries, 10.0, 1, val_data_dir=""),
+            estimate.count_train_images(entries, 10.0, 1),
+        )
 
 
 if __name__ == "__main__":

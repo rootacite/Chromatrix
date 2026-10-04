@@ -337,7 +337,8 @@ Params:
 | `from_step` / `to_step` | integer | Yes | Inclusive bounds, `0 <= from_step <= to_step`. |
 | `name` / `run_id` | string \| null | No | Resolve the run like `dashboard`. |
 
-The plan is a `batch` job record — the ordered work list, `from_step`/`to_step`, how many
+The plan is a `batch` job record — `selection: "range"`, the ordered work list,
+`from_step`/`to_step`, how many
 checkpoints and images, which entry is being rendered, and what failed — and the runner gives each
 checkpoint its **own** `sets` job (with `batch_id`/`batch_index`/`batch_total`), so every image is
 named, shown and followed exactly as a manual pass from that card would be. A checkpoint that fails
@@ -352,6 +353,26 @@ Refused under the same GPU rules as `generate_checkpoint_samples`, on a malforme
 the range covers no checkpoint of the run (`no checkpoints between step X and Y`).
 
 Result: `{job, log_path}` with `mode: "batch"`.
+
+### `generate_pinned_checkpoint_samples`
+
+The same pass for the run's **pinned** checkpoints: one detached process, one `sets` job per
+checkpoint, `selection: "pinned"` and no `from_step`/`to_step`.
+
+The work list is `checkpoint_pins.json` intersected with `discover_checkpoints` for the run, in pin
+file order: a pin whose file is gone (a Reset deleted the weights, a checkpoint was moved) is
+dropped rather than failing the batch, and a pin that names another run's checkpoint is not this
+run's work. With no valid pin left the call refuses before spawning
+(`no valid pinned checkpoints to sample`); prompts are resolved and refused exactly as the range
+form does.
+
+Params:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `name` / `run_id` | string \| null | No | Resolve the run like `dashboard`. |
+
+Result: `{job, log_path}` with `mode: "batch"`, the same record shape the range form writes.
 
 ### `evaluate_checkpoint`
 
@@ -936,7 +957,8 @@ Params:
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `dirs` | array of `{path, repeat}` | No | The folders the form currently holds, so the answer follows unsaved edits. Omitted (or empty), the config's own `[[environment.train_data]]` entries are used. |
-| `val_split_percent` | number `0`–`90` | No | The form's `[training].val_split_percent`. Applies `trainer/validation_split.py`'s split — the same function the dataset uses — and reports the held-out part as `val_images` / `val_samples`. Default `0` (no split). |
+| `val_split_percent` | number `0`–`90` | No | The form's `[training].val_split_percent`. Applies `trainer/validation_split.py`'s split — the same function the dataset uses — and reports the held-out part as `val_images` / `val_samples`. Default `0` (no split). Ignored when `val_data_dir` is set. |
+| `val_data_dir` | string | No | The form's `[training].val_data_dir`. Non-empty asks about that **custom validation directory** instead of the split: `val_images` counts it, `val_samples` is `0` because no training image is held out, and `val_data_error` names why it could not be counted (`not a directory`, `contains no usable images`). Empty (the default) means the split applies. |
 | `seed` | integer | No | The form's `[training].seed`; the split's draw is seeded from it. Default `0`. |
 
 Result:
@@ -957,7 +979,10 @@ Result:
 `samples` is the per-epoch figure with repeats applied (`Σ images × repeat`); a folder that cannot be
 read carries its reason and counts as zero rather than failing the call. `val_images` / `val_samples`
 are the part the validation split holds out (unique images, and the draws they would have
-contributed), which the Utils step estimate subtracts before its epoch / batch / GA arithmetic. The
+contributed), which the Utils step estimate subtracts before its epoch / batch / GA arithmetic. With
+a custom validation directory, `val_images` is that directory's image count and `val_samples` is `0` —
+nothing is subtracted, because nothing left training — and `val_data_error` (present only when the
+count failed) is what the form reports in place of the estimate. The
 step arithmetic itself is the client's (`model/StepEstimate.kt`), so epoch / batch / GA edits need no
 round trip.
 
@@ -1023,7 +1048,7 @@ After connect Chromatrix does not open trainer files. Paths in these methods are
 - `profile_list` / `profile_get` `{name}` / `profile_save` `{name, text, overwrite}` / `profile_delete` `{name}`.
 - `prompt_matrix` `{}` → `{path, text}` of repo-root `input_matrix.txt` (read-only). `prompt_profile_list` `{}` → `{profiles: [{name, version, modified, size, error}]}` for repo-root `prompt_profiles/*.json`; `version` is `null` when the file has no `version` key and `error` carries the reason an unreadable entry cannot be used. `prompt_profile_get` `{name}` → `{name, text}`; `prompt_profile_save` `{name, text, overwrite}` parse-checks that `text` is a JSON object with a `spec` object, then atomic-writes `<repo>/prompt_profiles/<name>.json`; `prompt_profile_delete` `{name}`. The version upgrades (v1 → v2 → v3) happen in the client, so the store never rewrites a profile.
 - `dataset_list` `{directory}` → `{items: [{stem, image, txt, mask, width, height, tags, has_sidecar_mask, has_alpha}], orphans}`. Non-recursive. Orphan `.txt` names are listed; Statistics aborts when `orphans` is non-empty.
-- `dataset_counts` `{dirs?, val_split_percent?, seed?}` → `{entries: [{path, repeat, images, error}], images, samples, val_images, val_samples}`. Read-only, no GPU; the Utils → Training step estimate's image counts (see the method above).
+- `dataset_counts` `{dirs?, val_split_percent?, seed?, val_data_dir?}` → `{entries: [{path, repeat, images, error}], images, samples, val_images, val_samples}` (plus `val_data_error` when a custom `val_data_dir` could not be counted). Read-only, no GPU; the Utils → Training step estimate's image counts (see the method above).
 - `caption_write` `{directory, stem, text}`.
 - `dataset_drop` `{directory, rate, seed?, stems?}`. Moves image+txt+mask to `/tmp/axlranko/trash`. `stems` limits the pool (the GUI passes the filtered set).
 - `dataset_shuffle` `{directory, seed?}` → `{groups, renamed_files, first_stem, last_stem}`.

@@ -59,7 +59,9 @@ must stay under `[validation]` (a top-level `[[samples]]` would be dropped, beca
 ### Validation-set split (`[training].val_split_percent` / `val_sample_count` / `val_interval`)
 
 Three plain `[training]` scalars, deliberately not in `[validation]` (which means the prompt sets
-above). They are one contract with two readers, and the shared function is what keeps them agreeing:
+above). A fourth key, `val_data_dir` (below), replaces the split with a directory of its own; it is
+the same contract's second source. The three scalars are one contract with two readers, and the
+shared function is what keeps them agreeing:
 
 - `trainer/validation_split.py` (torch-free) is the only implementation of the split:
   `held_out_count(total, percent)` is `ceil(percent/100 × total)` clamped to leave at least one
@@ -82,10 +84,24 @@ above). They are one contract with two readers, and the shared function is what 
 - Ranges are validated twice, as everywhere else: `TrainConfig.__post_init__` raises naming the key
   (`VAL_SPLIT_PERCENT_RANGE` / `VAL_SAMPLE_COUNT_RANGE` / `VAL_INTERVAL_RANGE` in `trainer/config.py`,
   mirrored by `TrainingConfigForm.validate`), and a hand-edited file therefore fails at startup.
-  **`val_split_percent = 0` is the feature's off switch** (nothing held out, no pass, no scalar) and
-  the other two ranges are only enforced while it is on, on both sides (`validationEnabled` in Kotlin,
-  the same `if` in `TrainConfig.__post_init__`), so an inert number cannot block a run. With the split
-  on, `val_interval = 0` remains valid: the split stays, no pass runs.
+  **`val_split_percent = 0` is the split's off switch** (nothing held out, no pass, no scalar) and
+  the other two ranges are only enforced while it is on *or* a custom `val_data_dir` is set, on both
+  sides (`validationEnabled` in Kotlin, the same `if` in `TrainConfig.__post_init__`), so an inert
+  number cannot block a run. With the split on, `val_interval = 0` remains valid: the split stays,
+  no pass runs.
+- `[training].val_data_dir` (empty = off) is the split's **replacement**, resolved by
+  `custom_validation_path(cfg)` (`trainer/config.py`). A non-empty value makes `select_validation`
+  unnecessary — `LoraImageDataset` passes `set()` for the held-out positions, so every training
+  image keeps its draws, and builds the validation records from the directory instead (recursive,
+  one record each, `repeat = 1`, their own `val_buckets` and `<dir>/.latents_cache`). Both passes
+  read `val_buckets`, so neither can reach a training record: pass 1's `sample_validation_indices`
+  and pass 2's `fixed_validation_indices` are subsets of those records by construction. A missing
+  directory, or one with no usable image, raises in `LoraImageDataset.__init__` with the path.
+  `val_split_percent` is then inert but still validated, and the run log says it is ignored; the
+  run snapshot keeps the key, and `TrainConfig.from_mapping` defaults it to `""` for a snapshot
+  written before it existed (so an old run never inherits today's repo value). `dataset_counts`
+  takes the same key and reports `val_images` = the directory's count with `val_samples = 0` (the
+  client subtracts nothing) and `val_data_error` when it cannot be counted.
 - Cadence: `loop.validation_due(interval, step)` is the rule, and it is step-anchored, not a modulo —
   the **first validation step is step 1**, then `1 + N`, `1 + 2N`, … (`interval = 1` = every step,
   `0` = never). A modulo rule would have put the first point at step `N`, which is late for a short

@@ -200,6 +200,34 @@ class GeneratedSampleTest {
     }
 
     @Test
+    fun aBatchHeadlineNamesItsStepRangeOrItsPinList() {
+        val range = GeneratedSampleJob(
+            id = "rein_s100-600_batch_gen_20260929_230000",
+            state = JOB_RUNNING,
+            mode = JOB_MODE_BATCH,
+            selection = JOB_SELECTION_RANGE,
+            fromStep = 100,
+            toStep = 600,
+            checkpointIndex = 3,
+            totalCheckpoints = 8,
+            imagesDone = 12,
+            totalImages = 48,
+        )
+        assertEquals(
+            "Sampling steps 100–600 · 3/8 checkpoints · 12/48 images",
+            batchHeadline(range),
+        )
+        // The pinned form carries no bounds, so it names the pin list instead of "steps 0–0".
+        val pinned = range.copy(selection = JOB_SELECTION_PINNED, fromStep = null, toStep = null)
+        assertEquals("Pinned samples · 3/8 checkpoints · 12/48 images", batchHeadline(pinned))
+        // A record from before the field existed defaults to the range shape.
+        assertEquals(
+            "Sampling steps 0–0 · 3/8 checkpoints · 12/48 images",
+            batchHeadline(range.copy(fromStep = null, toStep = null)),
+        )
+    }
+
+    @Test
     fun aCancellingJobShowsThatInsteadOfACounter() {
         assertEquals("cancelling…", generatedJobProgress(job(state = JOB_RUNNING, cancelRequested = true)))
         assertEquals(

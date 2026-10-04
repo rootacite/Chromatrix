@@ -1,6 +1,7 @@
 package com.acite.axlranko.pages.components
 
 import com.acite.axlranko.model.MetricPoint
+import com.acite.axlranko.ui.theme.SparkCompareLine
 import com.acite.axlranko.ui.theme.SparkSlopeHigh
 import com.acite.axlranko.ui.theme.SparkSlopeLow
 import kotlin.math.roundToInt
@@ -291,6 +292,129 @@ class CheckpointLossSparkTest {
         assertEquals(0f, drawn.first().step)
         assertEquals(9f, drawn.last().step)
         assertTrue(drawn.any { it.step == 3f })
+    }
+
+    // --- the gray Val/Avg_Loss comparison curve ------------------------------------------------
+
+    @Test
+    fun theComparisonCurveIsDrawnInGray() {
+        val train = listOf(SparkPoint(0f, 1f), SparkPoint(10f, 0.5f))
+        val held = listOf(SparkPoint(0f, 3f), SparkPoint(10f, 2f))
+        val layout = layoutCheckpointSpark(
+            points = train,
+            comparison = held,
+            step = 0f,
+            width = 100f,
+            height = 40f,
+            padLeft = 0f,
+            padTop = 0f,
+            padRight = 0f,
+            padBottom = 0f,
+            scale = 1f,
+        )
+        assertEquals(1, layout.comparison.size)
+        assertTrue(layout.comparison.all { it.color == SparkCompareLine })
+        // The slope-colored curve keeps its own colors.
+        assertTrue(layout.segments.all { it.color != SparkCompareLine })
+    }
+
+    @Test
+    fun theComparisonCurveSharesTheYRangeSoTheTwoAreComparable() {
+        val train = listOf(SparkPoint(0f, 0f), SparkPoint(10f, 1f))
+        val held = listOf(SparkPoint(0f, 3f), SparkPoint(10f, 4f))
+        val shared = layoutCheckpointSpark(
+            points = train,
+            comparison = held,
+            step = 0f,
+            width = 100f,
+            height = 40f,
+            padLeft = 0f,
+            padTop = 0f,
+            padRight = 0f,
+            padBottom = 0f,
+            scale = 1f,
+        )
+        // Both curves fit inside the plot, and the held-out curve (values 3–4) sits above the
+        // training one (0–1): a smaller y is higher on screen.
+        val highestTrain = shared.segments.minOf { minOf(it.y0, it.y1) }
+        val lowestHeld = shared.comparison.maxOf { maxOf(it.y0, it.y1) }
+        assertTrue(lowestHeld < highestTrain, "the gray curve was not placed above the training one")
+        assertTrue((shared.segments.flatMap { listOf(it.y0, it.y1) } + shared.comparison.flatMap { listOf(it.y0, it.y1) })
+            .all { it in 0f..40f }, "a curve left the plot")
+        // The training curve alone would fill the plot (0 → bottom, 1 → top); the shared range is
+        // what pushes it into the lower half on the gray curve's account.
+        val trainOnly = layoutCheckpointSpark(
+            points = train,
+            step = 0f,
+            width = 100f,
+            height = 40f,
+            padLeft = 0f,
+            padTop = 0f,
+            padRight = 0f,
+            padBottom = 0f,
+            scale = 1f,
+        )
+        val trainTopAlone = trainOnly.segments.minOf { minOf(it.y0, it.y1) }
+        assertTrue(highestTrain > trainTopAlone, "the gray curve did not expand the y range")
+    }
+
+    @Test
+    fun fewerThanTwoComparisonPointsDrawNoGrayCurve() {
+        val train = listOf(SparkPoint(0f, 0f), SparkPoint(10f, 1f))
+        val oneHeld = listOf(SparkPoint(5f, 9f))
+        val withOne = layoutCheckpointSpark(
+            points = train,
+            comparison = oneHeld,
+            step = 0f,
+            width = 100f,
+            height = 40f,
+            padLeft = 0f,
+            padTop = 0f,
+            padRight = 0f,
+            padBottom = 0f,
+            scale = 1f,
+        )
+        assertTrue(withOne.comparison.isEmpty())
+        val without = layoutCheckpointSpark(
+            points = train,
+            step = 0f,
+            width = 100f,
+            height = 40f,
+            padLeft = 0f,
+            padTop = 0f,
+            padRight = 0f,
+            padBottom = 0f,
+            scale = 1f,
+        )
+        // A lone comparison point neither draws nor pulls the y range (it would have taken the
+        // training curve to the bottom of the plot).
+        assertEquals(without.segments, withOne.segments)
+        assertTrue(without.comparison.isEmpty())
+    }
+
+    @Test
+    fun theComparisonCurveIsWindowedByTheRunsCadence() {
+        // The same `windowSpark` rule the training curve uses: ±2 × save_every_n_steps around the
+        // card's step, so the gray line covers exactly the steps the colored one does.
+        val held = (0..1000 step 25).map { SparkPoint(it.toFloat(), 1f + it / 1000f) }
+        val around = windowSpark(held, step = 500f, saveEveryNSteps = 100)
+        assertEquals(300f, around.first().step)
+        assertEquals(700f, around.last().step)
+        val layout = layoutCheckpointSpark(
+            points = windowSpark(held, step = 500f, saveEveryNSteps = 100),
+            comparison = around,
+            step = 500f,
+            width = 220f,
+            height = 82f,
+            padLeft = 4f,
+            padTop = 4f,
+            padRight = 4f,
+            padBottom = 4f,
+            scale = 1f,
+        )
+        assertEquals(16, layout.comparison.size)
+        // Every gray vertex lands inside the plot rectangle the training window set.
+        assertTrue(layout.comparison.all { it.x0 >= layout.plotLeft && it.x0 <= layout.plotRight })
     }
 
     private fun channel(component: Float): Int = (component * 255f).roundToInt()

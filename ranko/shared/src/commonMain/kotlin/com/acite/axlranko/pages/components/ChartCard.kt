@@ -127,8 +127,83 @@ internal fun epochBoundaries(stepsPerEpoch: Int?, lastStep: Float): List<EpochMa
     return marks
 }
 
-/** Room the right-hand labels of a dual-axis chart need, mirroring the left padding. */
+/** Room the right-hand labels of a multi-axis chart need, per axis, mirroring the left padding. */
 internal const val PLOT_RIGHT_PADDING = 52f
+
+/**
+ * One labelled y axis of a chart: the value range it spans and the colour of the curve drawn
+ * against it. Axis 0 is the left-hand one; the rest stack inwards-to-outwards on the right.
+ */
+internal data class ChartAxis(val domainMin: Float, val domainMax: Float, val color: Color)
+
+/**
+ * x where the label of right-hand axis [index] (0 = innermost) of [count] starts. The innermost sits
+ * just past the plot; each further one takes the next column of [PLOT_RIGHT_PADDING]; the outermost
+ * is right-aligned to the card's edge, which is where a two-axis chart has always put its one right
+ * label.
+ */
+internal fun rightAxisLabelX(
+    index: Int,
+    count: Int,
+    plotRight: Float,
+    totalWidth: Float,
+    labelWidth: Float,
+): Float =
+    if (count <= 0 || index >= count - 1) {
+        totalWidth - labelWidth
+    } else {
+        plotRight + index * PLOT_RIGHT_PADDING + 6f
+    }
+
+/**
+ * The series of a multi-axis chart, each assigned the axis it is drawn against.
+ *
+ * Series `i` with `i < axisCount` takes axis `i`, whose range is fitted to that curve alone inside
+ * [windowX] and clipped with [outlierClip] — the same rule the single-axis chart applies to its
+ * curves, applied per curve so a learning rate and a variance never share a scale. A series whose
+ * explicit `domainMin`/`domainMax` is set keeps it (and that range becomes its axis). Anything past
+ * the last axis keeps the last axis' range, so no curve can be drawn against a scale the chart does
+ * not label. A curve with nothing inside the window leaves its axis unassigned, and the axis is then
+ * not labelled.
+ *
+ * [axisCount] below 2 returns [series] unchanged: a one-axis chart fits all its curves together.
+ */
+internal fun assignAxisDomains(
+    series: List<ChartSeries>,
+    axisCount: Int,
+    windowX: Pair<Float, Float>,
+    outlierClip: Float,
+    smoothing: Float,
+): List<ChartSeries> {
+    if (axisCount < 2) return series
+    val result = series.toMutableList()
+    var lastAxisDomain: Pair<Float, Float>? = null
+    for (index in series.indices) {
+        val item = series[index]
+        val explicit = if (item.domainMin != null && item.domainMax != null) {
+            item.domainMin to item.domainMax
+        } else {
+            null
+        }
+        val axis = minOf(index, axisCount - 1)
+        val domain = when {
+            explicit != null -> explicit
+            axis != index -> lastAxisDomain
+            else -> {
+                val points = item.points.map { ChartPoint(it.step.toFloat(), it.value) }.sortedBy { it.step }
+                val windowed = smoothPoints(points, smoothing)
+                    .filter { it.step >= windowX.first && it.step <= windowX.second }
+                    .map { it.value }
+                fittedYRange(listOf(windowed), outlierClip)
+            }
+        }
+        if (axis == index) lastAxisDomain = domain
+        if (domain != null) {
+            result[index] = item.copy(domainMin = domain.first, domainMax = domain.second)
+        }
+    }
+    return result
+}
 
 /**
  * The x window a chart opens on: the whole range, or its newest [maxStepSpan] steps. A null span —
@@ -142,28 +217,17 @@ internal fun initialXWindow(xMin: Float, xMax: Float, maxStepSpan: Float?): Pair
 }
 
 /**
- * Range of one series inside an x window, padded so a flat curve (a learning rate after its warmup)
- * gets a readable span instead of collapsing onto a single line.
+ * Whether a chart draws in the normalized 0..100 space: true as soon as one of its series carries
+ * its own range (`ChartSeries.domainMin`/`domainMax`, e.g. the hardware charts' 0–100 percentages)
+ * or is assigned an axis of its own ([assignAxisDomains]). A chart with no domain at all draws its
+ * curves in their own values against one shared fit.
  */
-internal fun windowDomain(
-    points: List<MetricPoint>,
-    xMin: Float,
-    xMax: Float,
-    padFraction: Float = 0.05f,
-): Pair<Float, Float>? {
-    val inWindow = points.filter { it.step >= xMin && it.step <= xMax }
-    val considered = if (inWindow.isEmpty()) points else inWindow
-    if (considered.isEmpty()) return null
-    val lo = considered.minOf { it.value }
-    val hi = considered.maxOf { it.value }
-    val span = hi - lo
-    val pad = if (span > 1e-12f) span * padFraction else maxOf(abs(hi) * padFraction, 1e-12f)
-    return (lo - pad) to (hi + pad)
-}
+internal fun chartUsesOwnDomains(series: List<ChartSeries>): Boolean =
+    series.any { item -> item.domainMin != null && item.domainMax != null }
 
 /**
  * Value a normalized y tick (the 0..100 the viewport spans) stands for on one series' own axis, so a
- * dual-axis chart can label its left and right edges in the units each curve is drawn in.
+ * multi-axis chart can label each edge in the units the curve drawn against it uses.
  */
 internal fun axisTickValue(
     viewportMin: Float,
@@ -387,10 +451,11 @@ fun MultiSeriesChartCard(
     /** Steps the x axis opens on (null = the whole range); see [initialXWindow]. */
     defaultStepSpan: Float? = null,
     /**
-     * Draw the first two series against their own vertical axes: the left edge is labelled in
-     * series 0's units, the right edge in series 1's, each in that curve's colour.
+     * Draw each of the first [axisCount] series against its own vertical axis: axis 0 is the left
+     * edge, the rest label the right gutter from the inside out, each in its curve's colour and
+     * fitted to that curve alone. `1` is the ordinary shared-scale chart.
      */
-    dualAxis: Boolean = false,
+    axisCount: Int = 1,
     onPickStep: ((step: Float, anchorInRoot: Offset) -> Unit)? = null,
     showHoverStep: Boolean = false,
     pickMarkers: ChartPickMarkers? = null,
@@ -459,7 +524,7 @@ fun MultiSeriesChartCard(
                     strokeWidth = strokeWidth,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     defaultStepSpan = defaultStepSpan,
-                    dualAxis = dualAxis,
+                    axisCount = axisCount,
                     onPickStep = onPickStep,
                     showHoverStep = showHoverStep,
                     pickMarkers = pickMarkers,
@@ -518,7 +583,7 @@ private fun InteractiveLineChart(
     strokeWidth: Float,
     modifier: Modifier = Modifier,
     defaultStepSpan: Float? = null,
-    dualAxis: Boolean = false,
+    axisCount: Int = 1,
     onPickStep: ((step: Float, anchorInRoot: Offset) -> Unit)? = null,
     showHoverStep: Boolean = false,
     pickMarkers: ChartPickMarkers? = null,
@@ -542,32 +607,40 @@ private fun InteractiveLineChart(
         initialXWindow(fullX.first, fullX.second, defaultStepSpan)
     }
 
-    // A dual-axis chart draws each of its first two curves through that curve's own range *inside
-    // the opening window*, so the two can be read against a left and a right scale.
-    val chartSeries = remember(rawSeries, dualAxis, windowX) {
-        rawSeries.mapIndexed { index, (item, _) ->
-            if (!dualAxis || index > 1 || (item.domainMin != null && item.domainMax != null)) {
-                item
-            } else {
-                val domain = windowDomain(item.points, windowX.first, windowX.second)
-                if (domain == null) item else item.copy(domainMin = domain.first, domainMax = domain.second)
-            }
-        }
+    // A multi-axis chart draws each of its first `axisCount` curves through that curve's own range
+    // *inside the opening window* — fitted and clipped on that curve alone (`assignAxisDomains`), so
+    // curves of different magnitudes are each readable against their own scale.
+    val chartSeries = remember(rawSeries, axisCount, windowX, smoothing, outlierClip) {
+        assignAxisDomains(
+            series = rawSeries.map { it.first },
+            axisCount = axisCount,
+            windowX = windowX,
+            outlierClip = outlierClip,
+            smoothing = smoothing,
+        )
     }
     val axisDomains = remember(chartSeries) {
-        chartSeries.mapNotNull { item ->
+        chartSeries.map { item ->
             val lo = item.domainMin
             val hi = item.domainMax
             if (lo != null && hi != null) lo to hi else null
         }
     }
-    val rightDomain = if (dualAxis && axisDomains.size >= 2) axisDomains[1] else null
-    // A dual-axis chart labels its left edge in series 0's units even when the second series has
-    // nothing to draw (a run from before the other curve was logged).
-    val leftDomain = axisDomains.firstOrNull().takeIf { dualAxis }
-    val rightPad = if (rightDomain != null) PLOT_RIGHT_PADDING else 0f
-    val leftAxisColor = chartSeries.firstOrNull()?.color ?: Color.Unspecified
-    val rightAxisColor = chartSeries.getOrNull(1)?.color ?: Color.Unspecified
+    // Axis 0 labels the left edge in series 0's units even when that curve has nothing to draw (a
+    // run from before the tag was logged); the right-hand axes follow in series order.
+    val leftAxis = if (axisCount >= 2) {
+        axisDomains.getOrNull(0)?.let { ChartAxis(it.first, it.second, chartSeries[0].color) }
+    } else {
+        null
+    }
+    val rightAxes = if (axisCount >= 2) {
+        axisDomains.drop(1).take(axisCount - 1).mapIndexedNotNull { offset, domain ->
+            domain?.let { ChartAxis(it.first, it.second, chartSeries[offset + 1].color) }
+        }
+    } else {
+        emptyList()
+    }
+    val rightPad = PLOT_RIGHT_PADDING * rightAxes.size
 
     val prepared = remember(rawSeries, chartSeries, smoothing) {
         rawSeries.mapIndexed { index, (_, points) ->
@@ -578,7 +651,9 @@ private fun InteractiveLineChart(
     }
 
     val allMapped = remember(prepared) { prepared.flatMap { it.raw } }
-    val normalized = axisDomains.isNotEmpty()
+    // A chart whose series carry their own ranges draws in the normalized space (see
+    // `chartUsesOwnDomains`), which is what the hardware charts' fixed 0–100 axes rely on.
+    val normalized = remember(chartSeries) { chartUsesOwnDomains(chartSeries) }
 
     val fullBounds = remember(fullX, allMapped, normalized) {
         Viewport(
@@ -863,10 +938,8 @@ private fun InteractiveLineChart(
             axisColor = axisColor,
             textMeasurer = textMeasurer,
             labelStyle = labelStyle,
-            leftDomain = leftDomain,
-            leftColor = leftAxisColor,
-            rightDomain = rightDomain,
-            rightColor = rightAxisColor,
+            leftAxis = leftAxis,
+            rightAxes = rightAxes,
         )
 
         clipRect(left = leftPad, top = 0f, right = leftPad + plotW, bottom = plotH) {
@@ -1029,10 +1102,8 @@ private fun DrawScope.drawGridAndLabels(
     axisColor: Color,
     textMeasurer: TextMeasurer,
     labelStyle: TextStyle,
-    leftDomain: Pair<Float, Float>? = null,
-    leftColor: Color = Color.Unspecified,
-    rightDomain: Pair<Float, Float>? = null,
-    rightColor: Color = Color.Unspecified,
+    leftAxis: ChartAxis? = null,
+    rightAxes: List<ChartAxis> = emptyList(),
 ) {
     val xTicks = 5
     val yTicks = 4
@@ -1042,12 +1113,12 @@ private fun DrawScope.drawGridAndLabels(
         val yScr = plotH - frac * plotH
         drawLine(gridColor, Offset(leftPad, yScr), Offset(leftPad + plotW, yScr), strokeWidth = 1f)
 
-        val leftValue = if (leftDomain != null) {
-            axisTickValue(vp.yMin, vp.yRange, frac, leftDomain.first, leftDomain.second)
+        val leftValue = if (leftAxis != null) {
+            axisTickValue(vp.yMin, vp.yRange, frac, leftAxis.domainMin, leftAxis.domainMax)
         } else {
             vp.yMin + frac * vp.yRange
         }
-        val leftStyle = if (leftDomain != null) labelStyle.copy(color = leftColor) else labelStyle
+        val leftStyle = if (leftAxis != null) labelStyle.copy(color = leftAxis.color) else labelStyle
         val leftLayout = textMeasurer.measure(formatAxisValue(leftValue), leftStyle)
         drawText(
             leftLayout,
@@ -1057,18 +1128,24 @@ private fun DrawScope.drawGridAndLabels(
             ),
         )
 
-        if (rightDomain != null) {
-            val rightValue = axisTickValue(vp.yMin, vp.yRange, frac, rightDomain.first, rightDomain.second)
+        rightAxes.forEachIndexed { index, axis ->
+            val rightValue = axisTickValue(vp.yMin, vp.yRange, frac, axis.domainMin, axis.domainMax)
             val rightLayout = textMeasurer.measure(
                 formatAxisValue(rightValue),
-                labelStyle.copy(color = rightColor),
+                labelStyle.copy(color = axis.color),
+            )
+            // Each right axis takes one column of the gutter, from the plot outwards, so the
+            // innermost one is the first the eye meets after the curve.
+            val x = rightAxisLabelX(
+                index = index,
+                count = rightAxes.size,
+                plotRight = leftPad + plotW,
+                totalWidth = totalW,
+                labelWidth = rightLayout.size.width.toFloat(),
             )
             drawText(
                 rightLayout,
-                topLeft = Offset(
-                    x = totalW - rightLayout.size.width,
-                    y = yScr - rightLayout.size.height / 2f,
-                ),
+                topLeft = Offset(x, yScr - rightLayout.size.height / 2f),
             )
         }
     }

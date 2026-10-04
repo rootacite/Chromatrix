@@ -229,6 +229,64 @@ class DashboardIpcTest {
     }
 
     @Test
+    fun aBatchJobParsesItsRangeOrItsPinList() {
+        // The range form: bounds, a work list, and the progress counters the Checkpoints section
+        // draws while it runs.
+        val range = json.decodeFromString(
+            GeneratedSampleJob.serializer(),
+            """
+            {
+              "id": "rein_s100-600_batch_gen_20261004_120000",
+              "state": "running",
+              "mode": "batch",
+              "selection": "range",
+              "run_id": "rein_20260911_120000",
+              "output_name": "rein",
+              "from_step": 100,
+              "to_step": 600,
+              "checkpoint_index": 3,
+              "total_checkpoints": 8,
+              "images_done": 12,
+              "total_images": 48
+            }
+            """.trimIndent(),
+        )
+        assertEquals("range", range.selection)
+        assertEquals(100, range.fromStep)
+        assertEquals(600, range.toStep)
+        assertEquals(3, range.checkpointIndex)
+        assertEquals(8, range.totalCheckpoints)
+
+        // The pinned form: no bounds at all, and the selection is what the headline reads.
+        val pinned = json.decodeFromString(
+            GeneratedSampleJob.serializer(),
+            """
+            {
+              "id": "rein_pinned_batch_gen_20261004_120000",
+              "state": "running",
+              "mode": "batch",
+              "selection": "pinned",
+              "from_step": null,
+              "to_step": null,
+              "total_checkpoints": 2
+            }
+            """.trimIndent(),
+        )
+        assertEquals("pinned", pinned.selection)
+        assertNull(pinned.fromStep)
+        assertNull(pinned.toStep)
+        assertEquals(2, pinned.totalCheckpoints)
+
+        // A record from before the field existed decodes as the range form, with no bounds.
+        val older = json.decodeFromString(
+            GeneratedSampleJob.serializer(),
+            """{"id": "rein_s0-500_batch_gen", "state": "done", "mode": "batch"}""",
+        )
+        assertEquals("range", older.selection)
+        assertNull(older.fromStep)
+    }
+
+    @Test
     fun anEvaluationJobParsesItsPlanAndScores() {
         val raw = """
             {

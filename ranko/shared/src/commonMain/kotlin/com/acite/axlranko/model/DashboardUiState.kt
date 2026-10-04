@@ -125,6 +125,8 @@ data class GeneratedSampleJob(
     /** `running` while the generator works, then `done` or `error`. */
     val state: String = "running",
     val mode: String = "single",
+    /** `range` for a step-range batch, `pinned` for the explicit pinned work list. */
+    val selection: String = "range",
     val step: Int? = null,
     val prompt: String = "",
     @SerialName("negative_prompt") val negativePrompt: String = "",
@@ -409,6 +411,11 @@ data class DatasetCountsResponse(
     @SerialName("val_images") val valImages: Int = 0,
     /** Draws those held-out images would have contributed, repeats included. */
     @SerialName("val_samples") val valSamples: Int = 0,
+    /**
+     * Why a custom `val_data_dir` could not be counted (`not a directory`, `contains no usable
+     * images`, …). Null when there is no custom directory or it answered.
+     */
+    @SerialName("val_data_error") val valDataError: String? = null,
 )
 
 /** One of the tagger's categories, as the model declares it (`tagger_info`). */@Serializable
@@ -673,6 +680,8 @@ data class DashboardUiState(
     val isGeneratingCheckpoint: String? = null,
     /** True while a step-range batch is being handed to the helper. */
     val isStartingBatch: Boolean = false,
+    /** True while the pinned-checkpoint batch is being handed to the helper. */
+    val isStartingPinnedBatch: Boolean = false,
     val batchError: String? = null,
     /** The checkpoint the evaluation panel is open for, if any. */
     val evaluationTarget: EvaluationTarget? = null,

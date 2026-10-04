@@ -59,6 +59,7 @@ enum class ConfigSection(
             "val_split_percent",
             "val_sample_count",
             "val_interval",
+            "val_data_dir",
             "resume_lora_path"
         )
     ),

@@ -142,6 +142,7 @@ import com.acite.axlranko.pages.components.SAMPLE_THUMB_ASPECT
 import com.acite.axlranko.pages.components.SampleSlot
 import com.acite.axlranko.pages.components.TrainControlCard
 import com.acite.axlranko.pages.components.batchProgressLabel
+import com.acite.axlranko.pages.components.batchHeadline
 import com.acite.axlranko.pages.components.batchRangeError
 import com.acite.axlranko.pages.components.CheckpointLossSpark
 import com.acite.axlranko.pages.components.CheckpointSparkMinHeight
@@ -167,6 +168,7 @@ import com.acite.axlranko.pages.components.panelJobsForStep
 import com.acite.axlranko.pages.components.placePanelOrigin
 import com.acite.axlranko.pages.components.runningJob
 import com.acite.axlranko.pages.components.runningBatch
+import com.acite.axlranko.pages.components.rollingPopulationVariance
 import com.acite.axlranko.pages.components.sampleColumns
 import com.acite.axlranko.pages.components.sampleSetBadge
 import com.acite.axlranko.pages.components.sampleSlotWidth
@@ -179,6 +181,7 @@ import com.acite.axlranko.ui.components.CapsuleButton
 import com.acite.axlranko.ui.components.PorcelainCard
 import com.acite.axlranko.ui.components.rankoFieldColors
 import com.acite.axlranko.ui.isPortrait
+import com.acite.axlranko.ui.theme.ChartVarianceLine
 import com.acite.axlranko.ui.theme.rankoColors
 import com.acite.axlranko.ui.theme.rankoTokens
 import com.acite.axlranko.util.checkpointSubtitle
@@ -247,9 +250,13 @@ fun DashboardScreen(
         val portrait = isPortrait(maxWidth, maxHeight)
         Box(modifier = Modifier.fillMaxSize()) {
             val listState = rememberLazyListState()
-            // One smooth of the run's Avg Loss. Every checkpoint card marks its own step on it.
+            // One smooth of the run's Avg Loss and one of its Val/Avg_Loss. Every checkpoint card
+            // marks its own step on the first and draws the second beside it in gray.
             val avgLossSpark = remember(uiState.metrics) {
                 smoothAvgLoss(uiState.metrics["Train/Avg_Loss"].orEmpty())
+            }
+            val valAvgLossSpark = remember(uiState.metrics) {
+                smoothAvgLoss(uiState.metrics["Val/Avg_Loss"].orEmpty())
             }
             LazyColumn(
                 state = listState,
@@ -434,6 +441,15 @@ fun DashboardScreen(
                         onCancel = { id -> viewModel.cancelGeneration(id) },
                         portrait = portrait,
                     )
+                    val pinnedCount = checkpointCards.count { it.pinned }
+                    if (pinnedCount > 0) {
+                        PinnedSampleRow(
+                            pinnedCount = pinnedCount,
+                            starting = uiState.isStartingPinnedBatch,
+                            canStart = gpuFree && runningBatchJob == null,
+                            onGeneratePinned = viewModel::startPinnedSampleBatch,
+                        )
+                    }
                 }
 
                 if (checkpointCards.any { it.pinned }) {
@@ -454,6 +470,7 @@ fun DashboardScreen(
                             portrait = portrait,
                             row = row,
                             spark = avgLossSpark,
+                            valSpark = valAvgLossSpark,
                             saveEveryNSteps = uiState.runSaveEveryNSteps,
                             thumbSize = uiState.sampleThumbSize,
                             showSetBadges = showSetBadges,
@@ -906,12 +923,14 @@ private fun ChartsSection(
                         Modifier.weight(1f),
                     )
                     LearningRateChartCard(
-                        metrics,
-                        smoothing,
-                        stroke,
-                        uiState.stepSpan,
-                        uiState.smoothExtraDp,
-                        Modifier.weight(1f),
+                        metrics = metrics,
+                        stepsPerEpoch = uiState.stepsPerEpoch,
+                        outlierClip = uiState.outlierClip,
+                        smoothing = smoothing,
+                        stroke = stroke,
+                        stepSpan = uiState.stepSpan,
+                        smoothExtraDp = uiState.smoothExtraDp,
+                        modifier = Modifier.weight(1f),
                     )
                 }
             } else {
@@ -927,12 +946,14 @@ private fun ChartsSection(
                     Modifier.fillMaxWidth(),
                 )
                 LearningRateChartCard(
-                    metrics,
-                    smoothing,
-                    stroke,
-                    uiState.stepSpan,
-                    uiState.smoothExtraDp,
-                    Modifier.fillMaxWidth(),
+                    metrics = metrics,
+                    stepsPerEpoch = uiState.stepsPerEpoch,
+                    outlierClip = uiState.outlierClip,
+                    smoothing = smoothing,
+                    stroke = stroke,
+                    stepSpan = uiState.stepSpan,
+                    smoothExtraDp = uiState.smoothExtraDp,
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
         }
@@ -966,9 +987,18 @@ private fun TrainingChartCard(
     )
 }
 
+/**
+ * The two learning rates, each on its own axis, plus the emerald stability curve: the rolling
+ * population variance of the raw `Val/Fixed_Loss` series over a `± steps_per_epoch / 4` window,
+ * which turns "the held-out loss is settling" into a curve that flattens as it does. The variance
+ * needs a known epoch length and at least two of its own points; without either the card is the two
+ * learning-rate curves it always was.
+ */
 @Composable
 private fun LearningRateChartCard(
     metrics: Map<String, List<MetricPoint>>,
+    stepsPerEpoch: Int?,
+    outlierClip: Float,
     smoothing: Float,
     stroke: Float,
     stepSpan: Float,
@@ -976,18 +1006,22 @@ private fun LearningRateChartCard(
     modifier: Modifier,
 ) {
     val colors = rankoColors
+    val variance = rollingPopulationVariance(metrics["Val/Fixed_Loss"].orEmpty(), stepsPerEpoch)
     MultiSeriesChartCard(
         title = "Learning Rate",
-        series = listOf(
+        series = listOfNotNull(
             ChartSeries("UNet LR", metrics["UNet/LR/Effective_Actual_LR"].orEmpty(), colors.accentBlue),
             ChartSeries("TE LR", metrics["TE/LR/Effective_Actual_LR"].orEmpty(), colors.accentLilac),
+            ChartSeries("Val Fixed Var", variance, ChartVarianceLine)
+                .takeIf { variance.size >= 2 },
         ),
         smoothing = smoothing,
         modifier = modifier,
+        outlierClip = outlierClip,
         strokeWidth = stroke,
         defaultStepSpan = stepSpan,
         smoothExtraDp = smoothExtraDp,
-        dualAxis = true,
+        axisCount = 3,
         showHoverStep = true,
     )
 }
@@ -1067,8 +1101,7 @@ internal fun SampleRangeRow(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text(
-                    text = "Sampling steps ${running.fromStep ?: 0}–${running.toStep ?: 0} · " +
-                        (batchProgressLabel(running) ?: ""),
+                    text = batchHeadline(running),
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.accentPink,
                     modifier = Modifier.weight(1f),
@@ -1203,6 +1236,47 @@ internal fun SampleRangeRow(
     }
 }
 
+/**
+ * The Checkpoints section's bulk action for its pinned cards: render the run's complete sample
+ * sets for every valid pin in one detached batch, in the pin file's order. Shown once something is
+ * pinned; enabled while the GPU is free and no other batch is going. The batch's progress and Stop
+ * live in [SampleRangeRow] above, whose record is the same shape.
+ */
+@Composable
+internal fun PinnedSampleRow(
+    pinnedCount: Int,
+    starting: Boolean,
+    canStart: Boolean,
+    onGeneratePinned: () -> Unit,
+) {
+    val colors = rankoColors
+    Row(
+        // The row follows the sample-range block, whose own error line can sit right above it.
+        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        CapsuleButton(
+            text = if (starting) "Starting…" else "Generate pinned samples",
+            onClick = onGeneratePinned,
+            enabled = canStart && !starting,
+            compact = true,
+        ) {
+            Text(
+                if (starting) "Starting…" else "Generate pinned samples",
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                softWrap = false,
+            )
+        }
+        Text(
+            text = if (pinnedCount == 1) "1 pinned checkpoint" else "$pinnedCount pinned checkpoints",
+            style = MaterialTheme.typography.labelSmall,
+            color = colors.textDim,
+        )
+    }
+}
+
 /** The Checkpoints section with nothing to list: no run, or a run that wrote nothing yet. */
 @Composable
 internal fun CheckpointsEmptyCard() {
@@ -1326,15 +1400,18 @@ internal fun CheckpointExportStatus(inFlight: Boolean, result: CheckpointExport?
  * surface so it stands apart from the rest, and carries the pin button that put it there; the pin
  * list is the run's own state, kept in its log directory by the helper.
  *
- * [spark] is the run's Avg Loss at a fixed 0.85 smooth. It sits at a fixed width immediately left of
- * Save As, as tall as the three header lines, and its step axis is at most `± 2 × [saveEveryNSteps]`
- * around this card. [saveEveryNSteps] is the run's own snapshot; without one the chart is not drawn.
+ * [spark] is the run's Avg Loss and [valSpark] its Val/Avg_Loss, each at a fixed 0.85 smooth. The
+ * sparkline sits at a fixed width immediately left of Save As, as tall as the three header lines,
+ * and its step axis is at most `± 2 × [saveEveryNSteps]` around this card. [saveEveryNSteps] is the
+ * run's own snapshot; without one the chart is not drawn.
  */
 @Composable
 internal fun CheckpointRowCard(
     portrait: Boolean = false,
     row: CheckpointRow,
     spark: List<SparkPoint> = emptyList(),
+    /** The run's Val/Avg_Loss at the same smooth; drawn gray beside [spark], empty for no curve. */
+    valSpark: List<SparkPoint> = emptyList(),
     /** This run's snapshot `save_every_n_steps`. Null is not the repo file's value. */
     saveEveryNSteps: Int? = null,
     thumbSize: Float,
@@ -1461,6 +1538,7 @@ internal fun CheckpointRowCard(
                     points = spark,
                     step = step,
                     saveEveryNSteps = every,
+                    comparison = valSpark,
                     modifier = if (portrait) {
                         Modifier
                             .fillMaxWidth()

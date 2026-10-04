@@ -9,6 +9,7 @@ from tqdm.auto import tqdm
 from config import (
     TrainConfig,
     active_sample_sets,
+    custom_validation_path,
     resolve_train_data_entries,
     save_run_config,
     tracker_hparams,
@@ -118,10 +119,25 @@ def main() -> None:
                         )
                 if stats.get("unreadable"):
                     diversity += f"; {stats['unreadable']} held-out image(s) unreadable"
-                print(
-                    f"Validation split: {ds.val_image_count}/{len(ds)} images held out "
-                    f"({ds.val_sample_count} samples/epoch); scored {pass_note}{diversity}"
-                )
+                validation_dir = custom_validation_path(cfg)
+                if validation_dir is not None:
+                    # A custom validation set replaces the split: every training image stays in
+                    # training (so `val_split_percent`, if it is also set, does nothing here).
+                    ignored = (
+                        f"; val_split_percent = {float(cfg.val_split_percent):g} is ignored"
+                        if float(cfg.val_split_percent) > 0
+                        else ""
+                    )
+                    print(
+                        f"Validation set: {validation_dir} ({ds.val_image_count} images); "
+                        f"all {ds.train_image_count} training images kept, "
+                        f"scored {pass_note}{diversity}{ignored}"
+                    )
+                else:
+                    print(
+                        f"Validation split: {ds.val_image_count}/{len(ds)} images held out "
+                        f"({ds.val_sample_count} samples/epoch); scored {pass_note}{diversity}"
+                    )
             elif float(cfg.val_split_percent) <= 0:
                 # The explicit off switch: percent 0 holds nothing out, so both passes and all
                 # three scalars are absent. Say so rather than leaving the log silent about it.
