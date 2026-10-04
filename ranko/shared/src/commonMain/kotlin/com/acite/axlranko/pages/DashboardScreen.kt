@@ -869,10 +869,15 @@ private fun ChartsSection(
             }
             MultiSeriesChartCard(
                 title = "Train / Avg Loss",
-                series = listOf(
+                // A run with the validation feature off (or before its first cadence step) logs
+                // neither validation tag, so the card falls back to the single training curve
+                // instead of showing two empty legend entries.
+                series = listOfNotNull(
                     ChartSeries("Avg Loss", avgPoints, colors.accentPink),
-                    ChartSeries("Val Avg Loss", valAvgPoints, colors.accentBlue),
-                    ChartSeries("Val Fixed Loss", valFixedPoints, colors.accentRose),
+                    ChartSeries("Val Avg Loss", valAvgPoints, colors.accentBlue)
+                        .takeIf { valAvgPoints.isNotEmpty() },
+                    ChartSeries("Val Fixed Loss", valFixedPoints, colors.accentRose)
+                        .takeIf { valFixedPoints.isNotEmpty() },
                 ),
                 smoothing = smoothing,
                 modifier = Modifier.fillMaxWidth(),

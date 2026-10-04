@@ -75,6 +75,7 @@ import com.acite.axlranko.model.formatStepCount
 import com.acite.axlranko.model.parseOnlyTags
 import com.acite.axlranko.model.taggerThresholdMarks
 import com.acite.axlranko.model.trainingSamplesPerEpoch
+import com.acite.axlranko.model.validationEnabled
 import com.acite.axlranko.model.AppearanceSettings
 import com.acite.axlranko.model.BackgroundStyle
 import com.acite.axlranko.pages.components.DatasetDirBar
@@ -1122,6 +1123,9 @@ private fun TrainingFields(
     errors: Map<String, String>,
     viewModel: UtilsScreenViewModel
 ) {
+    // `Val split % = 0` is the feature's off switch: the two options below it become inert, so they
+    // are disabled instead of silently ignored.
+    val validationPassesOn = validationEnabled(form)
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         ConfigTextField(
             label = "Epochs",
@@ -1149,7 +1153,11 @@ private fun TrainingFields(
             label = "Val split %",
             value = form.valSplitPercent,
             error = errors["val_split_percent"],
-            supporting = "held out for the validation loss",
+            supporting = if (validationPassesOn) {
+                "held out for the validation loss"
+            } else {
+                "0 disables the held-out set and both curves"
+            },
             onValueChange = { viewModel.updateForm { copy(valSplitPercent = it) } },
             modifier = Modifier.weight(1f)
         )
@@ -1160,7 +1168,12 @@ private fun TrainingFields(
             label = "Val samples",
             value = form.valSampleCount,
             error = errors["val_sample_count"],
-            supporting = "most held-out images scored per pass",
+            enabled = validationPassesOn,
+            supporting = if (validationPassesOn) {
+                "most held-out images scored per pass"
+            } else {
+                "off while Val split % is 0"
+            },
             onValueChange = { viewModel.updateForm { copy(valSampleCount = it) } },
             modifier = Modifier.weight(1f)
         )
@@ -1168,7 +1181,12 @@ private fun TrainingFields(
             label = "Val interval",
             value = form.valInterval,
             error = errors["val_interval"],
-            supporting = "first at step 1, then every N steps · 0 = off",
+            enabled = validationPassesOn,
+            supporting = if (validationPassesOn) {
+                "first at step 1, then every N steps · 0 = off"
+            } else {
+                "off while Val split % is 0"
+            },
             onValueChange = { viewModel.updateForm { copy(valInterval = it) } },
             modifier = Modifier.weight(1f)
         )
@@ -2024,6 +2042,7 @@ private fun ConfigTextField(
     singleLine: Boolean = true,
     minLines: Int = 1,
     readOnly: Boolean = false,
+    enabled: Boolean = true,
     trailingIcon: @Composable (() -> Unit)? = null
 ) {
     OutlinedTextField(
@@ -2033,6 +2052,7 @@ private fun ConfigTextField(
         label = { Text(label) },
         isError = error != null,
         readOnly = readOnly,
+        enabled = enabled,
         supportingText = {
             val text = error ?: supporting
             if (text != null) Text(text)

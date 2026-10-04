@@ -105,28 +105,56 @@ class ChartViewportTest {
     @Test
     fun theNewestPointStaysInsideAClippedRange() {
         val descending = (10 downTo 1).map { it.toFloat() }
-        val fitted = fittedYRange(descending, outlierClip = 0.15f, include = listOf(1f))!!
+        val fitted = fittedYRange(listOf(descending), outlierClip = 0.15f)!!
         assertTrue(fitted.first <= 1f, "newest point ${fitted.first} was clipped below 1")
         assertTrue(fitted.second >= 1f)
     }
 
     @Test
     fun anOldSpikeOutsideThePercentileStaysOutside() {
-        val values = List(20) { 2f } + 100f
-        val fitted = fittedYRange(values, outlierClip = 0.15f, include = listOf(2f))!!
+        // The spike is old; the newest point (2f) is what the fit must keep visible.
+        val values = listOf(100f) + List(20) { 2f }
+        val fitted = fittedYRange(listOf(values), outlierClip = 0.15f)!!
         assertTrue(fitted.second < 100f, "spike pulled the range to ${fitted.second}")
     }
 
     @Test
     fun theRangeFollowsTheSmoothedValuesItIsGiven() {
-        val fitted = fittedYRange(listOf(1.9f, 2f, 2.1f), outlierClip = 0f, include = listOf(2.1f))!!
+        val fitted = fittedYRange(listOf(listOf(1.9f, 2f, 2.1f)), outlierClip = 0f)!!
         assertTrue(fitted.second < 10f, "smoothed range reached ${fitted.second}")
         assertTrue(fitted.first <= 1.9f && fitted.second >= 2.1f)
     }
 
     @Test
+    fun everyCurveIsInsideTheFittedRange() {
+        // Avg Loss low, the two validation curves above it: all three have to be readable.
+        val train = List(50) { 1f + it * 0.001f }
+        val valAvg = List(6) { 12f + it * 0.1f }
+        val valFixed = List(6) { 20f + it * 0.1f }
+        val fitted = fittedYRange(listOf(train, valAvg, valFixed), outlierClip = 0.15f)!!
+        assertTrue(fitted.first <= 1f, "train curve's start is above the range: $fitted")
+        assertTrue(fitted.second >= 20.5f, "the fixed curve is cut off: $fitted")
+    }
+
+    @Test
+    fun aSparseCurveIsNotOutVotedByADenseOne() {
+        // 100 training points around 1 and a 15-point validation curve around 10-12 with one old
+        // spike. Pooling every value first would put the 92.5th percentile at ~10.5 — inside the
+        // validation curve — and cut its own 11-12 values off the axis. Per series it keeps 10-12
+        // and drops only the spike.
+        val train = List(100) { 1f + it * 0.001f }
+        val valFixed = listOf(1000f) + List(14) { 10f + it * (2f / 13f) }
+        val fitted = fittedYRange(listOf(train, valFixed), outlierClip = 0.15f)!!
+        assertTrue(fitted.second >= 12f, "the validation curve's values were trimmed: $fitted")
+        assertTrue(fitted.second < 1000f, "the spike was not clipped: $fitted")
+        assertTrue(fitted.first <= 1f, "the training curve's start is above the range: $fitted")
+    }
+
+    @Test
     fun anEmptyFitIsNull() {
-        assertNull(fittedYRange(emptyList(), 0.15f, emptyList()))
+        assertNull(fittedYRange(emptyList(), 0.15f))
+        assertNull(fittedYRange(listOf(emptyList()), 0.15f))
+        assertNull(fittedYRange(listOf(listOf(Float.NaN)), 0.15f))
     }
 
     @Test

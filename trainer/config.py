@@ -789,14 +789,18 @@ class TrainConfig:
         except ValueError as exc:
             raise ValueError(f"val_split_percent: {exc}") from exc
         _check_range("val_split_percent", split_percent, VAL_SPLIT_PERCENT_RANGE)
-        for key, value, bounds in (
-            ("val_sample_count", self.val_sample_count, VAL_SAMPLE_COUNT_RANGE),
-            ("val_interval", self.val_interval, VAL_INTERVAL_RANGE),
-        ):
-            try:
-                number = _set_int(value, 0)
-            except ValueError as exc:
-                # `_set_int` refuses a bool and a non-integral float, so a hand-edited `5.5`
-                # fails here instead of being truncated to 5 silently.
-                raise ValueError(f"{key}: {exc}") from exc
-            _check_range(key, number, bounds)
+        # `val_split_percent = 0` is the feature's off switch: nothing is held out, no pass runs, and
+        # the other two numbers are inert, so their ranges are only enforced while the split is on.
+        # The Utils form greys them in the same state (`validationOptionsEnabled`).
+        if split_percent > 0:
+            for key, value, bounds in (
+                ("val_sample_count", self.val_sample_count, VAL_SAMPLE_COUNT_RANGE),
+                ("val_interval", self.val_interval, VAL_INTERVAL_RANGE),
+            ):
+                try:
+                    number = _set_int(value, 0)
+                except ValueError as exc:
+                    # `_set_int` refuses a bool and a non-integral float, so a hand-edited `5.5`
+                    # fails here instead of being truncated to 5 silently.
+                    raise ValueError(f"{key}: {exc}") from exc
+                _check_range(key, number, bounds)

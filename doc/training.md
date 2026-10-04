@@ -115,12 +115,13 @@ Rules and failure modes:
 
 ### Validation loss
 
-With `[training].val_split_percent > 0`, the dataset keeps `ceil(percent/100 × images)` images out
-of training — drawn once from the run's `seed` and the folder contents, so the run's log line
-`Validation split: N/M images held out` is reproducible, and each held-out image also removes its
-folder's `repeat` draws per epoch. The first validation step is **step 1**, then one every
-`val_interval` steps (and never when it is `0`), and each of those runs **two passes** over up to
-`val_sample_count` held-out images:
+Set `[training].val_split_percent = 0` to turn the feature off: nothing is held out, neither pass
+runs, no validation scalar is written, and the run log says `Validation: off`. Otherwise the dataset
+keeps `ceil(percent/100 × images)` images out of training — drawn once from the run's `seed` and the
+folder contents, so the run's log line `Validation split: N/M images held out` is reproducible, and
+each held-out image also removes its folder's `repeat` draws per epoch. The first validation step is
+**step 1**, then one every `val_interval` steps (and never when it is `0`), and each of those runs
+**two passes** over up to `val_sample_count` held-out images:
 
 - pass 1 scores a fresh random subset — coverage over the run — and its mean goes to `Val/Loss`;
 - the same points are averaged over the current epoch's validation points (the window rule

@@ -7,6 +7,7 @@ import com.acite.axlranko.model.TrainingConfigForm
 import com.acite.axlranko.model.VAL_INTERVAL_RANGE
 import com.acite.axlranko.model.VAL_SAMPLE_COUNT_RANGE
 import com.acite.axlranko.model.VAL_SPLIT_PERCENT_RANGE
+import com.acite.axlranko.model.validationEnabled
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -111,6 +112,19 @@ class ValSplitConfigTest {
         assertEquals(90.0, high)
         assertEquals(1, VAL_SAMPLE_COUNT_RANGE.first)
         assertEquals(0, VAL_INTERVAL_RANGE.first)
+    }
+
+    @Test
+    fun zeroPercentIsTheOffSwitch() {
+        // 0 % disables the held-out set: Utils greys the other two fields (`validationEnabled`) and
+        // their numbers stop being range-checked, because neither pass would read them.
+        val off = formOf().copy(valSplitPercent = "0")
+        assertFalse(validationEnabled(off))
+        assertTrue(validationEnabled(off.copy(valSplitPercent = "0.5")))
+        assertTrue(validationEnabled(formOf()))
+        assertTrue(off.copy(valSampleCount = "0", valInterval = "-4").validate().isEmpty())
+        assertFalse(off.copy(valSplitPercent = "10", valSampleCount = "0").validate().isEmpty())
+        assertEquals("Min 0.0", formOf().copy(valSplitPercent = "-1").validate()["val_split_percent"])
     }
 
     @Test

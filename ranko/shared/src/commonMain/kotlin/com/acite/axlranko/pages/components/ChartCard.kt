@@ -188,38 +188,47 @@ private fun List<Float>.percentile(p: Float): Float {
 }
 
 /**
- * Y range for a non-normalized chart. Percentiles are taken from [values] (the smoothed points
- * inside the x window). [include] is then expanded in — the newest raw and smoothed points — and
- * only after that is the range padded, so the latest point is not clipped by the percentile.
+ * Y range for a non-normalized chart, fitted to the **smoothed** curves it is given — one list per
+ * series, already cut to the x window — and to all of them together.
+ *
+ * Each series is clipped on its own tails (`outlierClip` spread over both ends) and the range is the
+ * union of those per-series ranges. Pooling every series into one list of values first is what makes
+ * a chart like Train / Avg Loss unusable: the training curve has hundreds of points and the two
+ * validation curves a handful, so the pooled percentiles are the training curve's and trim the
+ * validation curves' *genuine* values off the axis. Per series, a sparse curve still loses only its
+ * own outliers.
+ *
+ * A series' newest smoothed point is forced inside before the final padding, so a monotone curve's
+ * last point is not the tail the percentile drops. Raw points never enter the fit: the stroke the
+ * reader follows is the smoothed one.
  */
 internal fun fittedYRange(
-    values: List<Float>,
+    series: List<List<Float>>,
     outlierClip: Float,
-    include: List<Float>,
     padFraction: Float = 0.05f,
 ): Pair<Float, Float>? {
-    val finite = values.filter { it.isFinite() }
-    val extras = include.filter { it.isFinite() }
-    if (finite.isEmpty() && extras.isEmpty()) return null
-    var lo: Float
-    var hi: Float
-    if (finite.isEmpty()) {
-        lo = extras.min()
-        hi = extras.max()
-    } else {
-        val sorted = finite.sorted()
-        val half = (outlierClip / 2f).coerceIn(0f, 0.49f)
-        lo = sorted.percentile(half)
-        hi = sorted.percentile(1f - half)
-        if (hi < lo) {
-            val swap = lo
-            lo = hi
-            hi = swap
+    val curves = series
+        .map { values -> values.filter { it.isFinite() } }
+        .filter { it.isNotEmpty() }
+    if (curves.isEmpty()) return null
+
+    val half = (outlierClip / 2f).coerceIn(0f, 0.49f)
+    var lo = Float.POSITIVE_INFINITY
+    var hi = Float.NEGATIVE_INFINITY
+    for (values in curves) {
+        val sorted = values.sorted()
+        var curveLo = sorted.percentile(half)
+        var curveHi = sorted.percentile(1f - half)
+        if (curveHi < curveLo) {
+            val swap = curveLo
+            curveLo = curveHi
+            curveHi = swap
         }
-    }
-    for (y in extras) {
-        if (y < lo) lo = y
-        if (y > hi) hi = y
+        val newest = values.last()
+        curveLo = minOf(curveLo, newest)
+        curveHi = maxOf(curveHi, newest)
+        lo = minOf(lo, curveLo)
+        hi = maxOf(hi, curveHi)
     }
     val yPad = ((hi - lo) * padFraction).coerceAtLeast(abs(hi) * 0.01f)
     return (lo - yPad) to (hi + yPad)
@@ -580,25 +589,19 @@ private fun InteractiveLineChart(
         )
     }
 
-    // Percentiles come from the smoothed points inside the window. The newest raw and smoothed
-    // point of each series is then forced inside, so a monotone curve's last point is not the
-    // tail the percentile drops. fullBounds stays the raw min/max, so a pan can still reach a
-    // spike this fit clipped.
+    // The fit reads the smoothed curves inside the window, per series (`fittedYRange` explains why
+    // pooling them would trim a sparse validation curve's values off the axis). fullBounds stays the
+    // raw min/max, so a pan can still reach a spike this fit clipped.
     val initialViewport = remember(prepared, windowX, outlierClip, normalized) {
         if (normalized) {
             Viewport(xMin = windowX.first, xMax = windowX.second, yMin = 0f, yMax = 100f)
         } else {
-            val smoothed = prepared.flatMap { series ->
-                series.smooth.filter { it.step >= windowX.first && it.step <= windowX.second }
+            val windowed = prepared.map { series ->
+                series.smooth
+                    .filter { it.step >= windowX.first && it.step <= windowX.second }
+                    .map { it.value }
             }
-            val include = prepared.flatMap { series ->
-                listOfNotNull(series.raw.lastOrNull()?.value, series.smooth.lastOrNull()?.value)
-            }
-            val fitted = fittedYRange(
-                values = smoothed.map { it.value },
-                outlierClip = outlierClip,
-                include = include,
-            )
+            val fitted = fittedYRange(series = windowed, outlierClip = outlierClip)
             Viewport(
                 xMin = windowX.first,
                 xMax = windowX.second,

@@ -82,7 +82,10 @@ above). They are one contract with two readers, and the shared function is what 
 - Ranges are validated twice, as everywhere else: `TrainConfig.__post_init__` raises naming the key
   (`VAL_SPLIT_PERCENT_RANGE` / `VAL_SAMPLE_COUNT_RANGE` / `VAL_INTERVAL_RANGE` in `trainer/config.py`,
   mirrored by `TrainingConfigForm.validate`), and a hand-edited file therefore fails at startup.
-  `val_interval = 0` is valid: the split stays, no pass runs.
+  **`val_split_percent = 0` is the feature's off switch** (nothing held out, no pass, no scalar) and
+  the other two ranges are only enforced while it is on, on both sides (`validationEnabled` in Kotlin,
+  the same `if` in `TrainConfig.__post_init__`), so an inert number cannot block a run. With the split
+  on, `val_interval = 0` remains valid: the split stays, no pass runs.
 - Cadence: `loop.validation_due(interval, step)` is the rule, and it is step-anchored, not a modulo —
   the **first validation step is step 1**, then `1 + N`, `1 + 2N`, … (`interval = 1` = every step,
   `0` = never). A modulo rule would have put the first point at step `N`, which is late for a short

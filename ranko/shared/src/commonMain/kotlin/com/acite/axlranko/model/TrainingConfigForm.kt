@@ -128,6 +128,16 @@ internal fun sampleSetFormErrors(
     return errors
 }
 
+/**
+ * Whether the validation-set feature is on: `Val split %` above 0.
+ *
+ * `val_split_percent = 0` is the explicit off switch — nothing is held out, neither pass runs, and
+ * no validation scalar is written — so Utils greys `Val samples` and `Val interval` in that state
+ * and `validate()` stops range-checking them (they are inert, and the trainer exempts them too).
+ */
+fun validationEnabled(form: TrainingConfigForm): Boolean =
+    (form.valSplitPercent.trim().toDoubleOrNull() ?: 0.0) > 0.0
+
 data class TrainingConfigForm(
     val pretrainedModelNameOrPath: String = "",
     val outputDir: String = "",
@@ -347,18 +357,22 @@ data class TrainingConfigForm(
             min = VAL_SPLIT_PERCENT_RANGE.start,
             max = VAL_SPLIT_PERCENT_RANGE.endInclusive,
         )
-        requireInt(
-            "val_sample_count",
-            valSampleCount,
-            min = VAL_SAMPLE_COUNT_RANGE.first,
-            max = VAL_SAMPLE_COUNT_RANGE.last,
-        )
-        requireInt(
-            "val_interval",
-            valInterval,
-            min = VAL_INTERVAL_RANGE.first,
-            max = VAL_INTERVAL_RANGE.last,
-        )
+        // The other two are only checked while the split is on; with 0 % they are inert, and their
+        // fields are disabled in Utils.
+        if (validationEnabled(this)) {
+            requireInt(
+                "val_sample_count",
+                valSampleCount,
+                min = VAL_SAMPLE_COUNT_RANGE.first,
+                max = VAL_SAMPLE_COUNT_RANGE.last,
+            )
+            requireInt(
+                "val_interval",
+                valInterval,
+                min = VAL_INTERVAL_RANGE.first,
+                max = VAL_INTERVAL_RANGE.last,
+            )
+        }
 
         val type = networkType.trim().lowercase()
         if (type !in networkTypeOptions) {

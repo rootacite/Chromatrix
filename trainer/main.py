@@ -122,6 +122,10 @@ def main() -> None:
                     f"Validation split: {ds.val_image_count}/{len(ds)} images held out "
                     f"({ds.val_sample_count} samples/epoch); scored {pass_note}{diversity}"
                 )
+            elif float(cfg.val_split_percent) <= 0:
+                # The explicit off switch: percent 0 holds nothing out, so both passes and all
+                # three scalars are absent. Say so rather than leaving the log silent about it.
+                print("Validation: off (val_split_percent = 0; nothing held out, no passes)")
             # Silent only for the plain single-folder case, so a repeat is never implicit.
             if len(ds.entries) > 1 or any(entry.repeat != 1 for entry in ds.entries):
                 folders = " + ".join(

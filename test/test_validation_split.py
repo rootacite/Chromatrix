@@ -116,6 +116,18 @@ class ValSplitConfigTest(unittest.TestCase):
         cfg = TrainConfig.from_mapping({"val_split_percent": 90.0, "val_sample_count": 64})
         self.assertEqual(cfg.val_split_percent, 90.0)
 
+    def test_zero_percent_is_the_off_switch_and_the_other_ranges_are_inert(self):
+        """With the held-out set off, the two numbers it would use are not checked."""
+        cfg = TrainConfig.from_mapping(
+            {"val_split_percent": 0.0, "val_sample_count": 0, "val_interval": -3}
+        )
+        self.assertEqual(cfg.val_split_percent, 0.0)
+        # Turning the split back on makes them live again, and the same numbers are refused.
+        with self.assertRaises(ValueError):
+            TrainConfig.from_mapping({"val_split_percent": 10.0, "val_sample_count": 0})
+        with self.assertRaises(ValueError):
+            TrainConfig.from_mapping({"val_split_percent": 10.0, "val_interval": -3})
+
 
 class DiverseSubsetTest(unittest.TestCase):
     """The fixed sample's picker: mutually dissimilar, deterministic, and hard to fool."""
