@@ -56,6 +56,9 @@ enum class ConfigSection(
             "save_every_n_epochs",
             "save_every_n_steps",
             "sampling_enabled",
+            "val_split_percent",
+            "val_sample_count",
+            "val_interval",
             "resume_lora_path"
         )
     ),

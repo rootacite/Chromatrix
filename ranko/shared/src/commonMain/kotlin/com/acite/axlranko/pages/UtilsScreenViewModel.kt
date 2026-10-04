@@ -262,19 +262,23 @@ class UtilsScreenViewModel(
      * change to the folders themselves re-counts after [debounceMillis] of quiet.
      */
     fun refreshStepEstimate(debounceMillis: Long = 0L) {
-        val dirs = _uiState.value.form.trainDataDirs.map { entry ->
+        val form = _uiState.value.form
+        val dirs = form.trainDataDirs.map { entry ->
             TrainDataCountRequest(
                 path = entry.path.trim(),
                 repeat = entry.repeat.trim().toIntOrNull() ?: 1,
             )
         }
+        // The split decides how many of the counted samples are held out, so the same call carries it.
+        val valSplitPercent = form.valSplitPercent.trim().toDoubleOrNull() ?: 0.0
+        val seed = form.seed.trim().toLongOrNull() ?: 0L
         estimateJob?.cancel()
         estimateJob = viewModelScope.launch {
             // Counted as in flight before the quiet period, so the line says so while it waits.
             _uiState.update { it.copy(datasetCountsLoading = true) }
             if (debounceMillis > 0) delay(debounceMillis)
             try {
-                val counts = withContext(IoDispatcher) { ipc.datasetCounts(dirs) }
+                val counts = withContext(IoDispatcher) { ipc.datasetCounts(dirs, valSplitPercent, seed) }
                 _uiState.update {
                     it.copy(
                         datasetCounts = counts,
@@ -352,9 +356,13 @@ class UtilsScreenViewModel(
 
     fun updateForm(transform: TrainingConfigForm.() -> TrainingConfigForm) {
         var foldersChanged = false
+        var splitChanged = false
         _uiState.update { state ->
             val newForm = state.form.transform()
             foldersChanged = newForm.trainDataDirs != state.form.trainDataDirs
+            // The split and the seed decide which images the helper holds out, so they re-count too.
+            splitChanged = newForm.valSplitPercent != state.form.valSplitPercent ||
+                newForm.seed != state.form.seed
             state.copy(
                 form = newForm,
                 fieldErrors = emptyMap(),
@@ -362,8 +370,8 @@ class UtilsScreenViewModel(
                 statusMessage = null
             )
         }
-        // Only the folder list feeds the count; epoch / batch / GA are read from the form as it is.
-        if (foldersChanged) {
+        // Only the folders and the split feed the count; epoch / batch / GA are read from the form.
+        if (foldersChanged || splitChanged) {
             _uiState.update { it.copy(datasetCounts = null, datasetCountsError = null) }
             refreshStepEstimate(debounceMillis = ESTIMATE_DEBOUNCE_MILLIS)
         }

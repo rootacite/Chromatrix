@@ -26,6 +26,15 @@ const val TRAIN_DATA_ERROR_PREFIX = "train_data."
 val TRAIN_DATA_REPEAT_RANGE = 1..512
 
 /**
+ * Validation-set split ranges, shared with `TrainConfig` (`VAL_SPLIT_PERCENT_RANGE`,
+ * `VAL_SAMPLE_COUNT_RANGE`, `VAL_INTERVAL_RANGE` in `trainer/config.py`). The percent counts unique
+ * images; the interval's 0 means "keep the split, never run a pass".
+ */
+val VAL_SPLIT_PERCENT_RANGE = 0.0..90.0
+val VAL_SAMPLE_COUNT_RANGE = 1..64
+val VAL_INTERVAL_RANGE = 0..100000
+
+/**
  * The characters a run name may hold, mirroring `trainer/runs.py::validate_output_name`: the name
  * becomes a run id and the artifact directory names, so a space or a slash would make the id
  * (`re_in_…`) disagree with the directories (`re in_samples`) and a run could not be found again.
@@ -147,6 +156,12 @@ data class TrainingConfigForm(
     val saveEveryNSteps: String = "",
     /** Whether a checkpoint save also renders the validation samples. Changeable mid-run. */
     val samplingEnabled: Boolean = true,
+    /** Share of the dataset's unique images held out for the validation loss, in percent. */
+    val valSplitPercent: String = "10",
+    /** Most held-out images one validation pass scores. */
+    val valSampleCount: String = "8",
+    /** Steps between validation passes (the first is step 1); 0 keeps the split but never runs one. */
+    val valInterval: String = "5",
 
     val resumeLoraPath: String = "",
 
@@ -326,6 +341,24 @@ data class TrainingConfigForm(
         requireInt("epoch", epoch, min = 1)
         requireInt("save_every_n_epochs", saveEveryNEpochs, min = 1)
         requireInt("save_every_n_steps", saveEveryNSteps, min = 1)
+        requireDouble(
+            "val_split_percent",
+            valSplitPercent,
+            min = VAL_SPLIT_PERCENT_RANGE.start,
+            max = VAL_SPLIT_PERCENT_RANGE.endInclusive,
+        )
+        requireInt(
+            "val_sample_count",
+            valSampleCount,
+            min = VAL_SAMPLE_COUNT_RANGE.first,
+            max = VAL_SAMPLE_COUNT_RANGE.last,
+        )
+        requireInt(
+            "val_interval",
+            valInterval,
+            min = VAL_INTERVAL_RANGE.first,
+            max = VAL_INTERVAL_RANGE.last,
+        )
 
         val type = networkType.trim().lowercase()
         if (type !in networkTypeOptions) {
@@ -418,6 +451,9 @@ data class TrainingConfigForm(
                 "save_every_n_epochs" to n(saveEveryNEpochs),
                 "save_every_n_steps" to n(saveEveryNSteps),
                 "sampling_enabled" to b(samplingEnabled),
+                "val_split_percent" to f(valSplitPercent),
+                "val_sample_count" to n(valSampleCount),
+                "val_interval" to n(valInterval),
                 "resume_lora_path" to q(resumeLoraPath.trim())
             ),
             "network" to mapOf(
@@ -570,6 +606,9 @@ data class TrainingConfigForm(
                 saveEveryNEpochs = train.saveEveryNEpochs.toString(),
                 saveEveryNSteps = train.saveEveryNSteps.toString(),
                 samplingEnabled = train.samplingEnabled,
+                valSplitPercent = formatNumber(train.valSplitPercent),
+                valSampleCount = train.valSampleCount.toString(),
+                valInterval = train.valInterval.toString(),
                 resumeLoraPath = train.resumeLoraPath,
                 networkType = net.networkType.trim().lowercase().ifBlank { "standard" },
                 networkDim = net.networkDim.toString(),

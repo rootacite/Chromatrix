@@ -936,6 +936,8 @@ Params:
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `dirs` | array of `{path, repeat}` | No | The folders the form currently holds, so the answer follows unsaved edits. Omitted (or empty), the config's own `[[environment.train_data]]` entries are used. |
+| `val_split_percent` | number `0`–`90` | No | The form's `[training].val_split_percent`. Applies `trainer/validation_split.py`'s split — the same function the dataset uses — and reports the held-out part as `val_images` / `val_samples`. Default `0` (no split). |
+| `seed` | integer | No | The form's `[training].seed`; the split's draw is seeded from it. Default `0`. |
 
 Result:
 
@@ -946,13 +948,18 @@ Result:
     { "path": "/data/gone", "repeat": 1, "images": 0, "error": "not a directory" }
   ],
   "images": 100,
-  "samples": 300
+  "samples": 300,
+  "val_images": 10,
+  "val_samples": 30
 }
 ```
 
 `samples` is the per-epoch figure with repeats applied (`Σ images × repeat`); a folder that cannot be
-read carries its reason and counts as zero rather than failing the call. The step arithmetic itself is
-the client's (`model/StepEstimate.kt`), so epoch / batch / GA edits need no round trip.
+read carries its reason and counts as zero rather than failing the call. `val_images` / `val_samples`
+are the part the validation split holds out (unique images, and the draws they would have
+contributed), which the Utils step estimate subtracts before its epoch / batch / GA arithmetic. The
+step arithmetic itself is the client's (`model/StepEstimate.kt`), so epoch / batch / GA edits need no
+round trip.
 
 ### `hardware_status`
 
@@ -1016,7 +1023,7 @@ After connect Chromatrix does not open trainer files. Paths in these methods are
 - `profile_list` / `profile_get` `{name}` / `profile_save` `{name, text, overwrite}` / `profile_delete` `{name}`.
 - `prompt_matrix` `{}` → `{path, text}` of repo-root `input_matrix.txt` (read-only). `prompt_profile_list` `{}` → `{profiles: [{name, version, modified, size, error}]}` for repo-root `prompt_profiles/*.json`; `version` is `null` when the file has no `version` key and `error` carries the reason an unreadable entry cannot be used. `prompt_profile_get` `{name}` → `{name, text}`; `prompt_profile_save` `{name, text, overwrite}` parse-checks that `text` is a JSON object with a `spec` object, then atomic-writes `<repo>/prompt_profiles/<name>.json`; `prompt_profile_delete` `{name}`. The version upgrades (v1 → v2 → v3) happen in the client, so the store never rewrites a profile.
 - `dataset_list` `{directory}` → `{items: [{stem, image, txt, mask, width, height, tags, has_sidecar_mask, has_alpha}], orphans}`. Non-recursive. Orphan `.txt` names are listed; Statistics aborts when `orphans` is non-empty.
-- `dataset_counts` `{dirs?}` → `{entries: [{path, repeat, images, error}], images, samples}`. Read-only, no GPU; the Utils → Training step estimate's image counts (see the method above).
+- `dataset_counts` `{dirs?, val_split_percent?, seed?}` → `{entries: [{path, repeat, images, error}], images, samples, val_images, val_samples}`. Read-only, no GPU; the Utils → Training step estimate's image counts (see the method above).
 - `caption_write` `{directory, stem, text}`.
 - `dataset_drop` `{directory, rate, seed?, stems?}`. Moves image+txt+mask to `/tmp/axlranko/trash`. `stems` limits the pool (the GUI passes the filtered set).
 - `dataset_shuffle` `{directory, seed?}` → `{groups, renamed_files, first_stem, last_stem}`.

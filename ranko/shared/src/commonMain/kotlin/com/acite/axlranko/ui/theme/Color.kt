@@ -14,6 +14,12 @@ data class RankoPalette(
     val accentPink: Color,
     val accentBlue: Color,
     val accentLilac: Color,
+    /**
+     * The one true pink, for a chart series that has to be told apart from [accentPink] (which the
+     * Amber palette fills with the brand amber, its name kept for every screen that already uses
+     * it as the accent) and from [accentBlue]. Dashboard: the fixed validation-loss curve.
+     */
+    val accentRose: Color,
     val boardBg: Color,
     val grid: Color,
     val star: Color,
@@ -40,6 +46,7 @@ data class RankoPalette(
             accentPink = Color(0xFFF8A818),
             accentBlue = Color(0xFF7EB0D4),
             accentLilac = Color(0xFFF0D39A),
+            accentRose = Color(0xFFE87FA8),
             boardBg = Color(0xFF3A342C),
             grid = Color(0xFF8A7B68),
             star = Color(0xFFF8A818),

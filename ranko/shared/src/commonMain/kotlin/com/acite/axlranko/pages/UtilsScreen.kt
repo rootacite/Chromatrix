@@ -74,6 +74,7 @@ import com.acite.axlranko.model.estimatedSteps
 import com.acite.axlranko.model.formatStepCount
 import com.acite.axlranko.model.parseOnlyTags
 import com.acite.axlranko.model.taggerThresholdMarks
+import com.acite.axlranko.model.trainingSamplesPerEpoch
 import com.acite.axlranko.model.AppearanceSettings
 import com.acite.axlranko.model.BackgroundStyle
 import com.acite.axlranko.pages.components.DatasetDirBar
@@ -1144,8 +1145,34 @@ private fun TrainingFields(
             onValueChange = { viewModel.updateForm { copy(gradientAccumulationSteps = it) } },
             modifier = Modifier.weight(1f)
         )
+        ConfigTextField(
+            label = "Val split %",
+            value = form.valSplitPercent,
+            error = errors["val_split_percent"],
+            supporting = "held out for the validation loss",
+            onValueChange = { viewModel.updateForm { copy(valSplitPercent = it) } },
+            modifier = Modifier.weight(1f)
+        )
     }
     StepEstimateLine(uiState = uiState, form = form, onRetry = { viewModel.refreshStepEstimate() })
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        ConfigTextField(
+            label = "Val samples",
+            value = form.valSampleCount,
+            error = errors["val_sample_count"],
+            supporting = "most held-out images scored per pass",
+            onValueChange = { viewModel.updateForm { copy(valSampleCount = it) } },
+            modifier = Modifier.weight(1f)
+        )
+        ConfigTextField(
+            label = "Val interval",
+            value = form.valInterval,
+            error = errors["val_interval"],
+            supporting = "first at step 1, then every N steps · 0 = off",
+            onValueChange = { viewModel.updateForm { copy(valInterval = it) } },
+            modifier = Modifier.weight(1f)
+        )
+    }
     Text("Mixed precision", style = MaterialTheme.typography.labelLarge, color = rankoColors.text)
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -2080,9 +2107,11 @@ private fun effectiveBatchHint(form: TrainingConfigForm): String? {
  * What the run in this form would take, under the Epochs / Batch / GA row it follows.
  *
  * The image counts come from the helper once per folder edit; the step arithmetic is local, so the
- * line follows a keystroke in Epochs or Batch immediately. It is an estimate by construction: the
- * trainer turns `ceil(samples / batch)` into one `ceil` per aspect-ratio bucket, which can only add
- * batches (`enable_bucket = false` makes the two agree exactly).
+ * line follows a keystroke in Epochs or Batch immediately. The validation split's held-out samples
+ * are subtracted first — the trainer's bucket lists leave them out too, so the estimate and the
+ * run's own step count move together. It is an estimate by construction: the trainer turns
+ * `ceil(samples / batch)` into one `ceil` per aspect-ratio bucket, which can only add batches
+ * (`enable_bucket = false` makes the two agree exactly).
  */
 @Composable
 internal fun StepEstimateLine(
@@ -2092,14 +2121,18 @@ internal fun StepEstimateLine(
 ) {
     val colors = rankoColors
     val counts = uiState.datasetCounts
-    val estimate = counts?.let {
-        estimatedSteps(it.samples, form.trainBatchSize, form.gradientAccumulationSteps, form.epoch)
+    val trainSamples = counts?.let { trainingSamplesPerEpoch(it) }
+    val heldOutSamples = counts?.valSamples ?: 0
+    val estimate = trainSamples?.let {
+        estimatedSteps(it, form.trainBatchSize, form.gradientAccumulationSteps, form.epoch)
     }
     val missing = counts?.let { missingFoldersLabel(it) }
+    val noTrainSamples = trainSamples != null && trainSamples <= 0
     val problem: String? = when {
         uiState.datasetCountsError != null -> "Could not count the dataset: ${uiState.datasetCountsError}"
         missing != null -> missing
-        counts != null && counts.samples <= 0 -> "The training folders hold no images."
+        noTrainSamples && heldOutSamples > 0 -> "The validation split holds out every sample."
+        noTrainSamples -> "The training folders hold no images."
         counts != null && estimate == null ->
             "Fill in Epochs, Batch size and Grad accumulation to see the estimated steps."
         counts == null && !uiState.datasetCountsLoading -> "The dataset's image count is not known yet."
@@ -2136,8 +2169,14 @@ internal fun StepEstimateLine(
             color = colors.text,
         )
         Text(
-            text = "${formatStepCount(counts.images)} images × repeats · estimated: bucketing rounds " +
-                "each bucket up, so the run's own count can be higher",
+            text = "${formatStepCount(counts.images)} images × repeats" +
+                if (counts.valImages > 0) {
+                    " · held out: ${formatStepCount(counts.valImages)} images " +
+                        "(${formatStepCount(counts.valSamples)} samples)"
+                } else {
+                    ""
+                } +
+                " · estimated: bucketing rounds each bucket up, so the run's own count can be higher",
             style = MaterialTheme.typography.labelSmall,
             color = colors.textDim,
         )

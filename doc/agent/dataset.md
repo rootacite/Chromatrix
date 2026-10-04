@@ -17,3 +17,27 @@ Latent cache: one per dataset folder, `<folder>/.latents_cache/{sha1(abs_path::b
 
 `tools/` scripts are mostly **in-place / destructive** (`tools/vpred_reference.py` is the exception: a read-only renderer that implements ComfyUI's own sampling recipe, for checking a sample the trainer produced against ComfyUI's code path). Prefer `ranko/tools/agent.py --dry-run` for agent-driven edits. `ui.py` is a **deprecated** Streamlit viewer; do not extend it.
 
+## Picking the fixed validation sample
+
+`trainer/validation_split.py::select_diverse_subset` chooses the sample the `Val/Fixed_Loss` curve
+scores, once per dataset, from the held-out images only. A plain random draw routinely pairs
+near-copies — a burst from one pose lands in one folder — and a curve built on near-identical images
+says less than one built on images that differ.
+
+- Signatures are 32×32 aspect-squashed RGB thumbnails (`_signature`, decoded in parallel with
+  `Image.draft` for JPEGs). Aspect is squashed rather than letterboxed so every signature has one
+  length; the aspect a training step sees is the bucket's business, not this picker's.
+- `signature_similarity` is `tools/cmp_img.py:similarity`'s definition exactly — mean absolute pixel
+  difference over RGB, 100 = identical — with the one difference a dataset folder demands:
+  `cmp_img.compare_one` returns `None` for two images of different shapes, so it cannot rank a
+  mixed-resolution folder at all.
+- The traversal seeds at the image closest to the signature mean (a *typical* image, so an outlier
+  cannot anchor the set), then repeatedly adds the candidate whose similarity to the most similar
+  already-chosen image is lowest. Updating that worst case with a **maximum** (not a minimum) is what
+  keeps a duplicate of a chosen image at ~100 and therefore out of the set.
+- Deterministic in the folder contents: strict `>` comparisons, index tie-breaks, no RNG — a resume,
+  a later run and the probe's own recomputation all agree.
+- An unreadable image gets a blank signature and stays out of the candidates (a blank vector is
+  "maximally dissimilar" and would otherwise win every comparison); it is counted in the stats the
+  run logs. `count >= len(paths)` degenerates to all of them.
+

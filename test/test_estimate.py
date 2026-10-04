@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from trainer.config import TrainDataEntry
-from trainer.estimate import IMAGE_EXTENSIONS, count_images, count_train_images
+from trainer.estimate import IMAGE_EXTENSIONS, count_images, count_train_images, image_paths
 
 
 def write_files(folder: Path, names) -> None:
@@ -46,6 +46,20 @@ class CountImagesTest(unittest.TestCase):
             root = Path(raw)
             self.assertEqual(count_images(root), 0)
             self.assertEqual(count_images(root / "nope"), 0)
+
+    def test_image_paths_is_sorted_and_holds_what_the_dataset_would_take(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            write_files(root, ["b.png", "a.png", "a.mask.png", "note.txt"])
+            nested = root / "sub"
+            nested.mkdir()
+            write_files(nested, ["c.jpg"])
+
+            paths = image_paths(root)
+            counted = count_images(root)
+
+        self.assertEqual([path.name for path in paths], ["a.png", "b.png", "c.jpg"])
+        self.assertEqual(len(paths), counted)
 
 
 class CountTrainImagesTest(unittest.TestCase):
@@ -101,7 +115,44 @@ class CountTrainImagesTest(unittest.TestCase):
         self.assertEqual(payload["samples"], 8)
 
     def test_an_empty_list_is_a_zero_total(self):
-        self.assertEqual(count_train_images([]), {"entries": [], "images": 0, "samples": 0})
+        self.assertEqual(
+            count_train_images([]),
+            {"entries": [], "images": 0, "samples": 0, "val_images": 0, "val_samples": 0},
+        )
+
+    def test_the_split_reports_held_out_images_and_their_draws(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            first = root / "a"
+            second = root / "b"
+            first.mkdir()
+            second.mkdir()
+            write_files(first, [f"{i:03d}.png" for i in range(10)])
+            write_files(second, [f"{i:03d}.png" for i in range(10)])
+
+            payload = count_train_images(
+                [{"path": str(first), "repeat": 3}, {"path": str(second), "repeat": 1}],
+                val_split_percent=10.0,
+                seed=7,
+            )
+
+        # 20 unique images, 10% -> ceil(2). The totals stay the whole dataset's; the held-out part
+        # carries the repeats of whatever images the split picked.
+        self.assertEqual(payload["images"], 20)
+        self.assertEqual(payload["samples"], 40)
+        self.assertEqual(payload["val_images"], 2)
+        self.assertIn(payload["val_samples"], (2, 4, 6))  # both from a (6), one each (4), both b (2)
+
+    def test_no_percent_is_the_pre_split_answer(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            write_files(root, ["1.png", "2.png", "3.png"])
+            payload = count_train_images([{"path": str(root), "repeat": 2}])
+            same = count_train_images([{"path": str(root), "repeat": 2}], val_split_percent=0.0, seed=1)
+
+        self.assertEqual(payload["val_images"], 0)
+        self.assertEqual(payload["val_samples"], 0)
+        self.assertEqual(payload, same)
 
     def test_the_module_stays_torch_free(self):
         """api.py imports it in the helper process, which must not pay for torch."""

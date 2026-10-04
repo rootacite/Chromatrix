@@ -58,6 +58,15 @@ fun estimatedSteps(
 private fun ceilDiv(value: Int, divisor: Int): Int =
     if (value <= 0) 0 else (value + divisor - 1) / divisor
 
+/**
+ * Samples one epoch trains: the dataset's per-epoch draws minus the draws the validation split
+ * holds out. `LoraImageDataset` leaves the same images out of its bucket lists, so the estimate
+ * and the run's own step count move together. Never negative: a held-out count the helper reports
+ * above the total would otherwise flip the line into nonsense.
+ */
+fun trainingSamplesPerEpoch(counts: DatasetCountsResponse): Int =
+    (counts.samples - counts.valSamples).coerceAtLeast(0)
+
 /** `1,240` — thousands separated, for the line under the Training fields. */
 fun formatStepCount(value: Int): String {
     val digits = value.toString()

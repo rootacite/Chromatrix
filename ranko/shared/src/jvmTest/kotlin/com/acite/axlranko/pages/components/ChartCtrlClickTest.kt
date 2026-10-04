@@ -245,25 +245,77 @@ class ChartCtrlClickTest {
         }
     }
 
-    private fun withChart(block: (ComposeWindow, MutableList<Pair<Float, Offset>>) -> Unit) {
+    /**
+     * The Dashboard's "Train / Avg Loss" card carries three legend series (`Avg Loss`, `Val Avg
+     * Loss`, `Val Fixed Loss`) since the validation curves joined it; the picking path has to
+     * survive that shape.
+     */
+    @Test
+    fun theThreeSeriesAvgAndValCardStillPicksAStep() {
+        withChart(seriesCount = 3) { window, picks ->
+            val queue = Toolkit.getDefaultToolkit().systemEventQueue
+            val target = onEdtGet { pointerTarget(window) }
+
+            postClick(queue, target, x = 200, y = 200, button = MouseEvent.BUTTON1, ctrl = true)
+            assertTrue(pumpUntil(3_000) { picks.isNotEmpty() }, "Ctrl+left click never reached the card")
+            assertEquals(1, picks.size)
+            assertTrue(picks.first().first in 0f..100f, "picked step ${picks.first().first}")
+        }
+    }
+
+    private fun withChart(
+        seriesCount: Int = 1,
+        block: (ComposeWindow, MutableList<Pair<Float, Offset>>) -> Unit,
+    ) {
         if (GraphicsEnvironment.isHeadless()) return
 
         val picks = Collections.synchronizedList(mutableListOf<Pair<Float, Offset>>())
         val window = onEdtGet {
             ComposeWindow().apply {
                 setContent {
-                    ChartCard(
-                        title = "Train / Avg Loss",
-                        points = points,
-                        color = Color(0xFFE85D4C),
-                        smoothing = 0f,
-                        modifier = Modifier.fillMaxSize(),
-                        onPickStep = { step, anchor -> picks += step to anchor },
-                        // Same setup as the Dashboard's Avg Loss card: hover readout plus the markers
-                        // a previous pick would have left behind.
-                        showHoverStep = true,
-                        pickMarkers = ChartPickMarkers(clickedStep = 50f, matchedStep = 40),
-                    )
+                    if (seriesCount > 1) {
+                        MultiSeriesChartCard(
+                            title = "Train / Avg Loss",
+                            series = buildList {
+                                add(ChartSeries("Avg Loss", points, Color(0xFFE85D4C)))
+                                add(
+                                    ChartSeries(
+                                        "Val Avg Loss",
+                                        points.map { it.copy(value = it.value * 1.3f + 0.05f) },
+                                        Color(0xFF6C8FF0),
+                                    )
+                                )
+                                if (seriesCount > 2) {
+                                    add(
+                                        ChartSeries(
+                                            "Val Fixed Loss",
+                                            points.map { it.copy(value = it.value * 1.1f + 0.02f) },
+                                            Color(0xFFE87FA8),
+                                        )
+                                    )
+                                }
+                            },
+                            smoothing = 0f,
+                            modifier = Modifier.fillMaxSize(),
+                            showLegend = true,
+                            onPickStep = { step, anchor -> picks += step to anchor },
+                            showHoverStep = true,
+                            pickMarkers = ChartPickMarkers(clickedStep = 50f, matchedStep = 40),
+                        )
+                    } else {
+                        ChartCard(
+                            title = "Train / Avg Loss",
+                            points = points,
+                            color = Color(0xFFE85D4C),
+                            smoothing = 0f,
+                            modifier = Modifier.fillMaxSize(),
+                            onPickStep = { step, anchor -> picks += step to anchor },
+                            // Same setup as the Dashboard's Avg Loss card: hover readout plus the
+                            // markers a previous pick would have left behind.
+                            showHoverStep = true,
+                            pickMarkers = ChartPickMarkers(clickedStep = 50f, matchedStep = 40),
+                        )
+                    }
                 }
                 setSize(420, 320)
                 setLocation(0, 0)

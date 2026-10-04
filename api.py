@@ -45,6 +45,7 @@ from trainer.config import (
 )
 from trainer.family import require_trainable, resolve_family
 from trainer import estimate
+from trainer.validation_split import VAL_SPLIT_PERCENT_RANGE
 from trainer.cleanup import run_cleanup
 from trainer.control import (
     LIVE_STATUSES,
@@ -1754,17 +1755,32 @@ def handle_dataset_counts(params: dict[str, Any]) -> dict[str, Any]:
     none falls back to the config's own `[[environment.train_data]]` entries. Counting is a
     directory walk; the epoch/batch/GA arithmetic stays on the client, so editing those costs no
     round trip. A folder that is missing answers with its reason instead of failing the call.
+
+    `val_split_percent` / `seed` apply the validation split (`trainer/validation_split.py`, the same
+    function the dataset uses) and report the held-out part as `val_images` / `val_samples`, which
+    the client subtracts from `samples` before its step arithmetic. A request that omits them reads
+    the config's own values, so a caller that names nothing answers with the split a run would apply.
     """
+    cfg = _train_config_dict()
     raw = params.get("dirs")
     if raw is None:
-        entries: list[Any] = resolve_train_data_entries(_train_config_dict())
+        entries: list[Any] = resolve_train_data_entries(cfg)
     elif isinstance(raw, (list, tuple)):
         entries = [item for item in raw if isinstance(item, dict)]
         if len(entries) != len(raw):
             raise ValueError("dirs must be a list of {path, repeat} objects")
     else:
         raise ValueError("dirs must be a list of {path, repeat} objects")
-    return _json_safe(estimate.count_train_images(entries))
+    percent = params.get("val_split_percent", cfg.get("val_split_percent", 0.0))
+    if isinstance(percent, bool) or not isinstance(percent, (int, float)):
+        raise ValueError("val_split_percent must be a number")
+    low, high = VAL_SPLIT_PERCENT_RANGE
+    if not low <= float(percent) <= high:
+        raise ValueError(f"val_split_percent must be between {low} and {high}")
+    seed = params.get("seed", cfg.get("seed", 0))
+    if isinstance(seed, bool) or not isinstance(seed, (int, float)) or float(seed) != int(seed):
+        raise ValueError("seed must be an integer")
+    return _json_safe(estimate.count_train_images(entries, float(percent), int(seed)))
 
 
 def handle_config_get(_params: dict[str, Any]) -> dict[str, Any]:

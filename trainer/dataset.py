@@ -17,12 +17,14 @@ try:
         Geometry, fit_geometry, fit_to_bucket, image_has_alpha, image_to_tensor, list_images,
         load_loss_mask, mask_path_for, pick_bucket_size, read_caption, sha1_text, shuffle_caption,
     )
+    from validation_split import select_diverse_subset, select_validation
 except ImportError:
     from trainer.config import TrainConfig, TrainDataEntry, resolve_train_data_entries
     from trainer.utils import (
         Geometry, fit_geometry, fit_to_bucket, image_has_alpha, image_to_tensor, list_images,
         load_loss_mask, mask_path_for, pick_bucket_size, read_caption, sha1_text, shuffle_caption,
     )
+    from trainer.validation_split import select_diverse_subset, select_validation
 
 
 # VAE latents are the bucket divided by this much on each axis (what `bucket_reso_steps` keeps
@@ -63,15 +65,25 @@ class LoraImageDataset(Dataset):
         self.images: list[Path] = []
         self.records: list[dict[str, Any]] = []
         self.entry_image_counts: list[int] = []
+        # Training draws live in `buckets`; the images the validation split holds out live in
+        # `val_buckets` only. Both keep the records, so a held-out image still gets a latent in the
+        # warm cache and is scored without the VAE.
         self.buckets: dict[tuple[int, int], list[int]] = defaultdict(list)
+        self.val_buckets: dict[tuple[int, int], list[int]] = defaultdict(list)
         self.n_masked = 0
         self.n_padded = 0
         self._pad_total = 0.0
         self._check_bucket_settings()
-        for entry, root, cache_dir in zip(self.entries, self.roots, self.latent_cache_dirs):
-            images = list_images(root)
-            self.entry_image_counts.append(len(images))
-            for image_path in images:
+        # The split is drawn from the folder listings before any record exists, from the same
+        # function and the same order the API's `dataset_counts` uses, so the estimate's held-out
+        # count is this one's.
+        images_per_entry = [list_images(root) for root in self.roots]
+        self.entry_image_counts = [len(images) for images in images_per_entry]
+        held_out = select_validation(images_per_entry, cfg.val_split_percent, cfg.seed)
+        for entry_index, (entry, root, cache_dir, images) in enumerate(
+            zip(self.entries, self.roots, self.latent_cache_dirs, images_per_entry)
+        ):
+            for position, image_path in enumerate(images):
                 index = len(self.records)
                 with Image.open(image_path) as img:
                     src_w, src_h = img.size
@@ -94,6 +106,7 @@ class LoraImageDataset(Dataset):
                 has_mask = mask_path_for(image_path).is_file() or has_alpha
                 if has_mask:
                     self.n_masked += 1
+                is_val = (entry_index, position) in held_out
                 self.images.append(image_path)
                 self.records.append(
                     {
@@ -107,12 +120,14 @@ class LoraImageDataset(Dataset):
                         "bucket_h": int(bucket_h),
                         "geom": geom,
                         "has_mask": has_mask,
+                        "is_val": is_val,
                     }
                 )
                 # The record stays unique; the *epoch* draws it `repeat` times. This is the one
                 # place a directory's repeat reaches training: the sampler (and therefore the
                 # step count, the LR schedule and the progress bars) follows this list length.
-                self.buckets[(int(bucket_w), int(bucket_h))].extend([index] * entry.repeat)
+                target = self.val_buckets if is_val else self.buckets
+                target[(int(bucket_w), int(bucket_h))].extend([index] * entry.repeat)
 
         if not self.records:
             raise RuntimeError(
@@ -120,9 +135,23 @@ class LoraImageDataset(Dataset):
                 + ", ".join(str(root) for root in self.roots)
             )
 
-        # Samples actually drawn per epoch, repeats included.
+        # Samples actually drawn per epoch, repeats included, the held-out ones excluded.
         self.total_samples = sum(len(indices) for indices in self.buckets.values())
+        self.val_image_count = len(held_out)
+        self.val_sample_count = sum(len(indices) for indices in self.val_buckets.values())
         self.mean_pad = self._pad_total / len(self.records) if self.records else 0.0
+
+        # The fixed sample the `Val/Fixed_Loss` curve scores: chosen once, from pixels, so the
+        # images are as unlike each other as the held-out set allows and every pass sees the same
+        # ones. Deterministic in the folder contents (no seed), so a resume and a later run agree.
+        held_out_indices = sorted(
+            index for index, record in enumerate(self.records) if record["is_val"]
+        )
+        self.fixed_val_indices, self.fixed_val_stats = select_diverse_subset(
+            [Path(self.records[index]["path"]) for index in held_out_indices],
+            int(cfg.val_sample_count),
+        )
+        self.fixed_val_indices = [held_out_indices[position] for position in self.fixed_val_indices]
 
     def _check_bucket_settings(self) -> None:
         """The area budget and the axis clamps must bracket each other, or every bucket is a clamp."""
@@ -154,6 +183,26 @@ class LoraImageDataset(Dataset):
         # and `warm_latent_cache` walks `range(len(dataset))`, so counting a repeated image twice
         # here would reload the same `.pt` once per repeat. Samples per epoch: `total_samples`.
         return len(self.images)
+
+    def sample_validation_indices(self, count: int, step: int) -> list[int]:
+        """Up to `count` held-out record indices for the random validation pass at `step`.
+
+        A fresh subset per step, drawn from a generator seeded by the run's seed and the step, so
+        the pass is reproducible while successive validation points together cover the held-out
+        set. Repeats do not weight the draw: the pool is the held-out images, and one index means
+        one image. This feeds `Val/Loss` and `Val/Avg_Loss`; `fixed_validation_indices` feeds
+        `Val/Fixed_Loss`.
+        """
+        pool = sorted({index for indices in self.val_buckets.values() for index in indices})
+        take = min(int(count), len(pool))
+        if take <= 0:
+            return []
+        rng = random.Random(f"axl-val-draw:{int(self.cfg.seed)}:{int(step)}")
+        return sorted(rng.sample(pool, take))
+
+    def fixed_validation_indices(self) -> list[int]:
+        """The fixed, mutually dissimilar held-out sample: the same images at every pass."""
+        return list(self.fixed_val_indices)
 
     def _caption_for(self, image_path: Path) -> str:
         cap = read_caption(image_path, self.cfg.caption_extension)

@@ -818,9 +818,15 @@ private fun ChartsSection(
         ChartPickMarkers(clickedStep = it.step, matchedStep = it.checkpoint?.step)
     }
     val avgPoints = metrics["Train/Avg_Loss"].orEmpty()
+    val valAvgPoints = metrics["Val/Avg_Loss"].orEmpty()
+    val valFixedPoints = metrics["Val/Fixed_Loss"].orEmpty()
     val epochMarks = epochBoundaries(
         uiState.stepsPerEpoch,
-        avgPoints.maxOfOrNull { it.step }?.toFloat() ?: 0f,
+        maxOf(
+            avgPoints.maxOfOrNull { it.step } ?: 0,
+            valAvgPoints.maxOfOrNull { it.step } ?: 0,
+            valFixedPoints.maxOfOrNull { it.step } ?: 0,
+        ).toFloat(),
     )
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
         val isWide = maxWidth > 720.dp
@@ -861,15 +867,19 @@ private fun ChartsSection(
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
-            ChartCard(
-                "Train / Avg Loss",
-                avgPoints,
-                colors.accentPink,
+            MultiSeriesChartCard(
+                title = "Train / Avg Loss",
+                series = listOf(
+                    ChartSeries("Avg Loss", avgPoints, colors.accentPink),
+                    ChartSeries("Val Avg Loss", valAvgPoints, colors.accentBlue),
+                    ChartSeries("Val Fixed Loss", valFixedPoints, colors.accentRose),
+                ),
                 smoothing = smoothing,
                 modifier = Modifier.fillMaxWidth(),
                 outlierClip = uiState.outlierClip,
                 strokeWidth = stroke,
                 chartHeight = 280.dp,
+                showLegend = true,
                 defaultStepSpan = uiState.stepSpan,
                 onPickStep = onPickStep,
                 showHoverStep = true,

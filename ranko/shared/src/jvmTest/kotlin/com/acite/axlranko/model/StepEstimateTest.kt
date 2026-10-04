@@ -73,4 +73,20 @@ class StepEstimateTest {
         assertEquals(310, estimate?.stepsPerEpoch)
         assertEquals(6_200, estimate?.totalSteps)
     }
+
+    @Test
+    fun theValidationSplitComesOffTheSamplesBeforeTheArithmetic() {
+        // 3,100 drawn samples with 100 held-out images drawn 3 times each: 2,800 train per epoch.
+        val counts = DatasetCountsResponse(images = 1_000, samples = 3_100, valImages = 100, valSamples = 300)
+        val samples = trainingSamplesPerEpoch(counts)
+        assertEquals(2_800, samples)
+        assertEquals(1_400, estimatedSteps(samples, 2, 1, 20)?.stepsPerEpoch)
+        // The same split a 10x repeat would have drawn differently is still a subtraction, not a guess.
+        assertEquals(100, trainingSamplesPerEpoch(DatasetCountsResponse(samples = 100, valSamples = 0)))
+    }
+
+    @Test
+    fun aHeldOutCountAboveTheTotalNeverMakesTheLineNegative() {
+        assertEquals(0, trainingSamplesPerEpoch(DatasetCountsResponse(samples = 5, valSamples = 9)))
+    }
 }

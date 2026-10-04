@@ -236,6 +236,13 @@ SAMPLE_REPEAT_RANGE = (1, 32)
 # Environment form, which rejects a value outside it before saving.
 TRAIN_DATA_REPEAT_RANGE = (1, 512)
 
+# Validation-set split (`[training]`). The percent counts unique images and is shared with the
+# Chromatrix Training form; 0 holds nothing out. The interval may be 0, which keeps the split but
+# never runs a validation pass.
+VAL_SPLIT_PERCENT_RANGE = (0.0, 90.0)
+VAL_SAMPLE_COUNT_RANGE = (1, 64)
+VAL_INTERVAL_RANGE = (0, 100000)
+
 
 @dataclass(frozen=True)
 class SampleSet:
@@ -620,6 +627,15 @@ class TrainConfig:
     # renders them. The Dashboard can flip it (and the cadence) for the run in progress.
     sampling_enabled: bool = get_val("sampling_enabled", True)
 
+    # Validation-set split: percent of the dataset's unique images held out (0 = none), how many
+    # held-out images one validation pass may score, and the steps between passes (0 = never run
+    # one, the split itself stays). The first pass is step 1 and then every `val_interval`.
+    # `LoraImageDataset` holds the images out and `loop.py` writes their loss to TensorBoard as
+    # `Val/Loss`.
+    val_split_percent: float = get_val("val_split_percent", 10.0)
+    val_sample_count: int = get_val("val_sample_count", 8)
+    val_interval: int = get_val("val_interval", 5)
+
     # Resume: kohya LoRA .safetensors (or its directory) to load before training
     resume_lora_path: str = get_val("resume_lora_path", "")
     # Run-scoped artifact directory, filled in at runtime by main.py.
@@ -768,3 +784,19 @@ class TrainConfig:
         if network_type == "locon":
             if int(self.conv_dim) < 1 or int(self.conv_alpha) < 1:
                 raise ValueError("locon requires conv_dim and conv_alpha >= 1")
+        try:
+            split_percent = _set_float(self.val_split_percent, 0.0)
+        except ValueError as exc:
+            raise ValueError(f"val_split_percent: {exc}") from exc
+        _check_range("val_split_percent", split_percent, VAL_SPLIT_PERCENT_RANGE)
+        for key, value, bounds in (
+            ("val_sample_count", self.val_sample_count, VAL_SAMPLE_COUNT_RANGE),
+            ("val_interval", self.val_interval, VAL_INTERVAL_RANGE),
+        ):
+            try:
+                number = _set_int(value, 0)
+            except ValueError as exc:
+                # `_set_int` refuses a bool and a non-integral float, so a hand-edited `5.5`
+                # fails here instead of being truncated to 5 silently.
+                raise ValueError(f"{key}: {exc}") from exc
+            _check_range(key, number, bounds)

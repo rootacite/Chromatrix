@@ -416,8 +416,14 @@ class TrainerIpcClient {
      * How many images each training folder holds, for the Training section's step estimate.
      * [dirs] is the form's own `[[environment.train_data]]` state, so the answer follows unsaved
      * edits; an empty list leaves the folders to the helper (the config's own entries).
+     * [valSplitPercent] / [seed] apply the validation split, so the answer's `valImages` /
+     * `valSamples` are the part the estimate has to subtract.
      */
-    suspend fun datasetCounts(dirs: List<TrainDataCountRequest> = emptyList()): DatasetCountsResponse {
+    suspend fun datasetCounts(
+        dirs: List<TrainDataCountRequest> = emptyList(),
+        valSplitPercent: Double = 0.0,
+        seed: Long = 0,
+    ): DatasetCountsResponse {
         val result = call(
             "dataset_counts",
             buildJsonObject {
@@ -433,6 +439,8 @@ class TrainerIpcClient {
                         }
                     }
                 }
+                put("val_split_percent", valSplitPercent)
+                put("seed", seed)
             },
         )
         return json.decodeFromJsonElement(result)

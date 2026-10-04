@@ -207,6 +207,9 @@ internal fun generateFormError(prompt: String, cfg: String, steps: String, seed:
 internal val TRAINING_STAT_TAGS = listOf(
     "Train/Avg_Loss" to "Avg Loss",
     "Train/Loss" to "Loss",
+    "Val/Loss" to "Val Loss",
+    "Val/Avg_Loss" to "Val Avg Loss",
+    "Val/Fixed_Loss" to "Val Fixed Loss",
     "UNet/LR/Effective_Actual_LR" to "UNet LR",
     "TE/LR/Effective_Actual_LR" to "TE LR",
 )

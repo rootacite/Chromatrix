@@ -329,25 +329,34 @@ class ChartPickTest {
         val metrics = mapOf(
             "Train/Avg_Loss" to listOf(MetricPoint(step = 100, value = 0.123456f)),
             "Train/Loss" to listOf(MetricPoint(step = 100, value = 0.2f)),
+            "Val/Loss" to listOf(MetricPoint(step = 100, value = 0.3456f)),
+            "Val/Avg_Loss" to listOf(MetricPoint(step = 100, value = 0.4f)),
+            "Val/Fixed_Loss" to listOf(MetricPoint(step = 100, value = 0.45f)),
             "UNet/LR/Effective_Actual_LR" to listOf(MetricPoint(step = 100, value = 2.5e-5f)),
             "TE/LR/Effective_Actual_LR" to listOf(MetricPoint(step = 100, value = 2.5e-6f)),
         )
         val stats = trainingInfoAt(metrics, step = 101f)
 
-        assertEquals(listOf("Avg Loss", "Loss", "UNet LR", "TE LR"), stats.map { it.label })
+        assertEquals(
+            listOf("Avg Loss", "Loss", "Val Loss", "Val Avg Loss", "Val Fixed Loss", "UNet LR", "TE LR"),
+            stats.map { it.label },
+        )
         assertEquals("0.1235", stats[0].value)
         assertEquals("0.2000", stats[1].value)
-        assertEquals("2.50e-05", stats[2].value)
-        assertEquals("2.50e-06", stats[3].value)
+        assertEquals("0.3456", stats[2].value)
+        assertEquals("0.4000", stats[3].value)
+        assertEquals("0.4500", stats[4].value)
+        assertEquals("2.50e-05", stats[5].value)
+        assertEquals("2.50e-06", stats[6].value)
         assertEquals(100, stats[0].step)
     }
 
     @Test
     fun trainingInfoKeepsItsShapeWhenASeriesIsMissing() {
         val stats = trainingInfoAt(mapOf("Train/Avg_Loss" to listOf(MetricPoint(1, 1f))), step = 1f)
-        assertEquals(4, stats.size)
+        assertEquals(7, stats.size)
         assertEquals("1.0000", stats[0].value)
-        assertEquals(listOf("—", "—", "—"), stats.drop(1).map { it.value })
+        assertEquals(listOf("—", "—", "—", "—", "—", "—"), stats.drop(1).map { it.value })
         assertNull(stats[1].step)
     }
 

@@ -8,12 +8,21 @@ The count is the number of images the trainer's dataset would draw in one epoch,
 same recursive walk over each `[[environment.train_data]]` folder — a hand-written mirror, not an
 import, because `utils.py` pulls torch in. The step arithmetic lives on the Chromatrix side
 (`model/StepEstimate.kt`), which is what makes epoch / batch / GA edits cost no IPC at all.
+
+`count_train_images` also applies the validation split (`validation_split.select_validation`), the
+same function `LoraImageDataset` uses for the real run, and reports the held-out images and draws as
+`val_images` / `val_samples` so the estimate can subtract them.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional
+
+try:
+    from validation_split import select_validation
+except ImportError:
+    from trainer.validation_split import select_validation
 
 # Same set `trainer/utils.list_images` walks, and the same mask exclusion.
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
@@ -24,13 +33,23 @@ def is_mask_sidecar(path: Path) -> bool:
     return path.name.lower().endswith(MASK_SUFFIX)
 
 
-def count_images(root: Path) -> int:
-    """Images under `root`, recursively: what `LoraImageDataset` would take from that folder."""
-    return sum(
-        1
+def image_paths(root: Path) -> list[Path]:
+    """Images under `root`, recursively, in `trainer/utils.list_images` order.
+
+    The order matters: the validation split draws positions from this list, and the dataset's own
+    copy of it has to come out in the same order for the two to hold out the same images.
+    """
+    found = [
+        path
         for path in root.rglob("*")
         if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS and not is_mask_sidecar(path)
-    )
+    ]
+    return sorted(found)
+
+
+def count_images(root: Path) -> int:
+    """Images under `root`, recursively: what `LoraImageDataset` would take from that folder."""
+    return len(image_paths(root))
 
 
 def _entry(entry: Any) -> tuple[str, int]:
@@ -48,20 +67,28 @@ def _entry(entry: Any) -> tuple[str, int]:
     return path, max(1, repeat)
 
 
-def count_train_images(entries: Iterable[Any]) -> dict[str, Any]:
+def count_train_images(
+    entries: Iterable[Any],
+    val_split_percent: float = 0.0,
+    seed: int = 0,
+) -> dict[str, Any]:
     """Image counts per training folder, plus the per-epoch totals a step estimate is built from.
 
     Each entry answers `{path, repeat, images, error}`; a folder that is missing or unreadable
     carries its reason and counts as zero, so one bad path cannot take the whole estimate down.
     `samples` is the per-epoch figure with repeats applied — what `LoraImageDataset.total_samples`
-    holds at run time.
+    holds at run time — and `val_images` / `val_samples` are the part the validation split holds
+    out (unique images, and the draws they would have contributed), which the estimate subtracts.
     """
     rows: list[dict[str, Any]] = []
+    folder_paths: list[list[Path]] = []
+    folder_repeats: list[int] = []
     images_total = 0
     samples_total = 0
     for raw in entries:
         path, repeat = _entry(raw)
         images = 0
+        paths: list[Path] = []
         error: Optional[str] = None
         if not path:
             error = "no path"
@@ -71,9 +98,12 @@ def count_train_images(entries: Iterable[Any]) -> dict[str, Any]:
                 error = "not a directory"
             else:
                 try:
-                    images = count_images(root)
+                    paths = image_paths(root)
+                    images = len(paths)
                 except OSError as exc:  # an unreadable tree is this folder's answer, not the form's
                     error = str(exc)
+        folder_paths.append(paths)
+        folder_repeats.append(int(repeat))
         rows.append(
             {
                 "path": path,
@@ -84,8 +114,12 @@ def count_train_images(entries: Iterable[Any]) -> dict[str, Any]:
         )
         images_total += images
         samples_total += images * repeat
+
+    held_out = select_validation(folder_paths, val_split_percent, seed)
     return {
         "entries": rows,
         "images": int(images_total),
         "samples": int(samples_total),
+        "val_images": len(held_out),
+        "val_samples": int(sum(folder_repeats[folder] for folder, _ in held_out)),
     }

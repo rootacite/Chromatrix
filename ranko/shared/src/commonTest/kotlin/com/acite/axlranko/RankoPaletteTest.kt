@@ -18,6 +18,7 @@ class RankoPaletteTest {
         assertEquals(Color(0xFFF8A818), palette.accentPink)
         assertEquals(Color(0xFF7EB0D4), palette.accentBlue)
         assertEquals(Color(0xFFF0D39A), palette.accentLilac)
+        assertEquals(Color(0xFFE87FA8), palette.accentRose)
         assertEquals(Color(0xFF3A342C), palette.boardBg)
         assertEquals(Color(0xFF8A7B68), palette.grid)
         assertEquals(Color(0xFFF8A818), palette.star)

@@ -57,6 +57,8 @@ def _cfg(data_dir: Path, **overrides) -> TrainConfig:
     cfg.keep_tokens = 2
     cfg.seed = 123
     cfg.train_batch_size = 3
+    # These tests train every image; the validation split has its own tests.
+    cfg.val_split_percent = 0.0
     for key, value in overrides.items():
         setattr(cfg, key, value)
     return cfg

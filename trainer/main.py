@@ -93,6 +93,35 @@ def main() -> None:
             ds = artifacts.train_dataset
             n_masked = getattr(ds, "n_masked", 0)
             print(f"Loss masks: {n_masked}/{len(ds)} samples")
+            if getattr(ds, "val_image_count", 0):
+                pass_note = (
+                    f"two passes every {int(cfg.val_interval)} steps "
+                    f"(random subset + fixed {len(ds.fixed_validation_indices())}-image sample)"
+                    if int(cfg.val_interval) > 0
+                    else "no pass (val_interval = 0)"
+                )
+                stats = getattr(ds, "fixed_val_stats", {}) or {}
+                diversity = ""
+                if stats.get("max_similarity") is not None:
+                    if stats["count"] < stats.get("pool", 0):
+                        diversity = (
+                            f"; fixed sample: {stats['count']} of {stats['pool']} held-out "
+                            f"images, max similarity {stats['max_similarity']} % "
+                            f"(median {stats['median_similarity']} %)"
+                        )
+                    else:
+                        # The count covers the whole held-out set, so there is nothing to choose
+                        # between; the similarity is the pool's, not a failed pick.
+                        diversity = (
+                            f"; fixed sample: every held-out image (count ≥ pool), max similarity "
+                            f"{stats['max_similarity']} % (median {stats['median_similarity']} %)"
+                        )
+                if stats.get("unreadable"):
+                    diversity += f"; {stats['unreadable']} held-out image(s) unreadable"
+                print(
+                    f"Validation split: {ds.val_image_count}/{len(ds)} images held out "
+                    f"({ds.val_sample_count} samples/epoch); scored {pass_note}{diversity}"
+                )
             # Silent only for the plain single-folder case, so a repeat is never implicit.
             if len(ds.entries) > 1 or any(entry.repeat != 1 for entry in ds.entries):
                 folders = " + ".join(

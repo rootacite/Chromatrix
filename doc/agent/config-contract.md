@@ -56,6 +56,46 @@ must stay under `[validation]` (a top-level `[[samples]]` would be dropped, beca
   `TomlDocumentPatcher.replaceArrayOfTables` for the blocks. The form writes `[validation]` from the
   **first** set, so the file never holds two contradictory prompts.
 
+### Validation-set split (`[training].val_split_percent` / `val_sample_count` / `val_interval`)
+
+Three plain `[training]` scalars, deliberately not in `[validation]` (which means the prompt sets
+above). They are one contract with two readers, and the shared function is what keeps them agreeing:
+
+- `trainer/validation_split.py` (torch-free) is the only implementation of the split:
+  `held_out_count(total, percent)` is `ceil(percent/100 × total)` clamped to leave at least one
+  training image, and `select_validation(folders, percent, seed)` draws that many whole images
+  (`random.Random(f"axl-val-split:{seed}:{percent:g}")` over the flat `(folder, position)` list in
+  `list_images` order). The percent reaches the seed in `%g` form, so a TOML integer and the helper's
+  parsed float name the same images.
+- `LoraImageDataset` calls it once: those records go to `self.val_buckets` instead of `self.buckets`.
+  Everything downstream — the sampler, `len(dataloader)`, `steps_per_epoch`, `state.json`'s
+  `total_steps`, the progress bars — follows the bucket lists, so one call shrinks the whole run. The
+  held-out records stay in `self.images` / `self.records` (so `cache_entries()` still warms their
+  latents) and `__len__` still counts every image.
+- `api.py`'s `dataset_counts` calls the same function for the Utils estimate and reports the outcome
+  as `val_images` / `val_samples`; the client subtracts them before its epoch / batch / GA arithmetic
+  (`StepEstimate.kt`'s `trainingSamplesPerEpoch`). This is the "do not compute the predicted steps
+  wrong" pin: one implementation, two callers.
+- Nothing is persisted: the split is a function of (seed, percent, folder contents), and the run
+  prints `Validation split: N/M images held out`. Two runs over different folder contents hold out
+  different images, and adding an image reshuffles it — there is no on-disk held-out list to go stale.
+- Ranges are validated twice, as everywhere else: `TrainConfig.__post_init__` raises naming the key
+  (`VAL_SPLIT_PERCENT_RANGE` / `VAL_SAMPLE_COUNT_RANGE` / `VAL_INTERVAL_RANGE` in `trainer/config.py`,
+  mirrored by `TrainingConfigForm.validate`), and a hand-edited file therefore fails at startup.
+  `val_interval = 0` is valid: the split stays, no pass runs.
+- Cadence: `loop.validation_due(interval, step)` is the rule, and it is step-anchored, not a modulo —
+  the **first validation step is step 1**, then `1 + N`, `1 + 2N`, … (`interval = 1` = every step,
+  `0` = never). A modulo rule would have put the first point at step `N`, which is late for a short
+  run; the point count per tag in a run is therefore `1 + (steps - 1) // interval`. Each cadence step
+  runs **two passes**: the random subset (`Val/Loss`) and the fixed, mutually dissimilar sample
+  (`Val/Fixed_Loss`), with the random series' epoch-window average logged as `Val/Avg_Loss` — all
+  three in one TensorBoard event, so the chart's curves share one x axis. The fixed sample is a
+  function of the folder contents alone (deterministic, no seed): `select_diverse_subset` in
+  `trainer/validation_split.py`, picked once in `LoraImageDataset.__init__`. Inside a pass the
+  images are grouped by bucket and each group is chunked at `train_batch_size`, so one forward never
+  carries more images than a training step's own and `val_sample_count` is free to exceed the batch;
+  the pass result stays the image-count-weighted mean.
+
 ### Train data entries (`[[environment.train_data]]`)
 
 The datasets a run trains on, one block per folder with a per-epoch `repeat` (kohya `num_repeats`

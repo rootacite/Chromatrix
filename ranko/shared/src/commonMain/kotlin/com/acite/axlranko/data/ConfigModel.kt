@@ -83,7 +83,16 @@ data class TrainingConfig(
     @SerialName("save_every_n_steps") val saveEveryNSteps: Int,
     /** Render the validation samples at every checkpoint. Optional: older files have no such key. */
     @SerialName("sampling_enabled") val samplingEnabled: Boolean = true,
-    @SerialName("resume_lora_path") val resumeLoraPath: String = ""
+    @SerialName("resume_lora_path") val resumeLoraPath: String = "",
+    /**
+     * Validation-set split: the share of the dataset's unique images kept out of training (percent,
+     * 0–90, 0 = none), how many held-out images one pass may score, and the steps between passes
+     * (the first pass is step 1, then every `val_interval`; 0 = never run one). Optional so a config
+     * written before they existed still parses.
+     */
+    @SerialName("val_split_percent") val valSplitPercent: Double = 10.0,
+    @SerialName("val_sample_count") val valSampleCount: Int = 8,
+    @SerialName("val_interval") val valInterval: Int = 5
 )
 
 @Serializable

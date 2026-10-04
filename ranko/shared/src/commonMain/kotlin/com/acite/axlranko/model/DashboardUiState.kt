@@ -405,6 +405,10 @@ data class DatasetCountsResponse(
     val images: Int = 0,
     /** Images drawn in one epoch, repeats included. */
     val samples: Int = 0,
+    /** Unique images the validation split holds out (absent on an older helper: 0). */
+    @SerialName("val_images") val valImages: Int = 0,
+    /** Draws those held-out images would have contributed, repeats included. */
+    @SerialName("val_samples") val valSamples: Int = 0,
 )
 
 /** One of the tagger's categories, as the model declares it (`tagger_info`). */@Serializable

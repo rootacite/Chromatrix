@@ -218,6 +218,24 @@ class AvgLossTest(unittest.TestCase):
         finally:
             api._get_tensorboard_metrics = orig
 
+    def test_dashboard_carries_the_val_loss_series_and_its_latest_value(self):
+        fake = {
+            "Train/Avg_Loss": [{"step": 10, "value": 0.4, "wall_time": 1.0}],
+            "Val/Loss": [{"step": 10, "value": 0.9, "wall_time": 1.0}],
+        }
+        orig = api._get_tensorboard_metrics
+        api._get_tensorboard_metrics = lambda *a, **k: dict(fake)
+        try:
+            result = api.handle_dashboard(
+                {"name": "__val_loss__", "run_id": "__val_loss___20260101_000000"}
+            )
+        finally:
+            api._get_tensorboard_metrics = orig
+        # Both curves reach the client in one payload; the chart draws them on a shared x.
+        self.assertEqual(0.9, result["metrics"]["Val/Loss"][0]["value"])
+        self.assertEqual(0.9, result["latest_stats"]["Val/Loss"])
+        self.assertEqual(0.4, result["latest_stats"]["Train/Avg_Loss"])
+
     def test_dashboard_cadence_is_the_run_snapshot_not_the_repo(self):
         # The repo file is whatever this checkout has. A run with its own snapshot must not
         # answer with that, and a run with no snapshot must not answer with it either.
@@ -595,6 +613,22 @@ class TensorboardCacheTest(unittest.TestCase):
         second = api._get_tensorboard_metrics(str(self.log_dir))
         self.assertEqual(first, second)
         self.assertEqual(1, api.tensorboard_cache_stats()["builds"])
+
+    def test_a_sparse_val_loss_series_is_read_beside_the_training_scalars(self):
+        """The validation tags are written only on cadence steps; the reader carries them as they are."""
+        for step in (1, 2, 3):
+            self.writer.add_scalar("Train/Avg_Loss", 1.0 / step, step)
+        for tag in ("Val/Loss", "Val/Avg_Loss", "Val/Fixed_Loss"):
+            for step in (1, 3):
+                self.writer.add_scalar(tag, 2.0 / step, step)
+        self.writer.flush()
+
+        metrics = api._get_tensorboard_metrics(str(self.log_dir))
+
+        for tag in ("Val/Loss", "Val/Avg_Loss", "Val/Fixed_Loss"):
+            self.assertEqual([1, 3], [point["step"] for point in metrics[tag]], tag)
+            self.assertEqual(2.0, metrics[tag][0]["value"], tag)
+        self.assertEqual([1, 2, 3], [point["step"] for point in metrics["Train/Avg_Loss"]])
 
     def test_the_step_range_is_applied_to_the_cached_reader(self):
         self._steps(6)
@@ -2188,6 +2222,24 @@ class DatasetCountsIpcTest(unittest.TestCase):
         self.assertEqual(result["entries"][0]["path"], raw)
         self.assertEqual(result["samples"], 2)
 
+    def test_a_request_without_split_params_reads_the_configs_own_values(self):
+        """A caller that names nothing must answer with the split a run would apply."""
+        with tempfile.TemporaryDirectory() as raw:
+            for i in range(10):
+                (Path(raw) / f"{i:02d}.png").write_bytes(b"x")
+            with mock.patch.object(
+                api,
+                "_load_toml_config",
+                return_value={
+                    "train_data": [{"path": raw, "repeat": 2}],
+                    "val_split_percent": 20.0,
+                    "seed": 11,
+                },
+            ):
+                result = api.handle_dataset_counts({})
+        self.assertEqual(result["val_images"], 2)  # ceil(0.2 * 10)
+        self.assertEqual(result["val_samples"], 4)  # both held-out images drawn twice
+
     def test_a_missing_folder_answers_with_its_reason(self):
         with tempfile.TemporaryDirectory() as raw:
             result = api.handle_dataset_counts({"dirs": [{"path": str(Path(raw) / "gone")}]})
@@ -2199,6 +2251,38 @@ class DatasetCountsIpcTest(unittest.TestCase):
             api.handle_dataset_counts({"dirs": "all of them"})
         with self.assertRaises(ValueError):
             api.handle_dataset_counts({"dirs": [["/tmp"]]})
+
+    def test_the_split_params_report_the_held_out_part(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            for i in range(10):
+                (root / f"{i:02d}.png").write_bytes(b"x")
+            params = {"dirs": [{"path": raw, "repeat": 3}], "val_split_percent": 10.0, "seed": 5}
+            result = api.handle_dataset_counts(params)
+            no_split = api.handle_dataset_counts(
+                {"dirs": [{"path": raw, "repeat": 3}], "val_split_percent": 0.0, "seed": 5}
+            )
+
+        self.assertEqual(result["images"], 10)
+        self.assertEqual(result["samples"], 30)
+        self.assertEqual(result["val_images"], 1)  # ceil(0.1 * 10)
+        self.assertEqual(result["val_samples"], 3)  # the held-out image's repeat
+        self.assertEqual(no_split["val_images"], 0)
+        self.assertEqual(no_split["val_samples"], 0)
+
+    def test_a_bad_split_percent_or_seed_is_refused(self):
+        with tempfile.TemporaryDirectory() as raw:
+            (Path(raw) / "1.png").write_bytes(b"x")
+            for params in (
+                {"dirs": [{"path": raw}], "val_split_percent": 91},
+                {"dirs": [{"path": raw}], "val_split_percent": -1},
+                {"dirs": [{"path": raw}], "val_split_percent": "half"},
+                {"dirs": [{"path": raw}], "seed": 1.5},
+                {"dirs": [{"path": raw}], "seed": "seven"},
+            ):
+                with self.subTest(params=params):
+                    with self.assertRaises(ValueError):
+                        api.handle_dataset_counts(params)
 
 
 class TaggerInfoIpcTest(unittest.TestCase):

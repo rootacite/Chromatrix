@@ -13,6 +13,7 @@ try:
     from env import flush_memory
     import control
     from control import LiveSettings
+    from dataset import collate_fn
     from device_swap import SwapContext, at_safe_point
     from family import FamilyModules, ModelFamily
     from models import artifact_root, lora_checkpoint_file
@@ -23,12 +24,17 @@ except ImportError:
     from trainer.env import flush_memory
     from trainer import control
     from trainer.control import LiveSettings
+    from trainer.dataset import collate_fn
     from trainer.device_swap import SwapContext, at_safe_point
     from trainer.family import FamilyModules, ModelFamily
     from trainer.models import artifact_root, lora_checkpoint_file
     from trainer.setup import TrainArtifacts
 
 _loss_recorder = LossRecorder()
+# `Val/Avg_Loss`: the same epoch-window rule as `Train/Avg_Loss`, fed with the validation points
+# instead of the training steps. Module-level like `_loss_recorder`; a process that runs two runs
+# in a row (or a test that drives `train_one_epoch` twice) resets it the same way.
+_val_loss_recorder = LossRecorder()
 
 
 def _scheduled_lr(optimizer: Any) -> float:
@@ -177,17 +183,159 @@ def build_group_inputs(
     return prompts, latents, stacked
 
 
+def validation_due(interval: int, global_step: int) -> bool:
+    """Whether `global_step` runs a validation pass.
+
+    The first pass lands on **step 1** and then every `interval`: 1, 1+N, 1+2N, … A modulo rule
+    would put the first point at step N, which is late for a short run and hides the step where the
+    loss is most comparable with the start. `interval = 0` never validates.
+    """
+    steps = int(interval)
+    step = int(global_step)
+    return steps > 0 and step >= 1 and (step - 1) % steps == 0
+
+
+def compute_validation_loss(
+    *,
+    artifacts: TrainArtifacts,
+    cfg: TrainConfig,
+    global_step: int,
+    swap_ctx: SwapContext | None = None,
+    indices: list[int] | None = None,
+) -> float | None:
+    """Mean held-out loss for one validation pass, or `None` when nothing was drawn or a stop came.
+
+    Reuses the training loss path (`build_group_inputs` + `family.compute_loss`) on the held-out
+    images named by `indices` — `None` means this step's random subset
+    (`dataset.sample_validation_indices`), the loop passes the fixed sample for the second pass —
+    averaged over the images actually scored (never over the requested count, so a small held-out
+    set is not diluted with zeros).
+
+    `train_batch_size` is also the cap on one forward: a bucket group bigger than that is scored in
+    chunks, so a pass on a 16 GB card can never peak above a training step of the same run. The
+    chunking changes the aggregation not at all (each chunk weighs by its image count) and the
+    per-image noise/timestep draws only in the sense that they come from the chunk's own forward.
+
+    The pass must leave training untouched, and three things do that: `torch.no_grad()` (no
+    gradient, no `.grad`), a forked RNG around the *whole* pass including `dataset.__getitem__`
+    (a cold latent cache draws its VAE posterior sample from the global generator, and the
+    timestep/noise draws of `denoise_loss` do too, so without the fork a validation point would
+    shift the training run's noise sequence), and `eval()` on the modules for the pass, restored in
+    the `finally` (dropout off, gradient checkpointing off). The optimizers are deliberately not
+    touched: Schedule-Free holds the parameters at the training iterate while training, and the
+    validation loss is meant to be comparable with the same step's `Train/Loss`.
+    """
+    dataset = artifacts.train_dataset
+    if indices is None:
+        indices = dataset.sample_validation_indices(cfg.val_sample_count, global_step)
+    indices = list(indices)
+    if not indices:
+        return None
+    device = artifacts.device
+    modules = artifacts.modules
+    switched = [module for module in [modules.denoise, *modules.text_encoders] if hasattr(module, "training")]
+    modes = [bool(module.training) for module in switched]
+    rng_devices: list[int] = [] if str(getattr(device, "type", "cpu")) == "cpu" else [device.index or 0]
+    loss_sum = 0.0
+    item_count = 0
+    try:
+        with torch.no_grad(), torch.random.fork_rng(devices=rng_devices):
+            for module in switched:
+                module.eval()
+            batch = collate_fn([dataset[index] for index in indices])
+            # One forward per bucket group, and never more images in it than a training step's own
+            # forward: a group is chunked at `train_batch_size`, so a pass cannot peak above the
+            # step it rides on (8 held-out images in one bucket used to go through as one batch 8).
+            # The aggregate stays the mean over the scored images: each chunk weighs by its size.
+            chunk_size = max(1, int(cfg.train_batch_size))
+            for group in group_indices_by_bucket(batch).values():
+                for start in range(0, len(group), chunk_size):
+                    chunk = group[start : start + chunk_size]
+                    # A pass is short, but a pause or stop between chunks should not wait for the rest.
+                    if not at_safe_point("training", swap_ctx):
+                        return None
+                    prompts, latents, extra = build_group_inputs(
+                        indices=chunk,
+                        batch=batch,
+                        family=artifacts.family,
+                        vae=modules.vae,
+                        cfg=cfg,
+                        device=device,
+                        weight_dtype=artifacts.weight_dtype,
+                    )
+                    loss = artifacts.family.compute_loss(
+                        prompts=prompts,
+                        latents=latents,
+                        extra=extra,
+                        modules=modules,
+                        cfg=cfg,
+                        device=device,
+                        dtype=artifacts.weight_dtype,
+                    )
+                    loss_sum += float(loss.detach().item()) * len(chunk)
+                    item_count += len(chunk)
+    finally:
+        for module, was_training in zip(switched, modes):
+            module.train(was_training)
+    if item_count == 0:
+        return None
+    return loss_sum / item_count
+
+
+def run_validation_passes(
+    *,
+    artifacts: TrainArtifacts,
+    cfg: TrainConfig,
+    global_step: int,
+    epoch_index: int,
+    val_point_in_epoch: int,
+    swap_ctx: SwapContext | None = None,
+) -> tuple[float | None, float | None, float | None]:
+    """Both validation passes for one cadence step: `(Val/Loss, Val/Avg_Loss, Val/Fixed_Loss)`.
+
+    Pass 1 scores this step's random subset — coverage over the run — and its mean both goes to
+    `Val/Loss` and feeds the epoch-window recorder behind `Val/Avg_Loss` (the same rule
+    `Train/Avg_Loss` uses). Pass 2 scores the fixed, mutually dissimilar sample
+    (`dataset.fixed_validation_indices`), the same images every pass, so that curve is comparable
+    point to point. Each pass runs its own `compute_validation_loss`, hence its own no-grad /
+    forked-RNG / eval-mode sandwich: the isolation the probe asserts holds per pass, not only for
+    the pair.
+    """
+    val_loss = compute_validation_loss(
+        artifacts=artifacts,
+        cfg=cfg,
+        global_step=global_step,
+        swap_ctx=swap_ctx,
+    )
+    val_avg_loss: float | None = None
+    if val_loss is not None:
+        _val_loss_recorder.add(epoch=epoch_index, step=val_point_in_epoch, loss=val_loss)
+        val_avg_loss = _val_loss_recorder.moving_average
+    val_fixed_loss = compute_validation_loss(
+        artifacts=artifacts,
+        cfg=cfg,
+        global_step=global_step,
+        swap_ctx=swap_ctx,
+        indices=artifacts.train_dataset.fixed_validation_indices(),
+    )
+    return val_loss, val_avg_loss, val_fixed_loss
+
+
 def _maybe_log_and_sample(
     *,
     artifacts: TrainArtifacts,
     cfg: TrainConfig,
     global_step: int,
     swap_ctx: SwapContext | None = None,
+    val_loss: float | None = None,
+    val_avg_loss: float | None = None,
+    val_fixed_loss: float | None = None,
 ) -> None:
     """Log the step, then save a checkpoint (and, when the switch is on, its samples).
 
     Sampling has no cadence of its own: a sample always belongs to the checkpoint written in the
-    same step, so turning sampling off makes a save point checkpoint-only.
+    same step, so turning sampling off makes a save point checkpoint-only. The three `val_*` scalars
+    are logged in the same event as the training scalars, so every curve shares one x in the chart.
     """
     accelerator = artifacts.accelerator
     if accelerator.is_main_process:
@@ -196,15 +344,23 @@ def _maybe_log_and_sample(
         unet_effective_lr = _scheduled_lr(denoise_optimizer)
         te_effective_lr = _scheduled_lr(te_optimizer)
 
-        accelerator.log(
-            {
-                "Train/Loss": _maybe_log_and_sample.last_loss,
-                "Train/Avg_Loss": _maybe_log_and_sample.last_avg_loss,
-                "UNet/LR/Effective_Actual_LR": unet_effective_lr,
-                "TE/LR/Effective_Actual_LR": te_effective_lr,
-            },
-            step=global_step,
-        )
+        scalars = {
+            "Train/Loss": _maybe_log_and_sample.last_loss,
+            "Train/Avg_Loss": _maybe_log_and_sample.last_avg_loss,
+            "UNet/LR/Effective_Actual_LR": unet_effective_lr,
+            "TE/LR/Effective_Actual_LR": te_effective_lr,
+        }
+        # Three validation scalars ride the same event, so every curve shares one x: the random
+        # subset's raw mean (`Val/Loss`), its epoch-window average (`Val/Avg_Loss`, the same
+        # `LossRecorder` rule as `Train/Avg_Loss`), and the fixed sample's raw mean
+        # (`Val/Fixed_Loss`).
+        if val_loss is not None:
+            scalars["Val/Loss"] = float(val_loss)
+        if val_avg_loss is not None:
+            scalars["Val/Avg_Loss"] = float(val_avg_loss)
+        if val_fixed_loss is not None:
+            scalars["Val/Fixed_Loss"] = float(val_fixed_loss)
+        accelerator.log(scalars, step=global_step)
 
         settings = artifacts.settings
         if settings.due(global_step):
@@ -283,6 +439,10 @@ def train_one_epoch(
 
     epoch_step = 0
     epoch_index = max(0, int(cfg._current_epoch) - 1)
+    # Validation points already emitted inside this epoch: the index `_val_loss_recorder` overwrites
+    # next. Counting points rather than dividing the step by the cadence keeps the window a full
+    # epoch's worth when the epoch length is not a multiple of `val_interval`.
+    val_point_in_epoch = 0
 
     for batch in artifacts.dataloader:
         with accelerator.accumulate(denoise, *text_encoders):
@@ -356,11 +516,28 @@ def train_one_epoch(
                 return global_step
 
             adopt_live_settings(artifacts, global_step)
+            val_loss: float | None = None
+            val_avg_loss: float | None = None
+            val_fixed_loss: float | None = None
+            if validation_due(cfg.val_interval, global_step) and artifacts.train_dataset.val_image_count > 0:
+                val_loss, val_avg_loss, val_fixed_loss = run_validation_passes(
+                    artifacts=artifacts,
+                    cfg=cfg,
+                    global_step=global_step,
+                    epoch_index=epoch_index,
+                    val_point_in_epoch=val_point_in_epoch,
+                    swap_ctx=swap_ctx,
+                )
+                if val_loss is not None:
+                    val_point_in_epoch += 1
             _maybe_log_and_sample(
                 artifacts=artifacts,
                 cfg=cfg,
                 global_step=global_step,
                 swap_ctx=swap_ctx,
+                val_loss=val_loss,
+                val_avg_loss=val_avg_loss,
+                val_fixed_loss=val_fixed_loss,
             )
             if control.should_stop():
                 return global_step

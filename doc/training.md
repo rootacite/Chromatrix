@@ -113,6 +113,47 @@ Rules and failure modes:
 - **Runtime state**: `cat $XDG_RUNTIME_DIR/axltrainer/state.json` (or the equivalent resolved path).
 - **Logs**: `tail -f <runtime_dir>/train.log` (trainer stdout/stderr; driver log noise is filtered by `start_train.sh`).
 
+### Validation loss
+
+With `[training].val_split_percent > 0`, the dataset keeps `ceil(percent/100 × images)` images out
+of training — drawn once from the run's `seed` and the folder contents, so the run's log line
+`Validation split: N/M images held out` is reproducible, and each held-out image also removes its
+folder's `repeat` draws per epoch. The first validation step is **step 1**, then one every
+`val_interval` steps (and never when it is `0`), and each of those runs **two passes** over up to
+`val_sample_count` held-out images:
+
+- pass 1 scores a fresh random subset — coverage over the run — and its mean goes to `Val/Loss`;
+- the same points are averaged over the current epoch's validation points (the window rule
+  `Train/Avg_Loss` uses) into `Val/Avg_Loss`;
+- pass 2 scores a **fixed, mutually dissimilar** sample, chosen once from the held-out images by
+  thumbnail similarity, and its mean goes to `Val/Fixed_Loss` — the same images every time, so this
+  curve is the one to read for a trend.
+
+All three scalars are written in one TensorBoard event, at the same step as `Train/Loss`, and the
+Dashboard draws `Val/Avg_Loss` and `Val/Fixed_Loss` beside `Avg Loss` in the **Train / Avg Loss**
+chart. The ctrl-click readout lists all three by their own names.
+
+Images are scored per aspect-ratio bucket, and each group is chunked at `train_batch_size`, so **one
+forward inside a pass never carries more images than a training step's own forward** — the pass
+cannot peak above the step it lands on, and `val_sample_count` may be larger than the batch. The
+reported value is the mean over the images actually scored (each chunk weighs by its image count).
+The cap costs a little time: a pass becomes more, smaller forwards (measured at `train_batch_size = 1`,
+an 8-image pass went from 1.28 s to 1.61 s; at batch 3 it is three forwards of ≤3 instead).
+
+The passes add forward-only work to the step they land on, so `val_interval` and `val_sample_count`
+are the cost knobs: measured on the author GPU a single 8-image pass costs about 1.5 s, which is
+about **+16 %** per step at the shipped interval of 5 with one pass — so roughly twice that with
+both — and about +46 % if the interval is set to 1 with 5 images. A direct measurement of the two-pass
+pair at batch 1 (72 steps, interval 5, 8 images) came out at 786 → 1255 ms/step; the percentage scales
+with the step cost, so the per-pass figure is the portable one. When `val_sample_count` is at least
+the size of the held-out set, both passes score every held-out image, so `Val/Loss` and
+`Val/Fixed_Loss` describe the same work and the fixed curve is simply the complete held-out mean. The
+held-out images keep their
+latents (the warm cache encodes them like any other image), and each pass runs with the modules in
+eval mode, without gradients, and inside a forked RNG, so the training step's own loss and weights
+are unchanged — measured, not assumed: `test/probe_val_loss_gpu.py` (numbers in
+`doc/agent/tests.md`).
+
 ## Cleanup
 
 A run leaves samples, TensorBoard logs, and checkpoints behind. The dashboard's **Reset** button only clears the `finished`/`error` state so a new run can start: it deletes nothing. The run keeps its LoRA checkpoints, its sample images and its TensorBoard logs, which is what makes it browsable in the run history afterwards.

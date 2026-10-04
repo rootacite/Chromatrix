@@ -141,6 +141,8 @@ def make_cfg(data_dir: Path, **overrides) -> TrainConfig:
     cfg.bucket_reso_steps = 128
     cfg.cache_latents = True
     cfg.cache_latents_to_disk = True
+    # These tests warm the cache for every image; the validation split has its own tests.
+    cfg.val_split_percent = 0.0
     for k, v in overrides.items():
         setattr(cfg, k, v)
     return cfg
