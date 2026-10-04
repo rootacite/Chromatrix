@@ -408,6 +408,27 @@ internal fun newlyFailedJob(
 ): GeneratedSampleJob? = jobs.firstOrNull { it.state == JOB_ERROR && it.id !in history }
 
 /**
+ * The failure line the poll should show, given the job it announced and the list it just read.
+ *
+ * [announced] is the job this poll has already reported (null when it reported none), [jobs] is the
+ * fresh list, and [shown] is the line currently on screen. The helper closes a job whose process
+ * cannot be confirmed yet as an error, and the generator's own record then goes on to `running` or
+ * `done` — so a line left up reports a failure the run came back from. It comes down as soon as
+ * that job is no longer in error, and only when it is the line this poll put there: a message from
+ * anywhere else (an IPC refusal, a cancelled pass) is left alone.
+ */
+internal fun generatedFailureLine(
+    announced: GeneratedSampleJob?,
+    jobs: List<GeneratedSampleJob>,
+    shown: String?,
+): String? {
+    if (announced == null) return shown
+    val job = jobs.firstOrNull { it.id == announced.id }
+    if (job != null && job.state == JOB_ERROR) return job.error ?: announced.error
+    return if (shown == announced.error) null else shown
+}
+
+/**
  * The finished jobs the panel's row for [step] shows: [generatedJobsForStep]'s list — every job
  * recorded at that step — plus any pass rendered from [checkpoint] whatever step its record
  * carries, which is what keeps a job that names no step from going missing for the very checkpoint

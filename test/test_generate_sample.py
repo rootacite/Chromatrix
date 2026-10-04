@@ -415,6 +415,12 @@ class BatchSpecTest(unittest.TestCase):
             )
         ]
         calls = []
+        published = []
+        real_write_job = genjob.write_job
+
+        def recording_write_job(generated, payload):
+            published.append(dict(payload))
+            return real_write_job(generated, payload)
 
         def fake_render(**kwargs):
             calls.append(kwargs["job_id"])
@@ -422,6 +428,7 @@ class BatchSpecTest(unittest.TestCase):
 
         stdout = io.StringIO()
         with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(genjob, "write_job", recording_write_job))
             stack.enter_context(mock.patch.object(generator, "resolve_resume_path", lambda raw: Path(str(raw)).with_suffix(".safetensors")))
             stack.enter_context(mock.patch.object(generator, "read_lora_metadata", lambda path: {}))
             stack.enter_context(mock.patch.object(generator, "_record_config", lambda spec: cfg))
@@ -451,6 +458,12 @@ class BatchSpecTest(unittest.TestCase):
             entry = genjob.read_job(genjob.job_path(self.generated, job_id))
             self.assertEqual(entry["state"], genjob.STATE_DONE)
             self.assertEqual(len(entry["files"]), 2)
+        # A checkpoint's record names the process that renders it from the moment it is written:
+        # api.py closes a `running` job with no pid as a generator that died before it started.
+        children = [entry for entry in published if entry.get("mode") == genjob.MODE_SETS]
+        self.assertEqual(len(children), 2)
+        for entry in children:
+            self.assertEqual(entry["pid"], os.getpid())
         self.assertEqual(len(calls), 2, "the pass renders once per checkpoint")
         self.assertIn("2/2 checkpoint(s), 4 image(s)", stdout.getvalue())
         for job_id in stored["job_ids"]:

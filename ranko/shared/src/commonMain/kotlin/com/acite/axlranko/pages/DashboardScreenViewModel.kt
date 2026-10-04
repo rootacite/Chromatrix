@@ -35,6 +35,7 @@ import com.acite.axlranko.pages.components.displayedRun
 import com.acite.axlranko.pages.components.evaluationPrefillSelection
 import com.acite.axlranko.pages.components.generateFormDefaults
 import com.acite.axlranko.pages.components.generateFormError
+import com.acite.axlranko.pages.components.generatedFailureLine
 import com.acite.axlranko.pages.components.generatedSampleItems
 import com.acite.axlranko.pages.components.nearestCheckpoint
 import com.acite.axlranko.pages.components.newlyFailedJob
@@ -1058,6 +1059,10 @@ class DashboardScreenViewModel(
             .map { it.id }
             .toSet()
         generatedPollJob = viewModelScope.launch {
+            // The failure this poll announced, so the line can come down once that job stops
+            // failing — a helper that closed it before its pid was readable leaves an error the
+            // generator's own record then overwrites with `done`.
+            var announced: GeneratedSampleJob? = null
             while (isActive) {
                 delay(GENERATED_POLL_MILLIS.milliseconds)
                 val state = _uiState.value
@@ -1065,13 +1070,13 @@ class DashboardScreenViewModel(
                 val runId = selected?.runId ?: state.runId ?: return@launch
                 val jobs = fetchGeneratedJobs(runId, selected?.outputName)
                 if (jobs.isEmpty()) return@launch
-                val failed = newlyFailedJob(jobs, history)?.error
+                newlyFailedJob(jobs, history)?.let { announced = it }
                 _uiState.update { current ->
                     // A switch to another run under the poll must not inject the old run's jobs.
                     if ((current.selectedRun?.runId ?: current.runId) != runId) return@update current
                     current.copy(
                         generatedJobs = jobs,
-                        generatedError = failed ?: current.generatedError,
+                        generatedError = generatedFailureLine(announced, jobs, current.generatedError),
                     )
                 }
                 if (jobs.none { it.state == JOB_RUNNING }) return@launch

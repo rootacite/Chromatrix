@@ -58,6 +58,7 @@ from trainer.control import (
     reconcile,
     request as request_train_command,
     request_settings,
+    spawned_job_gone,
     reset_to_idle,
     status_payload,
 )
@@ -1159,7 +1160,7 @@ def _running_generation(output_dir: Path) -> Optional[dict[str, Any]]:
         job = genjob.read_job(spec)
         if job is None or job.get("state") != genjob.STATE_RUNNING:
             continue
-        if is_pid_alive(job.get("pid")):
+        if not spawned_job_gone(job):
             # A cancel asked to stop is still using the card until its process is really gone.
             return job
         if job.get("cancel_requested"):
@@ -1189,7 +1190,7 @@ def _close_dead_jobs(generated: Path) -> None:
     own and closes as `error` with the log to look at.
     """
     for job in genjob.list_jobs(generated):
-        if job.get("state") != genjob.STATE_RUNNING or is_pid_alive(job.get("pid")):
+        if job.get("state") != genjob.STATE_RUNNING or not spawned_job_gone(job):
             continue
         if job.get("cancel_requested"):
             genjob.update_job(generated, str(job["id"]), state=genjob.STATE_CANCELLED, error=None)
@@ -2424,7 +2425,7 @@ def handle_automation_job_retry_failed(params: dict[str, Any]) -> dict[str, Any]
     for job in automation.reconcile_jobs(settings["output_dir"]):
         if str(job.get("id")) != job_id:
             continue
-        if job.get("state") == automation.STATE_RUNNING and is_pid_alive(job.get("pid")):
+        if job.get("state") == automation.STATE_RUNNING and not spawned_job_gone(job):
             raise ValueError(f"{job_id} is still running")
         output_dir = job.get("output_dir") or settings["output_dir"]
         prompts = job.get("prompts") if isinstance(job.get("prompts"), list) else []
@@ -2471,7 +2472,7 @@ def _automation_idle_job(params: dict[str, Any]) -> tuple[dict[str, Any], dict[s
     settings = automation.load_settings()
     job = _automation_job(str(params.get("id") or ""), settings)
     job_id = str(job.get("id"))
-    if job.get("state") == automation.STATE_RUNNING and is_pid_alive(job.get("pid")):
+    if job.get("state") == automation.STATE_RUNNING and not spawned_job_gone(job):
         raise ValueError(f"{job_id} is still running")
     return job, settings, str(job.get("output_dir") or settings["output_dir"]), job_id
 
@@ -2632,7 +2633,7 @@ def handle_automation_job_delete(params: dict[str, Any]) -> dict[str, Any]:
     for job in automation.reconcile_jobs(settings["output_dir"]):
         if str(job.get("id")) != job_id:
             continue
-        if job.get("state") == automation.STATE_RUNNING and is_pid_alive(job.get("pid")):
+        if job.get("state") == automation.STATE_RUNNING and not spawned_job_gone(job):
             raise ValueError(f"{job_id} is still running; cancel it first")
         directory = automation.job_dir(job_id, job.get("output_dir") or settings["output_dir"]).resolve()
         root = Path(job.get("output_dir") or settings["output_dir"]).expanduser().resolve()

@@ -363,4 +363,27 @@ class GeneratedSampleTest {
         // Nothing in history at all (a fresh page) still reports the failure.
         assertEquals(old.error, newlyFailedJob(listOf(old), history = emptySet())?.error)
     }
+
+    @Test
+    fun aFailureWhoseJobHealedIsTakenDownAgain() {
+        // The helper closes a `running` job whose pid it cannot confirm as an error, and the
+        // generator's own record then goes on to `done`. The line the poll put up must not outlive
+        // that, or a pass that rendered everything keeps reading as a failure.
+        val announced = job(id = "sets_gen_1", state = JOB_ERROR, imagePath = null)
+            .copy(error = "the generator exited before finishing (see the job's .log)")
+        val healed = job(id = "sets_gen_1", imagePath = "/out/generated/sets_gen_1_p0_0.png")
+
+        // Announced and still failing: the line shows its error.
+        assertEquals(announced.error, generatedFailureLine(announced, listOf(announced), shown = null))
+        // The job finished (or was cancelled) after all: the line comes down.
+        assertNull(generatedFailureLine(announced, listOf(healed), shown = announced.error))
+        // The record is gone from the list entirely: still ours to take down.
+        assertNull(generatedFailureLine(announced, emptyList(), shown = announced.error))
+        // A line from somewhere else (an IPC refusal) is not ours and stays.
+        assertEquals(
+            "helper refused",
+            generatedFailureLine(announced, listOf(healed), shown = "helper refused"),
+        )
+        assertEquals("helper refused", generatedFailureLine(null, listOf(healed), shown = "helper refused"))
+    }
 }

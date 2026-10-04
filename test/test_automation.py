@@ -504,6 +504,41 @@ class AutomationStoreTest(unittest.TestCase):
         self.assertIn("log.txt", reconciled[0]["error"])
         self.assertEqual(automation.STATE_ERROR, automation.read_job(automation.job_path(job["id"]))["state"])
 
+    def test_a_job_whose_pid_is_not_written_yet_is_not_an_error(self):
+        """The record is written before the runner is spawned, so it says `running` with no pid for
+        a moment; that is a job that is starting, not one that died."""
+        os.makedirs(automation.default_output_dir(), exist_ok=True)
+        job = {
+            "id": "starting_20260101_000000",
+            "state": automation.STATE_RUNNING,
+            "pid": None,
+            "created_at": time.time(),
+            "prompts": [],
+        }
+        automation.write_job(job, automation.default_output_dir())
+        reconciled = automation.reconcile_jobs(automation.default_output_dir())
+        self.assertEqual(automation.STATE_RUNNING, reconciled[0]["state"])
+        self.assertIsNone(reconciled[0].get("error"))
+        stored = automation.read_job(automation.job_path(job["id"]))
+        self.assertEqual(automation.STATE_RUNNING, stored["state"])
+
+    def test_a_pid_less_job_is_closed_once_it_has_aged(self):
+        """The guard still covers a job whose spawner died before writing a pid."""
+        from trainer import control
+
+        os.makedirs(automation.default_output_dir(), exist_ok=True)
+        job = {
+            "id": "never_started_20260101_000000",
+            "state": automation.STATE_RUNNING,
+            "pid": None,
+            "created_at": time.time() - control.SPAWN_GRACE_SECONDS - 60,
+            "prompts": [],
+        }
+        automation.write_job(job, automation.default_output_dir())
+        reconciled = automation.reconcile_jobs(automation.default_output_dir())
+        self.assertEqual(automation.STATE_ERROR, reconciled[0]["state"])
+        self.assertIn("log.txt", reconciled[0]["error"])
+
     def test_the_summary_counts_prompts_and_images(self):
         job = {
             "id": "x_20260101_000000",
@@ -1320,6 +1355,24 @@ class AutomationApiTest(unittest.TestCase):
         self.assertEqual("fixed", edited["prompts"][0]["text"])
         api.dispatch("automation_job_cancel", {"id": job_id})
         api.dispatch("automation_job_delete", {"id": job_id})
+
+    def test_a_starting_job_holds_its_card_before_the_pid_is_written(self):
+        """The record is written before the runner is spawned, so a `running` job can briefly have
+        no pid. An action that must not touch a running job has to refuse while it starts."""
+        job = {
+            "id": "starting_20260101_000000",
+            "state": automation.STATE_RUNNING,
+            "pid": None,
+            "created_at": time.time(),
+            "output_dir": str(self.output_dir),
+            "prompts": [{"index": 0, "text": "a", "state": automation.PROMPT_STATE_PENDING, "images": []}],
+        }
+        automation.write_job(job, self.output_dir)
+        self._settings()
+        for method in ("automation_job_delete", "automation_job_retry_failed"):
+            with self.assertRaises(ValueError) as ctx:
+                api.dispatch(method, {"id": job["id"]})
+            self.assertIn("still running", str(ctx.exception))
 
     def test_a_redrawn_image_changes_the_hash_the_client_revalidates_against(self):
         # The Gallery's thumbnails are revalidated by comparing the server's blob hash, which the

@@ -1004,6 +1004,30 @@ class GeneratedSampleIpcTest(GeneratedFixture, unittest.TestCase):
         self.assertEqual(jobs[0]["state"], "error")
         self.assertIn("exited before finishing", jobs[0]["error"])
 
+    def test_a_job_whose_pid_is_not_written_yet_is_not_a_failure(self):
+        """api.py publishes a job before it has a pid (and a batch writes a checkpoint's record a
+        moment before it fills in its own). Reading that missing pid as "the process is gone" put
+        `the generator exited before finishing` on a pass whose images were still being written."""
+        self._write_job("starting_gen_1", pid=None)
+        jobs = api.dispatch("list_generated_samples", {})["jobs"]
+        self.assertEqual(jobs[0]["state"], "running")
+        self.assertIsNone(jobs[0]["error"])
+        stored = genjob.read_job(genjob.job_path(self.generated, "starting_gen_1"))
+        self.assertEqual(stored["state"], "running")
+
+    def test_a_pid_less_job_is_closed_once_it_has_aged(self):
+        """The guard still covers a job whose spawner died before writing a pid."""
+        from trainer import control
+
+        self._write_job(
+            "never_started_gen_1",
+            pid=None,
+            started_at=time.time() - control.SPAWN_GRACE_SECONDS - 60,
+        )
+        jobs = api.dispatch("list_generated_samples", {})["jobs"]
+        self.assertEqual(jobs[0]["state"], "error")
+        self.assertIn("exited before finishing", jobs[0]["error"])
+
     def test_a_live_generator_stays_running(self):
         self._write_job("live_gen_1", pid=os.getpid())
         self.assertEqual(api.dispatch("list_generated_samples", {})["jobs"][0]["state"], "running")

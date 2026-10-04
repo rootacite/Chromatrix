@@ -9,7 +9,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 try:
     from orphans import PROC, is_running
@@ -230,6 +230,33 @@ def is_pid_alive(pid: Optional[int]) -> bool:
     except OSError:
         return False
     return True
+
+
+# A job record (a generated sample, an automation run) is written to disk before its process
+# exists: the writer spawns the runner and fills the pid in afterwards, which leaves a `running`
+# record with no pid for a few tens of milliseconds. Only a pid that is there and gone is evidence
+# of a dead job; a missing one is evidence once the record has outlived any spawn.
+SPAWN_GRACE_SECONDS = 60.0
+
+
+def spawned_job_gone(job: Mapping[str, Any]) -> bool:
+    """True when a `running` job record's process is really gone.
+
+    The same rule `reconcile` applies to a `starting` trainer: a record that has no owner yet is a
+    job that is starting, not one that died. Reading the missing pid as death reported live
+    generations as `the generator exited before finishing` while their images were still being
+    written (see `api.py`'s job reconcilers and `automation.reconcile_jobs`).
+    """
+    if job.get("pid") is not None:
+        return not is_pid_alive(job.get("pid"))
+    started = job.get("started_at")
+    if started is None:
+        started = job.get("created_at")
+    try:
+        age = time.time() - float(started)
+    except (TypeError, ValueError):
+        return True
+    return age > SPAWN_GRACE_SECONDS
 
 
 def reconcile(state: Optional[dict[str, Any]] = None) -> dict[str, Any]:

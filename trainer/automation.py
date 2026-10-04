@@ -26,9 +26,9 @@ from typing import Any, Mapping, Optional, Union
 # `python trainer/run_automation.py` puts trainer/ on sys.path, `import api` does not;
 # support both (see AGENT.md "Import dualism").
 try:
-    from control import is_pid_alive
+    from control import spawned_job_gone
 except ImportError:
-    from trainer.control import is_pid_alive
+    from trainer.control import spawned_job_gone
 
 ROOT_NAME = "automation"
 SETTINGS_NAME = "settings.json"
@@ -731,12 +731,18 @@ def job_summary(job: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def reconcile_jobs(output_dir: Optional[Union[str, Path]] = None) -> list[dict[str, Any]]:
-    """A `running` job whose process is gone is an error; the record is rewritten once."""
+    """A `running` job whose process is gone is an error; the record is rewritten once.
+
+    A job that was spawned a moment ago has no pid yet (`api.py` writes the record before it spawns
+    the runner and fills the pid in after), so `spawned_job_gone` — not a bare liveness check —
+    decides: closing that one as an error reported a job that was starting as `the runner exited
+    before finishing`.
+    """
     jobs = list_jobs(output_dir)
     for job in jobs:
         if job.get("state") != STATE_RUNNING:
             continue
-        if is_pid_alive(job.get("pid")):
+        if not spawned_job_gone(job):
             continue
         updated = update_job(
             str(job["id"]),

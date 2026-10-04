@@ -676,6 +676,9 @@ def run_sample_batch(spec: dict, generated: Path) -> None:
                     checkpoint=str(checkpoint),
                     mode=genjob.MODE_SETS,
                     total_images=sum(sample_set.repeat for sample_set in sets),
+                    # This process renders the checkpoint, so its pid is known now; a record that
+                    # says `running` without one reads as a generator that died before it started.
+                    pid=os.getpid(),
                     extra={
                         "batch_id": batch_id,
                         "batch_index": index,
