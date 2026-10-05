@@ -75,7 +75,7 @@ from trainer.runs import (
     safe_name,
     write_chart_view,
 )
-from trainer import automation, blobcodec, comfy, evaluation, fsrpc, genjob, run_automation
+from trainer import automation, blobcodec, comfy, evaluation, fsrpc, genjob, provenance, run_automation
 
 _TAG_BLOCKED = frozenset(
     {
@@ -390,6 +390,8 @@ def handle_list_runs(_params: dict[str, Any]) -> dict[str, Any]:
 # what runs before `[[validation.samples]]` wrote, and still maps to set 0.
 _SAMPLE_NAME_SET = re.compile(r"_(\d+)_p(\d+)_(\d+)\.png$")
 _SAMPLE_NAME = re.compile(r"_(\d+)_(\d+)\.png$")
+# `{job_id}_p{set}_{repeat}.png`: a generated pass's image, whose name carries no step.
+_GENERATED_SAMPLE_NAME = re.compile(r"_p(\d+)_(\d+)\.png$")
 
 
 def scan_samples(sample_dir: Path) -> dict[str, list]:
@@ -1314,6 +1316,139 @@ def handle_generate_sample(params: dict[str, Any]) -> dict[str, Any]:
     )
     job, log = _spawn_generator(generated, job)
     return {"job": _json_safe(job), "log_path": log}
+
+
+def _sample_slot(path: Path, samples_dir: Path) -> tuple[int, int, Optional[int]]:
+    """`(set_index, repeat_idx, step)` of one sample image, or a refusal for a name with no slot.
+
+    The two worlds the Checkpoints section shows are told apart by where the file lives: the run's
+    own samples sit directly in `{name}_samples/` and carry the step, while a generated pass's
+    images are under `generated/` and carry only the set and repeat — a job id can hold a
+    `_<digits>_p...` lookalike, which is why the directory decides and not the name alone. The
+    two-number training form written before `[[validation.samples]]` still maps to set 0, exactly
+    as `scan_samples` reads it.
+    """
+    if path.parent == samples_dir:
+        match = _SAMPLE_NAME_SET.search(path.name)
+        if match:
+            return int(match.group(2)), int(match.group(3)), int(match.group(1))
+        legacy = _SAMPLE_NAME.search(path.name)
+        if legacy:
+            return 0, int(legacy.group(2)), int(legacy.group(1))
+    else:
+        match = _GENERATED_SAMPLE_NAME.search(path.name)
+        if match:
+            return int(match.group(1)), int(match.group(2)), None
+    raise ValueError(
+        f"{path.name} has no sample set in its name (a manual single image, or a file "
+        f"`scan_samples` could not place), so it cannot be redrawn from the run's prompts"
+    )
+
+
+def _int_or_none(value: Any) -> Optional[int]:
+    """A PNG text chunk read back as a number, or None when it is absent or not one."""
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def handle_regenerate_sample(params: dict[str, Any]) -> dict[str, Any]:
+    """Redraw one existing sample image in place: the run's current prompts, the image's own seed.
+
+    The seed is read from the picture's own PNG metadata (`axl_seed`, `trainer/provenance.py`), so
+    the redraw lands on the same noise the original did; the prompt, negative, size, steps and CFG
+    come from the prompt set its name says it belongs to, resolved the way every other reader
+    resolves a run's prompts (`sample_sets.json` over the run's own config snapshot). The image is
+    written back over itself through the spec's `target`, so its name — and with it its place in
+    the card's row and in the full-screen preview — never changes.
+
+    `plan_only` answers what a redraw would do without starting a process, so the client can put
+    the answer's `warn` line in its confirmation dialog; `job` is null in that reply. An image
+    written before provenance existed has no seed to reuse: the plan warns, and turning that into a
+    render needs `allow_new_seed: true`, which starts from a fresh random start.
+
+    The image is written through `target` — the path **as this request spelled it** — and that same
+    string is what the job records as its `image_path`. The client looks its own thumbnails up by
+    the spelling its listing handed it, which can differ from the canonical path (an `output_dir`
+    under a symlinked directory: the pass that wrote the file recorded the symlinked spelling while
+    `Path.resolve()` answers the real one), and a job that recorded the other one would leave the
+    thumbnail stale — its cache revision would never match the path it is keyed by.
+    """
+    cfg, run_id, output_name, generated, checkpoint = _claim_generation(params)
+
+    target = Path(str(params.get("path") or "")).expanduser()
+    if not target.is_file():
+        raise ValueError(f"not a sample image: {target}")
+    samples_dir = _samples_dir(cfg, run_id, output_name).resolve()
+    resolved = target.resolve()
+    if resolved != samples_dir and samples_dir not in resolved.parents:
+        raise ValueError(f"not a sample image of this run: {target}")
+    set_index, repeat_idx, step = _sample_slot(resolved, samples_dir)
+
+    log_dir = _log_dir(cfg, run_id)
+    try:
+        sets = resolve_sample_sets(run_config_mapping(log_dir)[0])
+    except ValueError as exc:
+        raise ValueError(f"this run has no sample prompts to redraw with: {exc}") from exc
+    if not 0 <= set_index < len(sets):
+        raise ValueError(
+            f"this run's sampling prompts have no set {set_index} any more "
+            f"({len(sets)} set(s))"
+        )
+    sample_set = sets[set_index]
+
+    recorded = provenance.read_provenance(resolved)
+    record = {
+        "set_index": set_index,
+        "repeat_idx": repeat_idx,
+        "step": step if step is not None else _int_or_none(recorded.get("axl_step")),
+        "source": (
+            provenance.SOURCE_TRAINING if resolved.parent == samples_dir else provenance.SOURCE_SETS
+        ),
+    }
+    raw_seed = str(recorded.get(f"{provenance.PREFIX}seed") or "").strip()
+    warn = None
+    if raw_seed:
+        seed = int(raw_seed)
+    else:
+        warn = (
+            "Seed not recorded: this image predates seed metadata, so the redraw cannot reuse "
+            "its seed and will use a new random one."
+        )
+        if params.get("plan_only"):
+            return {"job": None, "log_path": None, "warn": warn}
+        if not params.get("allow_new_seed"):
+            raise ValueError(warn)
+        seed = 0
+
+    if params.get("plan_only"):
+        return {"job": None, "log_path": None, "warn": None}
+
+    generated.mkdir(parents=True, exist_ok=True)
+    job = genjob.new_job(
+        {
+            "prompt": sample_set.prompt,
+            "negative_prompt": sample_set.negative,
+            "cfg": sample_set.guidance_scale,
+            "steps": sample_set.steps,
+            "seed": seed,
+            "width": sample_set.width,
+            "height": sample_set.height,
+            "step": record["step"],
+        },
+        run_id=run_id,
+        output_name=output_name,
+        checkpoint=str(checkpoint),
+        extra={
+            # The client's own spelling of the path, not the resolved one: see the docstring.
+            "target": str(target),
+            "replace": True,
+            "provenance": record,
+        },
+    )
+    job, log = _spawn_generator(generated, job)
+    return {"job": _json_safe(job), "log_path": log, "warn": None}
 
 
 def handle_generate_checkpoint_samples(params: dict[str, Any]) -> dict[str, Any]:
@@ -2668,6 +2803,7 @@ _HANDLERS = {
     "tagger_info": handle_tagger_info,
     "hardware_status": handle_hardware_status,
     "generate_sample": handle_generate_sample,
+    "regenerate_sample": handle_regenerate_sample,
     "generate_checkpoint_samples": handle_generate_checkpoint_samples,
     "generate_checkpoint_samples_batch": handle_generate_checkpoint_samples_batch,
     "generate_pinned_checkpoint_samples": handle_generate_pinned_checkpoint_samples,

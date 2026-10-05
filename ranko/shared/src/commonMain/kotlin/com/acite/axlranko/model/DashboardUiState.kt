@@ -148,6 +148,12 @@ data class GeneratedSampleJob(
     @SerialName("total_steps") val totalSteps: Int = 0,
     /** A cancel was asked for; the process is winding down (the job is still `running`). */
     @SerialName("cancel_requested") val cancelRequested: Boolean = false,
+    /**
+     * True on a job that redraws an existing sample in place instead of writing a new
+     * `{job_id}.png`: its picture is already shown by the row it belongs to, so the card keeps its
+     * progress and its cache revision and adds no thumbnail of its own.
+     */
+    val replace: Boolean = false,
     /** Set on a `sets` job that a `batch` job started, tying it to its range. */
     @SerialName("batch_id") val batchId: String? = null,
     @SerialName("batch_index") val batchIndex: Int = 0,
@@ -357,6 +363,34 @@ data class GeneratedSamplesResponse(
 data class GenerateSampleResponse(
     val job: GeneratedSampleJob = GeneratedSampleJob(),
     @SerialName("log_path") val logPath: String? = null,
+)
+
+/**
+ * `regenerate_sample`: a plan reply carries no job and may carry the warning the confirmation
+ * dialog shows; a spawn reply carries the job and no warning.
+ */
+@Serializable
+data class RegenerateSampleResponse(
+    val job: GeneratedSampleJob? = null,
+    @SerialName("log_path") val logPath: String? = null,
+    val warn: String? = null,
+)
+
+/**
+ * A redraw a card's ↻ button asked about, waiting for the user to confirm it. [warn] is the plan's
+ * seed warning: the image records no seed, so the redraw will not reuse the original one.
+ */
+data class RegenerateConfirm(
+    val sample: SampleItem,
+    val checkpoint: CheckpointItem,
+    val warn: String? = null,
+)
+
+/** Why the last redraw of [path] failed; shown on the card of [checkpointPath]. */
+data class RegenerateError(
+    val path: String,
+    val checkpointPath: String,
+    val message: String,
 )
 
 @Serializable
@@ -741,6 +775,18 @@ data class DashboardUiState(
     val clearingSamplesPath: String? = null,
     /** Where the last clear landed, or why it failed; shown on the card it belongs to. */
     val clearSamplesResult: SampleClearResult? = null,
+    /** The redraw a thumbnail's ↻ button asked about, waiting for the user to confirm it. */
+    val regenerateConfirm: RegenerateConfirm? = null,
+    /** Sample path whose redraw plan is being read, or whose render is starting. */
+    val regenerateLoadingPath: String? = null,
+    /** Where the last redraw landed, or why it failed; shown on the card it belongs to. */
+    val regenerateError: RegenerateError? = null,
+    /**
+     * Cache revision per sample path: the id of the replace job that last rewrote that file. The
+     * thumbnail passes it to `BlobRef.rev`, so a redrawn picture is fetched again while every other
+     * sample keeps the client's fast path.
+     */
+    val sampleRevisions: Map<String, String> = emptyMap(),
     /** True while unpinned checkpoint weights are being deleted. */
     val clearingUnpinned: Boolean = false,
     /** The last unpinned-weight clear, shown above the checkpoint cards. */

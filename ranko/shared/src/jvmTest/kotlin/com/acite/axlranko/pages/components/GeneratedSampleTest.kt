@@ -24,6 +24,7 @@ class GeneratedSampleTest {
         seed: Long? = 12345,
         checkpoint: String = checkpoint(3050).path,
         cancelRequested: Boolean = false,
+        replace: Boolean = false,
     ) = GeneratedSampleJob(
         id = id,
         state = state,
@@ -36,6 +37,7 @@ class GeneratedSampleTest {
         currentStep = currentStep,
         totalSteps = totalSteps,
         cancelRequested = cancelRequested,
+        replace = replace,
     )
 
     private fun checkpoint(step: Int) = CheckpointItem(
@@ -157,6 +159,59 @@ class GeneratedSampleTest {
         assertEquals(listOf(null, null, "older", "newest"), slots.map { it.job?.id })
         assertEquals(listOf(false, false, false, true), slots.map { it.isNew })
         assertTrue(slots.take(2).all { it.job == null })
+    }
+
+    @Test
+    fun aReplaceJobAddsNoThumbnailOfItsOwn() {
+        val target = "/out/run_samples/rein_003050_p0_1.png"
+        val replace = job(id = "redraw", state = JOB_DONE, imagePath = target, replace = true)
+        assertTrue(generatedSampleItems(replace).isEmpty())
+        assertFalse(jobHasImages(replace))
+        assertFalse(jobShowsOnCard(replace))
+
+        // The picture keeps the training sample's slot, so the row neither grows nor moves.
+        val slots = sampleSlots(
+            training = listOf(sample(3050, 0)),
+            jobs = listOf(replace),
+            sessionJobIds = setOf("redraw"),
+        )
+        assertEquals(1, slots.size)
+        assertNull(slots.single().job)
+    }
+
+    @Test
+    fun aRunningReplaceJobReportsReplacingTheSample() {
+        val running = job(state = JOB_RUNNING, currentStep = 7, totalSteps = 20, replace = true)
+        assertEquals("replacing sample · denoising 7/20", generatedJobSetProgress(running))
+        assertNull(generatedJobSetProgress(job(state = JOB_RUNNING)))
+    }
+
+    @Test
+    fun aFinishedRedrawIsTheCacheRevisionOfItsFile() {
+        val target = "/out/run_samples/rein_003050_p0_1.png"
+        val done = job(id = "redraw", state = JOB_DONE, imagePath = target, replace = true)
+        val running = job(id = "still", state = JOB_RUNNING, imagePath = "/out/x.png", replace = true)
+        assertEquals(
+            mapOf(target to "redraw"),
+            sampleRevisions(listOf(done, running, job(id = "plain"))),
+        )
+        // A plain generation has a name of its own; nothing ever rewrites its file.
+        assertTrue(sampleRevisions(listOf(job(id = "plain"))).isEmpty())
+    }
+
+    @Test
+    fun pathsWithARedrawInFlightShowASpinner() {
+        val target = "/out/run_samples/rein_003050_p0_1.png"
+        val running = job(state = JOB_RUNNING, imagePath = target, replace = true)
+        assertEquals(setOf(target), regeneratingPaths(listOf(running), null))
+        assertEquals(setOf("/planned.png"), regeneratingPaths(emptyList(), "/planned.png"))
+        assertTrue(regeneratingPaths(emptyList(), null).isEmpty())
+        assertTrue(
+            regeneratingPaths(
+                listOf(job(state = JOB_DONE, imagePath = target, replace = true)),
+                null,
+            ).isEmpty(),
+        )
     }
 
     @Test

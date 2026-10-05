@@ -380,9 +380,21 @@ def collect_images(
     different config scored against the prompt it actually used. A running job is skipped (its
     files are still being written, and it holds the GPU anyway); a cancelled or failed one keeps the
     images it wrote, exactly as its card shows them.
+
+    One entry per file: a redraw records the image it wrote over, which the pass that produced it
+    already lists, and the scoring must not count that picture twice. The key is the real path, so
+    the two records still match when they spell it differently (an `output_dir` under a symlink).
     """
     images: list[ImageRef] = []
+    seen: set[str] = set()
     reference = os.path.normpath(str(checkpoint))
+
+    def add(image: ImageRef) -> None:
+        key = os.path.realpath(image.path)
+        if key in seen:
+            return
+        seen.add(key)
+        images.append(image)
 
     if step is not None and samples_dir is not None:
         directory = Path(samples_dir)
@@ -393,7 +405,7 @@ def collect_images(
                 parts = sample_name_parts(path.name)
                 if parts is None or parts[0] != int(step):
                     continue
-                images.append(
+                add(
                     ImageRef(
                         path=str(path),
                         name=path.name,
@@ -423,7 +435,7 @@ def collect_images(
                     if parts is None:
                         # No `(set, repeat)` in the name: a `single` generation, scored against the
                         # prompt its own job recorded.
-                        images.append(
+                        add(
                             ImageRef(
                                 path=raw,
                                 name=name,
@@ -434,7 +446,7 @@ def collect_images(
                             )
                         )
                         continue
-                    images.append(
+                    add(
                         ImageRef(
                             path=raw,
                             name=name,

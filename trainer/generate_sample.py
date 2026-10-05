@@ -35,6 +35,7 @@ import torch
 try:
     import evaluation
     import genjob
+    import provenance
     from checkpoints import (
         conv_dim_alpha_from_metadata,
         infer_network_type,
@@ -47,6 +48,7 @@ try:
     from models import enable_flash_attention, sample_scheduler_kwargs
 except ImportError:
     from trainer import evaluation, genjob
+    from trainer import provenance
     from trainer.checkpoints import (
         conv_dim_alpha_from_metadata,
         infer_network_type,
@@ -305,9 +307,37 @@ def run_generation(spec: dict, generated: Path) -> None:
         latents = latent_result.images / pipe.vae.config.scaling_factor
         image = _decode(pipe, latents, device, torch.bfloat16)
 
-        target = genjob.image_path(generated, job_id)
+        # A replace job carries the exact file to overwrite (an existing training sample or a
+        # `sets` image), so the redrawn picture keeps its name and its place in the row.
+        target = (
+            Path(str(spec["target"]))
+            if spec.get("target")
+            else genjob.image_path(generated, job_id)
+        )
         target.parent.mkdir(parents=True, exist_ok=True)
-        Image.fromarray(image).save(target)
+        record = dict(spec.get("provenance") or {})
+        Image.fromarray(image).save(
+            target,
+            pnginfo=provenance.build_pnginfo(
+                seed=seed,
+                prompt=prompt,
+                negative=negative_prompt,
+                width=width,
+                height=height,
+                steps=steps,
+                guidance=guidance_scale,
+                guidance_rescale=guidance_rescale,
+                run_id=str(spec.get("run_id") or ""),
+                output_name=str(spec.get("output_name") or ""),
+                step=record.get("step", spec.get("step")),
+                set_index=record.get("set_index"),
+                repeat_idx=record.get("repeat_idx"),
+                source=str(record.get("source") or provenance.SOURCE_SINGLE),
+                writer=provenance.WRITER_GENERATOR,
+                checkpoint=checkpoint.name,
+                lora=provenance.lora_fields(cfg),
+            ),
+        )
     finally:
         if unet_was_gpu:
             for module in (trained_unet, te1, te2):
@@ -399,13 +429,20 @@ def _render_sets(
     device: torch.device,
     dtype: torch.dtype,
     plan: Optional[Sequence[tuple[int, int]]] = None,
+    run_id: str = "",
+    output_name: str = "",
+    step: Any = None,
+    source: str = provenance.SOURCE_SETS,
+    checkpoint: str = "",
 ) -> list[tuple[int, int, str]]:
     """Render the slots of `sets` for the checkpoint already loaded in `pipe` / `modules`.
 
     One image per `(set, repeat)`, named `{job_id}_p{set}_{repeat}.png` in `generated/`, with the
-    job record's progress updated as it goes. `plan` lists exactly which slots to render — the whole
-    sets pass when it is None, and an evaluation's missing positions otherwise, so a set with
-    nothing to draw costs no encode. Returns `(set_index, repeat_idx, path)` in render order.
+    job record's progress updated as it goes, and each file carrying the provenance of the render
+    (`trainer/provenance.py`). `plan` lists exactly which slots to render — the whole sets pass when
+    it is None, and an evaluation's missing positions otherwise, so a set with nothing to draw costs
+    no encode. `source` is `sets` for a plain pass and `evaluate` for an evaluation's top-up.
+    Returns `(set_index, repeat_idx, path)` in render order.
     """
     slots = _plan_slots(sets, plan)
     total_images = sum(len(repeats) for repeats in slots.values())
@@ -505,7 +542,28 @@ def _render_sets(
 
             target = genjob.set_image_path(generated, job_id, set_index, repeat_idx)
             target.parent.mkdir(parents=True, exist_ok=True)
-            Image.fromarray(image).save(target)
+            Image.fromarray(image).save(
+                target,
+                pnginfo=provenance.build_pnginfo(
+                    seed=seed,
+                    prompt=str(sample_set.prompt),
+                    negative=str(sample_set.negative),
+                    width=sample_set.width,
+                    height=sample_set.height,
+                    steps=sample_set.steps,
+                    guidance=sample_set.guidance_scale,
+                    guidance_rescale=sample_set.guidance_rescale,
+                    run_id=run_id,
+                    output_name=output_name,
+                    step=step,
+                    set_index=set_index,
+                    repeat_idx=repeat_idx,
+                    source=source,
+                    writer=provenance.WRITER_GENERATOR,
+                    checkpoint=checkpoint,
+                    lora=provenance.lora_fields(cfg),
+                ),
+            )
             rendered.append((set_index, repeat_idx, str(target)))
             genjob.update_job(
                 generated,
@@ -572,6 +630,10 @@ def run_sample_sets(spec: dict, generated: Path) -> None:
             job_id=job_id,
             device=device,
             dtype=dtype,
+            run_id=str(spec.get("run_id") or ""),
+            output_name=str(spec.get("output_name") or ""),
+            step=spec.get("step"),
+            checkpoint=checkpoint.name,
         )
     finally:
         for module in (modules.denoise, *modules.text_encoders):
@@ -725,6 +787,10 @@ def run_sample_batch(spec: dict, generated: Path) -> None:
                     job_id=job_id,
                     device=device,
                     dtype=dtype,
+                    run_id=str(spec.get("run_id") or ""),
+                    output_name=str(spec.get("output_name") or ""),
+                    step=entry.get("step"),
+                    checkpoint=label,
                 )
                 files = [path for _set, _repeat, path in rendered]
                 images_done += len(files)
@@ -888,6 +954,11 @@ def run_evaluation(spec: dict, generated: Path) -> None:
                 device=device,
                 dtype=dtype,
                 plan=slots,
+                run_id=str(spec.get("run_id") or ""),
+                output_name=str(spec.get("output_name") or ""),
+                step=spec.get("step"),
+                source=provenance.SOURCE_EVALUATE,
+                checkpoint=checkpoint.name,
             )
         finally:
             for module in (modules.denoise, *modules.text_encoders):

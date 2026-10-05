@@ -322,6 +322,12 @@ internal fun generatedJobSetProgress(job: GeneratedSampleJob?): String? {
     if (job == null || job.state != JOB_RUNNING) return null
     if (job.cancelRequested) return "cancelling…"
     if (isEvaluation(job)) return evaluationProgressLabel(job)
+    // A redraw has no set counters; it is one image over an existing file.
+    if (job.replace) {
+        val parts = mutableListOf("replacing sample")
+        generatedJobProgress(job)?.let { parts += it }
+        return parts.joinToString(" · ")
+    }
     if (job.mode != JOB_MODE_SETS) return null
     val parts = mutableListOf<String>()
     if (job.totalSets > 0 && job.currentSet > 0) parts += "set ${job.currentSet}/${job.totalSets}"
@@ -457,8 +463,45 @@ internal fun runningJobForCheckpoint(
 internal fun runningJob(jobs: List<GeneratedSampleJob>): GeneratedSampleJob? =
     jobs.firstOrNull { it.state == JOB_RUNNING }
 
+/**
+ * The cache revision to show for each image a replace job has already rewritten, keyed by path.
+ * The job's id is the revision: it is unique per redraw and only ever appears once the process is
+ * no longer running, so a thumbnail whose file was just overwritten is fetched again, while every
+ * other sample keeps the client's fast path.
+ *
+ * The key is the path the job recorded, which is the string the client sent it — the helper keeps
+ * the request's spelling rather than resolving it, because a listing can spell one file through a
+ * symlinked `output_dir` while `Path.resolve()` answers another. A job that recorded the other
+ * spelling would rewrite the right file and still never match the thumbnail it belongs to.
+ */
+internal fun sampleRevisions(jobs: List<GeneratedSampleJob>): Map<String, String> =
+    jobs.filter { it.replace && it.state != JOB_RUNNING }
+        .mapNotNull { job -> job.imagePath?.takeIf { it.isNotBlank() }?.let { path -> path to job.id } }
+        .toMap()
+
+/**
+ * The sample paths with a redraw in flight: the file a running replace job is rendering, plus the
+ * path whose plan or start the client is still waiting for. Those thumbnails show a spinner and
+ * take no second click.
+ */
+internal fun regeneratingPaths(
+    jobs: List<GeneratedSampleJob>,
+    loadingPath: String?,
+): Set<String> = buildSet {
+    loadingPath?.takeIf { it.isNotBlank() }?.let(::add)
+    jobs.forEach { job ->
+        if (job.replace && job.state == JOB_RUNNING) {
+            job.imagePath?.takeIf { it.isNotBlank() }?.let(::add)
+        }
+    }
+}
+
 /** A generated job as panel slots; empty while it has no image yet. */
 internal fun generatedSampleItems(job: GeneratedSampleJob): List<SampleItem> {
+    // A replace job redraws a file the row already shows — a training sample, or one of the
+    // `files` of the `sets` job that wrote it — so it contributes progress and a cache revision
+    // and never a thumbnail of its own. Adding one would duplicate the picture and move it.
+    if (job.replace) return emptyList()
     // A `sets` pass and an evaluation both write `{job_id}_p{set}_{repeat}.png`; an evaluation that
     // needed no top-up has an empty list and contributes no thumbnail (its scores are its content).
     if (job.mode == JOB_MODE_SETS || isEvaluation(job)) {

@@ -113,6 +113,8 @@ import com.acite.axlranko.model.clearSamplesConfirmText
 import com.acite.axlranko.model.DashboardUiState
 import com.acite.axlranko.model.GeneratedSampleJob
 import com.acite.axlranko.model.MetricPoint
+import com.acite.axlranko.model.RegenerateConfirm
+import com.acite.axlranko.model.RegenerateError
 import com.acite.axlranko.model.SampleClearResult
 import com.acite.axlranko.model.SampleItem
 import com.acite.axlranko.model.UnpinnedClearResult
@@ -134,6 +136,7 @@ import com.acite.axlranko.pages.components.MetricCard
 import com.acite.axlranko.pages.components.MultiSeriesChartCard
 import com.acite.axlranko.pages.components.PANEL_CARD_PADDING
 import com.acite.axlranko.pages.components.PreviewImage
+import com.acite.axlranko.pages.components.regeneratingPaths
 import com.acite.axlranko.pages.components.PANEL_MAX_HEIGHT
 import com.acite.axlranko.pages.components.PANEL_MAX_WIDTH
 import com.acite.axlranko.pages.components.PANEL_MIN_HEIGHT
@@ -390,6 +393,8 @@ fun DashboardScreen(
                 val runningBatchJob = runningBatch(uiState.generatedJobs)
                 val gpuFree = generationAllowed(uiState.trainStatus) && runningJob(uiState.generatedJobs) == null
                 val showSetBadges = showsSampleSetBadges(uiState.samples)
+                val regeneratingSamplePaths =
+                    regeneratingPaths(uiState.generatedJobs, uiState.regenerateLoadingPath)
 
                 item {
                     val unpinnedCount = checkpointCards.count { it.checkpoint != null && !it.pinned }
@@ -519,6 +524,11 @@ fun DashboardScreen(
                             clearingSamples = uiState.clearingSamplesPath != null,
                             clearSamplesResult = uiState.clearSamplesResult
                                 ?.takeIf { it.path == row.checkpoint?.path },
+                            sampleRevisions = uiState.sampleRevisions,
+                            regeneratingPaths = regeneratingSamplePaths,
+                            regenerateError = uiState.regenerateError
+                                ?.takeIf { it.checkpointPath == row.checkpoint?.path },
+                            onRegenerate = viewModel::planRegenerateSample,
                             onOpen = { viewModel.openPreview(it) },
                             onGenerate = viewModel::generateCheckpointSamples,
                             onEvaluate = { checkpoint, images, jobId ->
@@ -583,6 +593,14 @@ fun DashboardScreen(
             }
         }
 
+        uiState.regenerateConfirm?.let { confirm ->
+            RegenerateConfirmDialog(
+                confirm = confirm,
+                onConfirm = viewModel::confirmRegenerate,
+                onDismiss = viewModel::cancelRegenerate,
+            )
+        }
+
         uiState.evaluationTarget?.let { target ->
             // The panel is a dialog, so it cannot inherit this page's constraints: it is told how
             // much room the window has and scrolls inside that (`PAGE_PANEL_MARGIN` on each side).
@@ -634,6 +652,9 @@ fun DashboardScreen(
                 pinEnabled = uiState.pinningPath == null,
                 pinsError = uiState.pinsError,
                 onResize = viewModel::setChartPanelSize,
+                sampleRevisions = uiState.sampleRevisions,
+                regeneratingPaths = regeneratingPaths(uiState.generatedJobs, uiState.regenerateLoadingPath),
+                onRegenerate = viewModel::planRegenerateSample,
                 onOpenSample = { viewModel.openPreview(it) },
                 onSaveAs = viewModel::saveCheckpointAs,
                 onTogglePin = viewModel::toggleCheckpointPin,
@@ -652,6 +673,7 @@ fun DashboardScreen(
                 SamplePreviewOverlay(
                     samples = previewImages,
                     index = previewIndex.coerceIn(previewImages.indices),
+                    revisions = uiState.sampleRevisions,
                     onClose = viewModel::closePreview,
                     onPrev = viewModel::previewPrev,
                     onNext = viewModel::previewNext,
@@ -1624,6 +1646,13 @@ internal fun CheckpointRowCard(
     clearingSamples: Boolean,
     /** What the last clear removed for this checkpoint, or why it failed. */
     clearSamplesResult: SampleClearResult?,
+    /** Cache revision per sample path: set once a redraw has rewritten that file. */
+    sampleRevisions: Map<String, String> = emptyMap(),
+    /** Paths whose redraw is being planned, starting or rendering, so their ↻ button waits. */
+    regeneratingPaths: Set<String> = emptySet(),
+    /** Why the last redraw of this card failed, if it did. */
+    regenerateError: RegenerateError? = null,
+    onRegenerate: (SampleItem, CheckpointItem) -> Unit = { _, _ -> },
     onOpen: (SampleItem) -> Unit,
     onGenerate: (CheckpointItem) -> Unit,
     onEvaluate: (CheckpointItem, Int, String?) -> Unit,
@@ -1937,11 +1966,22 @@ internal fun CheckpointRowCard(
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
                         slots.forEach { slot ->
+                            val path = slot.item.path
                             SampleSlotCard(
                                 slot = slot,
                                 width = thumbWidth,
                                 height = thumbHeight,
                                 setBadge = if (showSetBadges) sampleSetBadge(slot.item.setIndex) else null,
+                                rev = sampleRevisions[path].orEmpty(),
+                                regenerating = path in regeneratingPaths,
+                                // A manual single image belongs to no prompt set, so it has no
+                                // "current prompts" to redraw from and carries no button.
+                                onRegenerate = if (checkpoint != null && slot.item.setIndex >= 0) {
+                                    { onRegenerate(slot.item, checkpoint) }
+                                } else {
+                                    null
+                                },
+                                regenerateEnabled = gpuFree && !starting && !busyElsewhere && !clearingSamples,
                                 onOpen = { onOpen(slot.item) },
                             )
                         }
@@ -2005,6 +2045,15 @@ internal fun CheckpointRowCard(
             }
             if (checkpoint != null) {
                 ClearedSamplesStatus(result = clearSamplesResult)
+            }
+            regenerateError?.let { error ->
+                Text(
+                    text = "Regenerate failed: ${error.message}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.qualityRed,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
             if (checkpoint != null && slots.isEmpty() && !gpuFree) {
                 Text(
@@ -2092,6 +2141,10 @@ private fun CheckpointPanelOverlay(
     onUpdateForm: (ChartPickState.() -> ChartPickState) -> Unit,
     onGenerate: (Int?) -> Unit,
     onClose: () -> Unit,
+    /** Cache revision per sample path: set once a redraw has rewritten that file. */
+    sampleRevisions: Map<String, String> = emptyMap(),
+    regeneratingPaths: Set<String> = emptySet(),
+    onRegenerate: (SampleItem, CheckpointItem) -> Unit = { _, _ -> },
 ) {
     val colors = rankoColors
     val density = LocalDensity.current
@@ -2212,6 +2265,9 @@ private fun CheckpointPanelOverlay(
                         pinning = pinning,
                         pinEnabled = pinEnabled,
                         pinsError = pinsError,
+                        sampleRevisions = sampleRevisions,
+                        regeneratingPaths = regeneratingPaths,
+                        onRegenerate = onRegenerate,
                         onOpenSample = onOpenSample,
                         onSaveAs = onSaveAs,
                         onTogglePin = onTogglePin,
@@ -2308,6 +2364,9 @@ private fun CheckpointPanelBody(
     onUpdateForm: (ChartPickState.() -> ChartPickState) -> Unit,
     onGenerate: (Int?) -> Unit,
     onClose: () -> Unit,
+    sampleRevisions: Map<String, String> = emptyMap(),
+    regeneratingPaths: Set<String> = emptySet(),
+    onRegenerate: (SampleItem, CheckpointItem) -> Unit = { _, _ -> },
 ) {
     val colors = rankoColors
     val pickedStep = pick.step.roundToInt()
@@ -2426,6 +2485,13 @@ private fun CheckpointPanelBody(
         slotWidth = slotWidth,
         slotHeight = slotHeight,
         showSetBadges = showSetBadges,
+        sampleRevisions = sampleRevisions,
+        regeneratingPaths = regeneratingPaths,
+        regenerateEnabled = gpuFree && runningJob(generatedJobs) == null,
+        // No checkpoint means no weights to redraw from, so the row carries no button at all.
+        onRegenerate = pick.checkpoint?.let { checkpoint ->
+            { sample: SampleItem -> onRegenerate(sample, checkpoint) }
+        },
         onOpenSample = onOpenSample,
     )
 }
@@ -2691,6 +2757,10 @@ private fun SampleRow(
     slotHeight: Dp,
     showSetBadges: Boolean,
     onOpenSample: (SampleItem) -> Unit,
+    sampleRevisions: Map<String, String> = emptyMap(),
+    regeneratingPaths: Set<String> = emptySet(),
+    regenerateEnabled: Boolean = false,
+    onRegenerate: ((SampleItem) -> Unit)? = null,
 ) {
     val colors = rankoColors
     if (shownStep == null) return
@@ -2734,12 +2804,19 @@ private fun SampleRow(
         verticalArrangement = Arrangement.spacedBy(SAMPLE_SLOT_SPACING),
     ) {
         slots.forEach { slot ->
+            val path = slot.item.path
             SampleSlotCard(
                 slot = slot,
                 width = slotWidth,
                 height = slotHeight,
                 setBadge = if (showSetBadges) sampleSetBadge(slot.item.setIndex) else null,
                 onOpen = { onOpenSample(slot.item) },
+                rev = sampleRevisions[path].orEmpty(),
+                regenerating = path in regeneratingPaths,
+                onRegenerate = onRegenerate?.takeIf { slot.item.setIndex >= 0 }?.let { action ->
+                    { action(slot.item) }
+                },
+                regenerateEnabled = regenerateEnabled,
             )
         }
     }
@@ -2752,6 +2829,13 @@ private fun SampleSlotCard(
     height: Dp,
     setBadge: String?,
     onOpen: () -> Unit,
+    /** Cache revision of the file: changes once a redraw has written over it. */
+    rev: String = "",
+    /** This path's redraw is being planned, started or rendered. */
+    regenerating: Boolean = false,
+    /** The redraw action, or null where the image has no set to redraw from. */
+    onRegenerate: (() -> Unit)? = null,
+    regenerateEnabled: Boolean = true,
 ) {
     val colors = rankoColors
     val generated = slot.job != null
@@ -2781,7 +2865,12 @@ private fun SampleSlotCard(
     ) {
         Box(modifier = Modifier.width(width).height(height)) {
             AsyncImage(
-                model = BlobRef(slot.item.path, maxEdge = 512, quality = LocalThumbnailQuality.current),
+                model = BlobRef(
+                    slot.item.path,
+                    maxEdge = 512,
+                    quality = LocalThumbnailQuality.current,
+                    rev = rev,
+                ),
                 contentDescription = slot.item.filename,
                 contentScale = ContentScale.Fit,
                 filterQuality = FilterQuality.Low,
@@ -2815,6 +2904,14 @@ private fun SampleSlotCard(
                         .padding(horizontal = 6.dp, vertical = 1.dp),
                 )
             }
+            if (onRegenerate != null) {
+                RegenerateSampleButton(
+                    regenerating = regenerating,
+                    enabled = regenerateEnabled && !regenerating,
+                    onClick = onRegenerate,
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(3.dp),
+                )
+            }
         }
         Spacer(Modifier.height(4.dp))
         Text(
@@ -2827,6 +2924,83 @@ private fun SampleSlotCard(
             modifier = Modifier.padding(horizontal = 6.dp).width(width),
         )
     }
+}
+
+/** The ↻ disc on a thumbnail: redraw this one image over its own file. */
+@Composable
+private fun RegenerateSampleButton(
+    regenerating: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = rankoColors
+    // The brand amber with a white glyph, a dot in the picture's corner (21 dp across); dimmed
+    // when the GPU is busy and it cannot run.
+    // A plain Box rather than an `IconButton`: Material3's minimum touch target grows the layout
+    // behind the caller's modifier, which painted a far larger disc than the clickable node.
+    val live = enabled || regenerating
+    Box(
+        modifier = modifier
+            .size(21.dp)
+            .clip(CircleShape)
+            .background(colors.accentPink.copy(alpha = if (live) 1f else 0.45f))
+            .clickable(enabled = enabled, onClick = onClick)
+            .pointerHoverIcon(pointerIconHand),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (regenerating) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(10.5.dp),
+                strokeWidth = 3.dp,
+                color = Color.White.copy(alpha = if (live) 1f else 0.5f),
+            )
+        } else {
+            Icon(
+                imageVector = Icons.Default.Refresh,
+                contentDescription = "Regenerate sample",
+                tint = Color.White.copy(alpha = if (live) 1f else 0.5f),
+                modifier = Modifier.size(12.dp),
+            )
+        }
+    }
+}
+
+/**
+ * Confirms one redraw. The image is written over itself and its bytes cannot be recovered, so the
+ * card asks first; [confirm].warn is the plan's warning for an image that records no seed.
+ */
+@Composable
+private fun RegenerateConfirmDialog(
+    confirm: RegenerateConfirm,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val colors = rankoColors
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Regenerate sample?") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("${confirm.sample.filename} is redrawn in place; the original is replaced.")
+                Text(
+                    text = "The prompt, negative prompt, size, steps and CFG are the run's current " +
+                        "sampling prompts for this image's set.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.textDim,
+                )
+                confirm.warn?.let { warn ->
+                    Text(
+                        text = warn,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.qualityRed,
+                    )
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onConfirm) { Text("Regenerate") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 private fun checkpointStepDistance(checkpointStep: Int?, pickedStep: Int): String? {
@@ -2843,13 +3017,16 @@ private fun checkpointStepDistance(checkpointStep: Int?, pickedStep: Int): Strin
 private fun SamplePreviewOverlay(
     samples: List<SampleItem>,
     index: Int,
+    revisions: Map<String, String>,
     onClose: () -> Unit,
     onPrev: () -> Unit,
     onNext: () -> Unit,
     portrait: Boolean,
 ) {
     ImagePreviewOverlay(
-        images = samples.map { PreviewImage(path = it.path, title = it.filename) },
+        images = samples.map {
+            PreviewImage(path = it.path, title = it.filename, rev = revisions[it.path].orEmpty())
+        },
         index = index,
         onClose = onClose,
         onPrev = onPrev,

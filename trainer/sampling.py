@@ -18,12 +18,14 @@ if base_dir not in sys.path:
 from text_processing import encode_prompt_batch
 
 try:
+    import provenance
     from config import TrainConfig, active_sample_sets
     from env import flush_memory
     import control
     from device_swap import SwapContext, at_safe_point
     from models import sample_scheduler_kwargs
 except ImportError:
+    from trainer import provenance
     from trainer.config import TrainConfig, active_sample_sets
     from trainer.env import flush_memory
     from trainer import control
@@ -151,32 +153,28 @@ def sample_provenance(
     `tools/mask_blur.py` is the existing precedent for that prefix).
 
     Keys: `axl_run_id`, `axl_output_name`, `axl_step`, `axl_set`, `axl_repeat`, `axl_seed`,
-    `axl_prompt`, `axl_negative`, and the sampling values (`axl_width`, `axl_height`, `axl_steps`,
-    `axl_guidance`, `axl_guidance_rescale`).
+    `axl_prompt`, `axl_negative`, the sampling values (`axl_width`, `axl_height`, `axl_steps`,
+    `axl_guidance`, `axl_guidance_rescale`), the LoRA/base settings of `cfg`, and the
+    `axl_source` / `axl_writer` pair. See `trainer/provenance.py`.
     """
-    from PIL.PngImagePlugin import PngInfo
-
-    run_id = Path(str(getattr(cfg, "run_dir", "") or "")).name
-    fields = [
-        ("axl_run_id", run_id),
-        ("axl_output_name", str(getattr(cfg, "output_name", ""))),
-        ("axl_step", f"{global_step:06d}"),
-        ("axl_set", str(set_index)),
-        ("axl_repeat", str(repeat_idx)),
-        ("axl_seed", str(seed)),
-        ("axl_prompt", str(getattr(sample_set, "prompt", ""))),
-        ("axl_negative", str(getattr(sample_set, "negative", ""))),
-        ("axl_width", str(getattr(sample_set, "width", ""))),
-        ("axl_height", str(getattr(sample_set, "height", ""))),
-        ("axl_steps", str(getattr(sample_set, "steps", ""))),
-        ("axl_guidance", str(getattr(sample_set, "guidance_scale", ""))),
-        ("axl_guidance_rescale", str(getattr(sample_set, "guidance_rescale", ""))),
-    ]
-    info = PngInfo()
-    for key, value in fields:
-        if value:
-            info.add_text(key, value)
-    return info
+    return provenance.build_pnginfo(
+        seed=seed,
+        prompt=str(getattr(sample_set, "prompt", "")),
+        negative=str(getattr(sample_set, "negative", "")),
+        width=getattr(sample_set, "width", ""),
+        height=getattr(sample_set, "height", ""),
+        steps=getattr(sample_set, "steps", ""),
+        guidance=getattr(sample_set, "guidance_scale", ""),
+        guidance_rescale=getattr(sample_set, "guidance_rescale", ""),
+        run_id=Path(str(getattr(cfg, "run_dir", "") or "")).name,
+        output_name=str(getattr(cfg, "output_name", "")),
+        step=f"{global_step:06d}",
+        set_index=set_index,
+        repeat_idx=repeat_idx,
+        source=provenance.SOURCE_TRAINING,
+        writer=provenance.WRITER_TRAINER,
+        lora=provenance.lora_fields(cfg),
+    )
 
 
 def generate_sample_image(

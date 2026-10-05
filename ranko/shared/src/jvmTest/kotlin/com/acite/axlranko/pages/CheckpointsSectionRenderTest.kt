@@ -25,6 +25,7 @@ import com.acite.axlranko.model.EvaluationTagCount
 import com.acite.axlranko.model.EvaluationTarget
 import com.acite.axlranko.model.GeneratedSampleJob
 import com.acite.axlranko.model.PromptTagCount
+import com.acite.axlranko.model.RegenerateError
 import com.acite.axlranko.model.SampleClearResult
 import com.acite.axlranko.model.SampleItem
 import com.acite.axlranko.pages.components.EvaluationDialog
@@ -88,6 +89,11 @@ class CheckpointsSectionRenderTest {
         val clearingSamples: Boolean = false,
         /** What the last clear removed for one checkpoint, or why it failed. */
         val clearSamplesResult: SampleClearResult? = null,
+        /** Paths whose redraw is in flight, and the cache revision a finished one left behind. */
+        val regeneratingPaths: Set<String> = emptySet(),
+        val sampleRevisions: Map<String, String> = emptyMap(),
+        /** Why the last redraw of one card failed. */
+        val regenerateError: RegenerateError? = null,
         /** Smoothed Avg Loss drawn in the card header. Empty leaves the header as it was. */
         val spark: List<SparkPoint> = emptyList(),
         /** The run's smoothed Val/Avg_Loss, drawn gray beside [spark]. */
@@ -307,6 +313,10 @@ class CheckpointsSectionRenderTest {
                                             onOpenEvaluation = {},
                                             clearingSamples = current.clearingSamples,
                                             clearSamplesResult = current.clearSamplesResult,
+                                            sampleRevisions = current.sampleRevisions,
+                                            regeneratingPaths = current.regeneratingPaths,
+                                            regenerateError = current.regenerateError,
+                                            onRegenerate = { _, _ -> },
                                             onTogglePin = {},
                                             onSaveAs = {},
                                             onSendToAutomation = {},
@@ -619,6 +629,37 @@ class CheckpointsSectionRenderTest {
                     clearSamplesResult = SampleClearResult(
                         path = checkpoint(3050).path,
                         error = "training is using the GPU; pause the run (or stop it) before clearing samples",
+                    ),
+                ),
+                // Regenerating one image in place: its portrait shows a spinner, a finished redraw
+                // leaves a cache revision behind, and a refused one reports on its card.
+                Case(
+                    checkpoints = listOf(checkpoint(3050)),
+                    samples = mapOf("3050" to listOf(sample(3050, 0), sample(3050, 1))),
+                    regeneratingPaths = setOf(sample(3050, 0).path),
+                    sampleRevisions = mapOf(sample(3050, 1).path to "rein_s003050_gen_20261005_120000"),
+                ),
+                Case(
+                    checkpoints = listOf(checkpoint(3050)),
+                    samples = mapOf("3050" to listOf(sample(3050, 0))),
+                    regenerateError = RegenerateError(
+                        path = sample(3050, 0).path,
+                        checkpointPath = checkpoint(3050).path,
+                        message = "this run's sampling prompts have no set 3 any more (2 set(s))",
+                    ),
+                ),
+                // A manual single generation's image: no prompt set, so no ↻ button at all.
+                Case(
+                    checkpoints = listOf(checkpoint(3050)),
+                    jobs = listOf(
+                        GeneratedSampleJob(
+                            id = "manual_gen_1",
+                            state = JOB_DONE,
+                            mode = "single",
+                            step = 3050,
+                            checkpoint = checkpoint(3050).path,
+                            imagePath = "/out/rein_20260911_120000/rein_samples/generated/manual_gen_1.png",
+                        ),
                     ),
                 ),
             ),

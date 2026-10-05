@@ -575,5 +575,279 @@ class SetsPassPromptsTest(unittest.TestCase):
         self.assertEqual(self._render_with(spec, lambda cfg: [fallback])["prompts"], ["the run's config"])
 
 
+class RenderSetsProvenanceTest(unittest.TestCase):
+    """Every `sets` image is saved with the provenance of the render that drew it."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.generated = genjob.generated_dir(Path(self.tmp.name) / "rein_samples")
+        self.generated.mkdir(parents=True)
+        self.cfg = types.SimpleNamespace(
+            pretrained_model_name_or_path="base.safetensors",
+            network_type="locon",
+            network_dim=8,
+            network_alpha=4,
+            conv_dim=2,
+            conv_alpha=1,
+            base_model_version="sdxl_base_v1-0",
+            clip_skip=2,
+            max_token_length=225,
+            mixed_precision="bf16",
+        )
+
+    def _render(self, sample_set, **kwargs):
+        class FakeModule:
+            def to(self, *args, **_kwargs):
+                return self
+
+        modules = types.SimpleNamespace(
+            denoise=FakeModule(),
+            text_encoders=[FakeModule(), FakeModule()],
+        )
+
+        class FakePipe:
+            # The encoders are stubbed out; the call sites still read these off the pipe.
+            tokenizer = object()
+            tokenizer_2 = object()
+            scheduler = types.SimpleNamespace(config=types.SimpleNamespace())
+            vae = types.SimpleNamespace(
+                config=types.SimpleNamespace(scaling_factor=1.0),
+                to=lambda *args, **kwargs: None,
+            )
+
+            def __call__(self, **_kwargs):
+                return types.SimpleNamespace(images=generator.torch.zeros(1, 4, 8, 8))
+
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(generator, "_prepare_scheduler", lambda *a, **k: None))
+            stack.enter_context(mock.patch.object(generator, "flush_memory", lambda device: None))
+            stack.enter_context(
+                mock.patch.object(
+                    generator,
+                    "encode_prompt_batch",
+                    lambda **kw: (None, None, 1),
+                )
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    generator,
+                    "_decode",
+                    lambda pipe, latents, device, dtype: generator.np.zeros((8, 8, 3), dtype="uint8"),
+                )
+            )
+            stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+            generator._render_sets(
+                pipe=FakePipe(),
+                modules=modules,
+                cfg=self.cfg,
+                sets=[sample_set],
+                generated=self.generated,
+                job_id="rein_s000100_gen_20260101_000000",
+                device=generator.torch.device("cpu"),
+                dtype=generator.torch.bfloat16,
+                **kwargs,
+            )
+
+    def test_the_recorded_keys_describe_the_render(self):
+        from trainer import provenance
+
+        sample_set = SampleSet(
+            name="set",
+            prompt="a prompt",
+            negative="a negative",
+            width=64,
+            height=64,
+            steps=1,
+            guidance_scale=4.0,
+            guidance_rescale=0.5,
+            seed=1234,
+            repeat=1,
+        )
+        self._render(
+            sample_set,
+            run_id="rein_20260101_000000",
+            output_name="rein",
+            step=100,
+            checkpoint="rein.safetensors",
+        )
+
+        written = list(self.generated.glob("*.png"))
+        self.assertEqual(len(written), 1)
+        record = provenance.read_provenance(written[0])
+        self.assertEqual(record["axl_seed"], "1234")
+        self.assertEqual(record["axl_prompt"], "a prompt")
+        self.assertEqual(record["axl_negative"], "a negative")
+        self.assertEqual(record["axl_set"], "0")
+        self.assertEqual(record["axl_repeat"], "0")
+        self.assertEqual(record["axl_step"], "100")
+        self.assertEqual(record["axl_source"], provenance.SOURCE_SETS)
+        self.assertEqual(record["axl_writer"], provenance.WRITER_GENERATOR)
+        self.assertEqual(record["axl_checkpoint"], "rein.safetensors")
+        self.assertEqual(record["axl_network_type"], "locon")
+        self.assertEqual(record["axl_network_dim"], "8")
+        self.assertEqual(record["axl_base_model_version"], "sdxl_base_v1-0")
+
+    def test_an_evaluation_top_up_says_so(self):
+        from trainer import provenance
+
+        sample_set = SampleSet(
+            name="set",
+            prompt="p",
+            negative="",
+            width=64,
+            height=64,
+            steps=1,
+            guidance_scale=1.0,
+            guidance_rescale=0.0,
+            seed=7,
+            repeat=1,
+        )
+        self._render(sample_set, source=provenance.SOURCE_EVALUATE)
+        record = provenance.read_provenance(next(self.generated.glob("*.png")))
+        self.assertEqual(record["axl_source"], provenance.SOURCE_EVALUATE)
+
+
+class ReplaceSpecTest(unittest.TestCase):
+    """A replace spec (a redraw) writes over `target` and keeps the slot's provenance."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.generated = genjob.generated_dir(Path(self.tmp.name) / "rein_samples")
+        self.generated.mkdir(parents=True)
+
+    def _run(self, spec):
+        class FakeModule:
+            def to(self, *args, **_kwargs):
+                return self
+
+            def eval(self):
+                return self
+
+        modules = types.SimpleNamespace(
+            denoise=FakeModule(),
+            text_encoders=[FakeModule(), FakeModule()],
+        )
+
+        class FakePipe:
+            # The encoders are stubbed out; the call sites still read these off the pipe.
+            tokenizer = object()
+            tokenizer_2 = object()
+            scheduler = types.SimpleNamespace(config=types.SimpleNamespace())
+            vae = types.SimpleNamespace(
+                config=types.SimpleNamespace(scaling_factor=1.0),
+                to=lambda *args, **kwargs: None,
+            )
+
+            def __call__(self, **_kwargs):
+                return types.SimpleNamespace(images=generator.torch.zeros(1, 4, 8, 8))
+
+        family = types.SimpleNamespace(
+            load_pipeline=lambda *a, **k: FakePipe(),
+            unpack=lambda pipe: modules,
+            apply_lora=lambda cfg, mods: mods,
+            load_lora=lambda cfg, mods: mods,
+        )
+        cfg = types.SimpleNamespace(
+            guidance_rescale=0.0,
+            mixed_precision="bf16",
+            pretrained_model_name_or_path="base.safetensors",
+            network_type="standard",
+            network_dim=8,
+            network_alpha=4,
+            conv_dim=0,
+            conv_alpha=0,
+            base_model_version="sdxl_base_v1-0",
+            clip_skip=2,
+            max_token_length=225,
+        )
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(generator, "resolve_resume_path", lambda raw: Path(str(raw))))
+            stack.enter_context(mock.patch.object(generator, "read_lora_metadata", lambda path: {}))
+            stack.enter_context(
+                mock.patch.object(generator, "_build_config", lambda md, cp, base_cfg=None: cfg)
+            )
+            stack.enter_context(mock.patch.object(generator, "resolve_family", lambda cfg: family))
+            stack.enter_context(mock.patch.object(generator, "require_trainable", lambda fam: None))
+            stack.enter_context(mock.patch.object(generator, "setup_migraphx_cache", lambda: None))
+            stack.enter_context(mock.patch.object(generator, "enable_flash_attention", lambda mod: None))
+            stack.enter_context(mock.patch.object(generator, "sample_scheduler_kwargs", lambda cfg, conf: {}))
+            stack.enter_context(mock.patch.object(generator, "_prepare_scheduler", lambda *a, **k: None))
+            stack.enter_context(mock.patch.object(generator, "flush_memory", lambda device: None))
+            stack.enter_context(
+                mock.patch.object(generator, "encode_prompt_batch", lambda **kw: (None, None, 1))
+            )
+            stack.enter_context(
+                mock.patch.object(
+                    generator,
+                    "_decode",
+                    lambda pipe, latents, device, dtype: generator.np.zeros((8, 8, 3), dtype="uint8"),
+                )
+            )
+            stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+            # api.py writes the record before spawning; the runner only updates it.
+            genjob.write_job(self.generated, spec)
+            generator.run_generation(spec, self.generated)
+
+    def _spec(self, **extra):
+        request = {
+            "prompt": "a prompt",
+            "negative_prompt": "n",
+            "cfg": 5.0,
+            "steps": 1,
+            "seed": 4242,
+            "width": 64,
+            "height": 64,
+            "step": 100,
+        }
+        return genjob.new_job(
+            request,
+            run_id="rein_20260101_000000",
+            output_name="rein",
+            checkpoint="/out/rein_s000100/rein.safetensors",
+            extra=extra,
+        )
+
+    def test_it_writes_over_the_target_with_the_records_provenance(self):
+        from trainer import provenance
+
+        target = Path(self.tmp.name) / "rein_samples" / "rein_00100_p0_1.png"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"old")
+
+        spec = self._spec(
+            target=str(target),
+            replace=True,
+            provenance={"set_index": 0, "repeat_idx": 1, "step": 100, "source": "training"},
+        )
+        self._run(spec)
+
+        self.assertTrue(target.is_file())
+        self.assertEqual(list(self.generated.glob("*.png")), [])
+        record = provenance.read_provenance(target)
+        self.assertEqual(record["axl_seed"], "4242")
+        self.assertEqual(record["axl_prompt"], "a prompt")
+        self.assertEqual(record["axl_repeat"], "1")
+        self.assertEqual(record["axl_source"], "training")
+        self.assertEqual(record["axl_writer"], provenance.WRITER_GENERATOR)
+        job = genjob.read_job(genjob.job_path(self.generated, spec["id"]))
+        self.assertEqual(job["image_path"], str(target))
+        self.assertEqual(job["replace"], True)
+
+    def test_a_plain_single_job_still_writes_its_own_file(self):
+        from trainer import provenance
+
+        spec = self._spec()
+        self._run(spec)
+
+        written = list(self.generated.glob("*.png"))
+        self.assertEqual(len(written), 1)
+        record = provenance.read_provenance(written[0])
+        self.assertEqual(record["axl_seed"], "4242")
+        self.assertEqual(record["axl_source"], provenance.SOURCE_SINGLE)
+        self.assertEqual(genjob.read_job(genjob.job_path(self.generated, spec["id"]))["replace"], False)
+
+
 if __name__ == "__main__":
     unittest.main()

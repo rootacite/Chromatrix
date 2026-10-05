@@ -286,6 +286,10 @@ def new_job(
         # Set by `cancel_generation`; the job stays `running` until its process is really gone, so
         # the card can say "cancelling…" and another generation cannot start on the same card yet.
         "cancel_requested": False,
+        # True on a job that redraws an existing image in place (`spec["target"]`) instead of
+        # writing a new `{job_id}.png`: its picture is already shown by the sample row it belongs
+        # to, so the client keeps only its progress and its cache revision.
+        "replace": False,
         # A `sets` job writes one image per (set, repeat); a `single` job one, recorded in
         # `image_path` as before so a job file from the old build still reads.
         "files": [],

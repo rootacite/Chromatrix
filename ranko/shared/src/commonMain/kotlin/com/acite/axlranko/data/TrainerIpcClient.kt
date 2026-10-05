@@ -10,6 +10,7 @@ import com.acite.axlranko.model.GenerateSampleResponse
 import com.acite.axlranko.model.GeneratedSamplesResponse
 import com.acite.axlranko.model.HardwareStatus
 import com.acite.axlranko.model.RunsResponse
+import com.acite.axlranko.model.RegenerateSampleResponse
 import com.acite.axlranko.model.ChartViewResponse
 import com.acite.axlranko.model.SampleClearResult
 import com.acite.axlranko.model.UnpinnedClearResult
@@ -496,6 +497,37 @@ class TrainerIpcClient {
                 put("steps", steps)
                 put("seed", seed)
                 step?.let { put("step", it) }
+                name?.let { put("name", it) }
+                runId?.let { put("run_id", it) }
+            },
+        )
+        return json.decodeFromJsonElement(result)
+    }
+
+    /**
+     * Redraw one existing sample image in place: the run's current prompts for the set its name
+     * carries, and the seed the picture itself records, written back over the same file.
+     *
+     * `planOnly` answers what a redraw would do without starting a process — its `warn` is the
+     * warning the confirmation dialog shows when the image records no seed. The spawn call needs
+     * `allowNewSeed` after that warning has been shown, because such an image is redrawn from a
+     * fresh random seed. Refused under the same GPU rules as `generate_sample`.
+     */
+    suspend fun regenerateSample(
+        path: String,
+        checkpoint: String,
+        planOnly: Boolean = false,
+        allowNewSeed: Boolean = false,
+        name: String? = null,
+        runId: String? = null,
+    ): RegenerateSampleResponse {
+        val result = call(
+            "regenerate_sample",
+            buildJsonObject {
+                put("path", path)
+                put("checkpoint", checkpoint)
+                if (planOnly) put("plan_only", true)
+                if (allowNewSeed) put("allow_new_seed", true)
                 name?.let { put("name", it) }
                 runId?.let { put("run_id", it) }
             },

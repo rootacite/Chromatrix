@@ -1744,6 +1744,247 @@ class GeneratedSampleIpcTest(GeneratedFixture, unittest.TestCase):
         self.assertIn("already running", str(ctx.exception))
 
 
+class RegenerateSampleIpcTest(GeneratedFixture, unittest.TestCase):
+    """`regenerate_sample`: redraw one sample in place from its own seed and the run's prompts."""
+
+    def _write_sample(
+        self,
+        name: str,
+        *,
+        seed: int | None = 1234,
+        set_index: int = 0,
+        repeat_idx: int = 0,
+        step: int | None = 3050,
+        generated: bool = False,
+        prompt: str = "old prompt",
+    ) -> Path:
+        """One sample PNG. `seed=None` writes it with no provenance at all (an old file)."""
+        from PIL import Image
+
+        from trainer import provenance
+
+        directory = self.generated if generated else self.samples
+        directory.mkdir(parents=True, exist_ok=True)
+        target = directory / name
+        if seed is None:
+            Image.new("RGB", (8, 8), "black").save(target)
+            return target
+        info = provenance.build_pnginfo(
+            seed=seed,
+            prompt=prompt,
+            negative="old negative",
+            width=1024,
+            height=1024,
+            steps=12,
+            guidance=5.0,
+            guidance_rescale=0.0,
+            run_id=self.RUN_ID,
+            output_name="rein",
+            step=f"{step:06d}" if step is not None else None,
+            set_index=set_index,
+            repeat_idx=repeat_idx,
+            source=provenance.SOURCE_TRAINING if not generated else provenance.SOURCE_SETS,
+            writer=provenance.WRITER_GENERATOR,
+        )
+        Image.new("RGB", (8, 8), "black").save(target, pnginfo=info)
+        return target
+
+    def test_the_method_is_registered(self):
+        self.assertIn("regenerate_sample", api._HANDLERS)
+
+    def test_the_plan_answers_without_starting_anything(self):
+        target = self._write_sample("rein_003050_p0_0.png")
+        response = api.handle_regenerate_sample(
+            {
+                "checkpoint": str(self.checkpoint),
+                "path": str(target),
+                "plan_only": True,
+            }
+        )
+        self.assertIsNone(response["job"])
+        self.assertIsNone(response["warn"])
+        self.popen.assert_not_called()
+
+    def test_the_redraw_takes_the_seed_from_the_image_and_the_prompts_from_the_run(self):
+        self._set_run_samples([{"prompt": "current one", "steps": 9, "repeat": 2, "seed": 11}])
+        target = self._write_sample("rein_003050_p0_1.png", seed=4242, set_index=0, repeat_idx=1)
+
+        result = api.handle_regenerate_sample(
+            {"checkpoint": str(self.checkpoint), "path": str(target), "allow_new_seed": True}
+        )
+
+        stored = self._spec_written_by_last_spawn()
+        self.assertEqual(stored["seed"], 4242)
+        self.assertEqual(stored["prompt"], "current one")
+        self.assertEqual(stored["steps"], 9)
+        self.assertEqual(stored["step"], 3050)
+        self.assertEqual(stored["mode"], "single")
+        self.assertEqual(stored["replace"], True)
+        self.assertEqual(stored["target"], str(target.resolve()))
+        self.assertEqual(stored["provenance"]["set_index"], 0)
+        self.assertEqual(stored["provenance"]["repeat_idx"], 1)
+        self.assertEqual(stored["provenance"]["source"], "training")
+        self.assertEqual(result["job"]["id"], stored["id"])
+        self.popen.assert_called_once()
+
+    def test_the_dashboards_saved_prompts_win_over_the_run_snapshot(self):
+        from trainer.config import resolve_sample_sets, write_sample_override
+
+        self._set_run_samples([{"prompt": "snapshot", "steps": 9, "repeat": 1, "seed": 3}])
+        write_sample_override(
+            self.logs / self.RUN_ID,
+            resolve_sample_sets({"samples": [{"prompt": "edited", "steps": 40, "repeat": 1, "seed": 3}]}),
+        )
+        target = self._write_sample("rein_003050_p0_0.png", seed=99)
+
+        api.handle_regenerate_sample(
+            {"checkpoint": str(self.checkpoint), "path": str(target), "allow_new_seed": True}
+        )
+
+        stored = self._spec_written_by_last_spawn()
+        self.assertEqual(stored["prompt"], "edited")
+        self.assertEqual(stored["steps"], 40)
+        self.assertEqual(stored["seed"], 99)
+
+    def test_a_generated_sets_image_reads_its_set_from_the_generated_name(self):
+        # The name is `{job_id}_p{set}_{repeat}.png`, and a job id can itself end in digits; the
+        # directory decides which pattern applies, so this is set 1 and not a bogus step.
+        self._set_run_samples([
+            {"prompt": "set zero", "steps": 9, "repeat": 1, "seed": 3},
+            {"prompt": "set one", "steps": 21, "repeat": 1, "seed": 3},
+        ])
+        target = self._write_sample(
+            "rein_s003050_gen_20260915_161123_p1_0.png",
+            seed=777,
+            set_index=1,
+            repeat_idx=0,
+            generated=True,
+        )
+
+        api.handle_regenerate_sample(
+            {"checkpoint": str(self.checkpoint), "path": str(target), "allow_new_seed": True}
+        )
+
+        stored = self._spec_written_by_last_spawn()
+        self.assertEqual(stored["prompt"], "set one")
+        self.assertEqual(stored["seed"], 777)
+        self.assertEqual(stored["provenance"]["set_index"], 1)
+        self.assertEqual(stored["provenance"]["source"], "sets")
+
+    def test_an_image_without_provenance_warns_and_needs_a_new_seed(self):
+        target = self._write_sample("rein_003050_p0_0.png", seed=None)
+
+        plan = api.handle_regenerate_sample(
+            {"checkpoint": str(self.checkpoint), "path": str(target), "plan_only": True}
+        )
+        self.assertIsNone(plan["job"])
+        self.assertIn("Seed not recorded", plan["warn"])
+        self.popen.assert_not_called()
+
+        with self.assertRaises(ValueError) as ctx:
+            api.handle_regenerate_sample({"checkpoint": str(self.checkpoint), "path": str(target)})
+        self.assertIn("Seed not recorded", str(ctx.exception))
+
+        api.handle_regenerate_sample(
+            {"checkpoint": str(self.checkpoint), "path": str(target), "allow_new_seed": True}
+        )
+        stored = self._spec_written_by_last_spawn()
+        self.assertEqual(stored["seed"], 0)
+        # The prompt still comes from the run's current set: only the seed was lost.
+        self.assertEqual(stored["prompt"], "config prompt")
+        self.popen.assert_called_once()
+
+    def test_a_manual_single_image_is_refused(self):
+        target = self._write_sample("rein_s003050_gen_20260915_161123.png", generated=True)
+        with self.assertRaises(ValueError) as ctx:
+            api.handle_regenerate_sample({"checkpoint": str(self.checkpoint), "path": str(target)})
+        self.assertIn("manual single image", str(ctx.exception))
+
+    def test_a_path_outside_the_runs_samples_is_refused(self):
+        outside = Path(self.tmp.name) / "elsewhere" / "rein_003050_p0_0.png"
+        outside.parent.mkdir(parents=True, exist_ok=True)
+        outside.write_bytes(b"x")
+        with self.assertRaises(ValueError) as ctx:
+            api.handle_regenerate_sample({"checkpoint": str(self.checkpoint), "path": str(outside)})
+        self.assertIn("not a sample image", str(ctx.exception))
+
+        with self.assertRaises(ValueError) as ctx:
+            api.handle_regenerate_sample(
+                {"checkpoint": str(self.checkpoint), "path": str(self.samples / "nope.png")}
+            )
+        self.assertIn("not a sample image", str(ctx.exception))
+
+    def test_the_recorded_path_keeps_the_clients_spelling(self):
+        """The job must name the file the way the listing did.
+
+        An `output_dir` under a symlinked directory makes two spellings of one file: the pass that
+        wrote it recorded the symlinked one, `Path.resolve()` answers the real one. The client keys
+        its thumbnail's cache revision by the string its own listing handed it, so a job that
+        recorded the other spelling rewrote the right file but could never match that key — the
+        thumbnail stayed stale until the app was restarted.
+        """
+        from PIL import Image
+
+        from trainer import provenance
+
+        real_root = Path(self.tmp.name) / "real"
+        link_root = Path(self.tmp.name) / "link"
+        real_root.mkdir()
+        os.symlink(real_root, link_root)
+        self.cfg["output_dir"] = str(link_root / "out")
+        generated = link_root / "out" / self.RUN_ID / "rein_samples" / "generated"
+        generated.mkdir(parents=True)
+        linked = generated / "rein_s004500_sets_gen_1_p0_0.png"
+        linked.write_bytes(b"")
+        Image.new("RGB", (8, 8), "black").save(
+            linked,
+            pnginfo=provenance.build_pnginfo(
+                seed=4242,
+                prompt="p",
+                set_index=0,
+                repeat_idx=0,
+                step=4500,
+                source=provenance.SOURCE_SETS,
+                writer=provenance.WRITER_GENERATOR,
+            ),
+        )
+        # The two spellings name the same inode, and they differ.
+        self.assertTrue(os.path.samefile(str(linked), str(linked.resolve())))
+        self.assertNotEqual(str(linked), str(linked.resolve()))
+
+        api.handle_regenerate_sample(
+            {"checkpoint": str(self.checkpoint), "path": str(linked), "allow_new_seed": True}
+        )
+
+        stored = self._spec_written_by_last_spawn()
+        self.assertEqual(stored["target"], str(linked))
+        self.assertEqual(stored["step"], 4500)
+        self.assertEqual(stored["seed"], 4242)
+
+    def test_a_set_the_run_no_longer_has_is_refused(self):
+        self._set_run_samples([{"prompt": "only one", "steps": 9, "repeat": 1, "seed": 3}])
+        target = self._write_sample("rein_003050_p2_0.png", seed=5, set_index=2)
+
+        with self.assertRaises(ValueError) as ctx:
+            api.handle_regenerate_sample({"checkpoint": str(self.checkpoint), "path": str(target)})
+        self.assertIn("no set 2", str(ctx.exception))
+
+    def test_it_follows_the_same_gpu_rules_as_generate_sample(self):
+        from trainer import control
+
+        target = self._write_sample("rein_003050_p0_0.png")
+        control.write_state({"status": "training", "pid": os.getpid()}, force=True)
+        with self.assertRaises(ValueError) as ctx:
+            api.handle_regenerate_sample({"checkpoint": str(self.checkpoint), "path": str(target)})
+        self.assertIn("GPU", str(ctx.exception))
+
+        control.write_state({"status": "finished", "pid": None}, force=True)
+        self._write_job("live_gen_1", pid=os.getpid())
+        with self.assertRaises(ValueError) as ctx:
+            api.handle_regenerate_sample({"checkpoint": str(self.checkpoint), "path": str(target)})
+        self.assertIn("already running", str(ctx.exception))
+
+
 class EvaluateCheckpointIpcTest(GeneratedFixture, unittest.TestCase):
     """`evaluate_checkpoint`: the plan it writes, the run it belongs to, and its refusals."""
 

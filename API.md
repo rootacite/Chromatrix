@@ -225,6 +225,22 @@ Result:
 
 Filename pattern `_(\d+)_p(\d+)_(\d+)\.png$` → `(step, set_index, repeat_idx)`; the two-number form written before `[[validation.samples]]` (`_(\d+)_(\d+)\.png$`) still parses, as set `0`. Unmatched files use step `"-1"` and set `0`. Within a step the samples are ordered by `(set_index, repeat_idx)`. `path` is absolute so the UI can load the file from disk. `samples` is empty (and `run_id` null) when no run resolves.
 
+Every image this stack renders carries PNG text metadata describing the render, under `axl_`-prefixed keys (`trainer/provenance.py`, the convention `tools/mask_blur.py` set for `axl_mask_blur`):
+
+| Key | Value |
+|---|---|
+| `axl_seed` | the seed actually used (the drawn one when the set or form asked for `0`) |
+| `axl_prompt`, `axl_negative` | the prompt pair of that render |
+| `axl_width`, `axl_height`, `axl_steps`, `axl_guidance`, `axl_guidance_rescale` | its sampling values |
+| `axl_run_id`, `axl_output_name`, `axl_step` | the run and step it belongs to (`axl_step` formatted `%06d`, as the trainer writes it) |
+| `axl_set`, `axl_repeat` | its prompt set and repeat index; omitted for a manual single image |
+| `axl_source` | `training` \| `sets` \| `single` \| `evaluate` — the slot the file occupies |
+| `axl_writer` | `trainer` \| `generate_sample` — who drew the current pixels |
+| `axl_checkpoint` | the checkpoint file name it was rendered from |
+| `axl_network_type`, `axl_network_dim`, `axl_network_alpha`, `axl_conv_dim`, `axl_conv_alpha`, `axl_base_model_version`, `axl_pretrained_model`, `axl_clip_skip`, `axl_max_token_length` | the LoRA/base settings of that checkpoint |
+
+`regenerate_sample` reads `axl_seed` back; a file written before this metadata existed has none, and the redraw then starts from a fresh seed (see below).
+
 ### `generate_sample`
 
 Generates one extra sample image from a LoRA checkpoint of the resolved run, detached from any
@@ -290,6 +306,51 @@ Result:
 
 `mode` is `single` here. `files` (every image, in render order), `images_done` and `total_images`
 matter for `generate_checkpoint_samples`, which renders one image per sample set and repeat.
+
+### `regenerate_sample`
+
+Redraws **one existing sample image in place**: the run's current prompts for the set its name
+carries, and the seed the picture itself records. Returns as soon as the generator is spawned — a
+`single` job with `replace: true`, followed with `list_generated_samples` — and the file is written
+over itself, so its name, its place in the card's row and its place in the full-screen preview never
+change.
+
+Params:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `path` | string | Yes | The sample image to redraw; must be a file inside this run's `_samples` tree. |
+| `checkpoint` | string | Yes | The checkpoint to render it from (the card's own). |
+| `plan_only` | boolean | No | Answer what a redraw would do without starting anything: `job` is null and `warn` reports the seed state. |
+| `allow_new_seed` | boolean | No | Required to start a redraw of an image that records no seed. |
+| `name` / `run_id` | string \| null | No | Resolve the run like `dashboard`. |
+
+Result: `{job, log_path, warn}`. On a spawn `warn` is null; on a plan `job` is null. `warn` is set
+when the image carries no `axl_seed`:
+
+```
+Seed not recorded: this image predates seed metadata, so the redraw cannot reuse its seed and will
+use a new random one.
+```
+
+The prompt, negative prompt, width, height, steps and CFG are the run's **current**
+`[[validation.samples]]` entry at the set index the image's name carries (`_p{set}_{repeat}.png`;
+the two-number form written before `[[validation.samples]]` counts as set 0), resolved exactly as
+`sample_prompts` resolves them — the sets the Dashboard saved for the run over its own config
+snapshot. The seed is `axl_seed` from the image; with none, and `allow_new_seed`, the render starts
+from `0` (the generator draws and records a new one). The model side (base model, LoRA kind /
+rank / alpha, `clip_skip`, `max_token_length`) comes from the checkpoint's own metadata, as in
+`generate_sample`.
+
+Refused under the same GPU rules as `generate_sample`, when `path` is not a file inside this run's
+`_samples`, when its name carries no `(set, repeat)` slot — a manual single image belongs to no
+prompt set to redraw from — when the run's prompts no longer have that set index, and when the seed
+is missing and `allow_new_seed` was not passed.
+
+The job's `image_path` (and its `target`) is the path **as the request spelled it**, not the
+resolved one. A listing can spell a file through a symlinked `output_dir` while `Path.resolve()`
+answers the real path; clients key a rewritten image's cache revision by the string their own
+listing gave them, so the job has to record that string.
 
 ### `generate_checkpoint_samples`
 

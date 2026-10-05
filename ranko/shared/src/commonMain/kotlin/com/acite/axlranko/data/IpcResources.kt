@@ -233,6 +233,7 @@ internal object IpcResources {
 
         // --- the GPU is single-tenant; a second user of it is refused at once ---
         "generate_sample" to { _ -> listOf(gpu()) },
+        "regenerate_sample" to { _ -> listOf(gpu()) },
         "generate_checkpoint_samples" to { _ -> listOf(gpu()) },
         "generate_checkpoint_samples_batch" to { _ -> listOf(gpu()) },
         "generate_pinned_checkpoint_samples" to { _ -> listOf(gpu()) },
@@ -382,6 +383,7 @@ internal object IpcResources {
         "automation_job_delete" to 2 * 60_000L,
         "train_start" to 30_000L,
         "generate_sample" to 60_000L,
+        "regenerate_sample" to 60_000L,
         "generate_checkpoint_samples" to 60_000L,
         "generate_checkpoint_samples_batch" to 60_000L,
         "generate_pinned_checkpoint_samples" to 60_000L,

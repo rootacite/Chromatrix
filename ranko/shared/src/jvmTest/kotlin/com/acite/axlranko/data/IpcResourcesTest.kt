@@ -192,6 +192,11 @@ class IpcResourcesTest {
             listOf(ResourceClaim("run:rein_1", ResourceMode.Write, 1_000L)),
             IpcResources.claimsFor("chart_view_set", params("run_id" to "rein_1")),
         )
+        // A redraw renders on the GPU like any other generation, so it takes the same slot.
+        assertEquals(
+            listOf(ResourceClaim("gpu", ResourceMode.Write, 0L)),
+            IpcResources.claimsFor("regenerate_sample", params("path" to "/out/x.png")),
+        )
     }
 
     @Test
@@ -292,6 +297,7 @@ class IpcResourcesTest {
             "dataset_shuffle" to data,
             "automation_job_delete" to job,
             "generate_sample" to params("checkpoint" to "/out/a.safetensors"),
+            "regenerate_sample" to params("path" to "/out/x.png"),
         )) {
             assertTrue(IpcResources.isLongRunning(method, p), "$method should ride the long lane")
         }
@@ -325,6 +331,7 @@ class IpcResourcesTest {
         assertEquals("long", client.laneKindFor("caption_write", params("directory" to "/data/st")))
         assertEquals("long", client.laneKindFor("checkpoint_export", params("dest" to "/tmp/a.safetensors")))
         assertEquals("long", client.laneKindFor("generate_sample", params("checkpoint" to "/out/a.safetensors")))
+        assertEquals("long", client.laneKindFor("regenerate_sample", params("path" to "/out/x.png")))
         // Blobs keep to themselves, and a write may be sent as one.
         assertEquals("blob", client.laneKindFor("blob_batch", params("paths" to "/x")))
         assertEquals("blob", client.laneKindFor("ping", JsonObject(emptyMap()), blob = true))

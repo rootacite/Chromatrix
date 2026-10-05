@@ -18,6 +18,8 @@ import com.acite.axlranko.model.GeneratedSampleJob
 import com.acite.axlranko.model.HardwareHistory
 import com.acite.axlranko.model.HardwareStatus
 import com.acite.axlranko.model.MetricPoint
+import com.acite.axlranko.model.RegenerateConfirm
+import com.acite.axlranko.model.RegenerateError
 import com.acite.axlranko.model.RunSummary
 import com.acite.axlranko.model.SampleClearResult
 import com.acite.axlranko.model.UnpinnedClearResult
@@ -40,6 +42,7 @@ import com.acite.axlranko.pages.components.generatedFailureLine
 import com.acite.axlranko.pages.components.generatedSampleItems
 import com.acite.axlranko.pages.components.nearestCheckpoint
 import com.acite.axlranko.pages.components.newlyFailedJob
+import com.acite.axlranko.pages.components.sampleRevisions
 import com.acite.axlranko.pages.components.StepChartInteractionStore
 import com.acite.axlranko.pages.components.sectionImages
 import com.acite.axlranko.util.PathPicker
@@ -422,7 +425,9 @@ class DashboardScreenViewModel(
         if (runId.isNullOrBlank()) return
         viewModelScope.launch {
             val jobs = fetchGeneratedJobs(runId, selected?.outputName)
-            _uiState.update { state -> state.copy(generatedJobs = jobs) }
+            _uiState.update { state ->
+                state.copy(generatedJobs = jobs, sampleRevisions = sampleRevisions(jobs))
+            }
             if (jobs.any { it.state == JOB_RUNNING }) startGeneratedPolling()
         }
     }
@@ -481,6 +486,103 @@ class DashboardScreenViewModel(
                 }
             }
         }
+    }
+
+    /**
+     * The ↻ button on a sample thumbnail: ask the helper what a redraw of [sample] would do, then
+     * open the confirmation dialog with the plan's warning — an image that records no seed cannot
+     * be redrawn on the same one. Nothing is rendered until [confirmRegenerate].
+     */
+    fun planRegenerateSample(sample: SampleItem, checkpoint: CheckpointItem) {
+        val path = sample.path
+        if (_uiState.value.regenerateLoadingPath != null) return
+        _uiState.update { it.copy(regenerateLoadingPath = path, regenerateError = null) }
+        viewModelScope.launch {
+            try {
+                val selected = _uiState.value.selectedRun
+                val plan = withContext(IoDispatcher) {
+                    ipc.regenerateSample(
+                        path = path,
+                        checkpoint = checkpoint.path,
+                        planOnly = true,
+                        name = selected?.outputName,
+                        runId = selected?.runId ?: _uiState.value.runId,
+                    )
+                }
+                _uiState.update { state ->
+                    state.copy(
+                        regenerateLoadingPath = null,
+                        regenerateConfirm = RegenerateConfirm(sample, checkpoint, plan.warn),
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        regenerateLoadingPath = null,
+                        regenerateError = RegenerateError(
+                            path = path,
+                            checkpointPath = checkpoint.path,
+                            message = e.message ?: e.toString(),
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Confirms the dialog: redraw the image over its own file. `allowNewSeed` accepts a fresh seed
+     * for an image that records none — the dialog has already said so.
+     */
+    fun confirmRegenerate() {
+        val confirm = _uiState.value.regenerateConfirm ?: return
+        val path = confirm.sample.path
+        _uiState.update {
+            it.copy(regenerateConfirm = null, regenerateLoadingPath = path, regenerateError = null)
+        }
+        viewModelScope.launch {
+            try {
+                val selected = _uiState.value.selectedRun
+                val response = withContext(IoDispatcher) {
+                    ipc.regenerateSample(
+                        path = path,
+                        checkpoint = confirm.checkpoint.path,
+                        allowNewSeed = true,
+                        name = selected?.outputName,
+                        runId = selected?.runId ?: _uiState.value.runId,
+                    )
+                }
+                val job = response.job
+                if (job == null) {
+                    _uiState.update { it.copy(regenerateLoadingPath = null) }
+                    return@launch
+                }
+                sessionJobIds += job.id
+                _uiState.update { state ->
+                    state.copy(
+                        sessionJobIds = sessionJobIds.toSet(),
+                        regenerateLoadingPath = null,
+                        generatedJobs = (listOf(job) + state.generatedJobs).distinctBy { it.id },
+                    )
+                }
+                startGeneratedPolling()
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        regenerateLoadingPath = null,
+                        regenerateError = RegenerateError(
+                            path = path,
+                            checkpointPath = confirm.checkpoint.path,
+                            message = e.message ?: e.toString(),
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    fun cancelRegenerate() {
+        _uiState.update { it.copy(regenerateConfirm = null) }
     }
 
     /**
@@ -1080,6 +1182,7 @@ class DashboardScreenViewModel(
                     if ((current.selectedRun?.runId ?: current.runId) != runId) return@update current
                     current.copy(
                         generatedJobs = jobs,
+                        sampleRevisions = sampleRevisions(jobs),
                         generatedError = generatedFailureLine(announced, jobs, current.generatedError),
                     )
                 }
@@ -1439,6 +1542,9 @@ class DashboardScreenViewModel(
                     checkpointPins = pins?.pins ?: state.checkpointPins,
                     checkpointPinsFile = pins?.file ?: state.checkpointPinsFile,
                     generatedJobs = generated,
+                    // A replaced sample keeps its old bytes in the client cache: the id of the job
+                    // that rewrote it is what makes the thumbnail fetch the picture again.
+                    sampleRevisions = sampleRevisions(generated),
                     previewIndex = newPreview,
                     trainStatus = trainStatus,
                     pendingCommand = resolvedPending(state.pendingCommand, trainStatus.status),

@@ -15,6 +15,7 @@ import com.acite.axlranko.model.SampleSetInfo
 import com.acite.axlranko.model.SamplesResponse
 import com.acite.axlranko.model.EvaluationPromptsResponse
 import com.acite.axlranko.model.GeneratedSampleJob
+import com.acite.axlranko.model.RegenerateSampleResponse
 import com.acite.axlranko.model.TaggerInfoResult
 import com.acite.axlranko.model.TrainStatus
 import com.acite.axlranko.model.UnpinnedClearResult
@@ -226,6 +227,48 @@ class DashboardIpcTest {
         assertEquals("single", old.mode)
         assertTrue(old.files.isEmpty())
         assertEquals(1, old.totalImages)
+    }
+
+    @Test
+    fun aReplaceJobAndItsPlanReplyParse() {
+        val job = json.decodeFromString(
+            GeneratedSampleJob.serializer(),
+            """
+            {
+              "id": "rein_s003050_replace_gen_20261005_120000",
+              "state": "done",
+              "mode": "single",
+              "replace": true,
+              "image_path": "/out/rein_20260911_120000/rein_samples/rein_003050_p0_1.png",
+              "seed": 4242
+            }
+            """.trimIndent(),
+        )
+        assertTrue(job.replace)
+        assertEquals(4242L, job.seed)
+
+        // A record written before the field existed is a plain generation.
+        val older = json.decodeFromString(
+            GeneratedSampleJob.serializer(),
+            """{"id": "rein_s000100_gen", "state": "done"}""",
+        )
+        assertFalse(older.replace)
+
+        // The plan reply carries no job and the warning the confirmation dialog shows.
+        val plan = json.decodeFromString(
+            RegenerateSampleResponse.serializer(),
+            """{"job": null, "log_path": null, "warn": "Seed not recorded: this image predates seed metadata."}""",
+        )
+        assertNull(plan.job)
+        assertTrue(plan.warn!!.startsWith("Seed not recorded"))
+
+        // The spawn reply carries the job and no warning.
+        val spawned = json.decodeFromString(
+            RegenerateSampleResponse.serializer(),
+            """{"job": {"id": "rein_gen", "state": "running", "replace": true}, "log_path": "/x.log"}""",
+        )
+        assertTrue(spawned.job!!.replace)
+        assertNull(spawned.warn)
     }
 
     @Test

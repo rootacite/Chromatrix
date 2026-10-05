@@ -7,11 +7,14 @@ the two scoreboards over already-tagged images.
 
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
+
+from PIL import Image
 
 # `python test/test_evaluation.py` has to import the repo's own packages, exactly like
 # `unittest discover -s test` does from the repo root.
@@ -454,6 +457,45 @@ class CollectImagesTest(unittest.TestCase):
                 "d.png",
             ],
         )
+
+    def test_a_redraw_of_a_listed_image_is_counted_once(self):
+        # A redraw records the image it wrote over, under the spelling the client asked with; the
+        # pass that produced it already lists that file, so the scoring must see one image, not two.
+        listed = self.generated / "a_p0_0.png"
+        self._write_job(
+            "z_single_gen_2.json",
+            checkpoint=self.checkpoint,
+            mode="single",
+            image_path=listed,
+            prompt="redrawn prompt",
+        )
+        # ...and the two records can spell one file differently (an `output_dir` under a symlink).
+        real = self.root / "real"
+        real.mkdir()
+        link = self.root / "link"
+        os.symlink(real, link)
+        linked = link / "linked.png"
+        Image.new("RGB", (8, 8)).save(linked)
+
+        self._write_job(
+            "y_sets_gen_2.json",
+            checkpoint=self.checkpoint,
+            files=[real / "linked.png"],
+        )
+        self._write_job(
+            "x_single_gen_2.json",
+            checkpoint=self.checkpoint,
+            mode="single",
+            image_path=linked,
+        )
+
+        names = [image.name for image in self.collect()]
+        self.assertEqual(names.count("a_p0_0.png"), 1)
+        self.assertEqual(names.count("linked.png"), 1)
+        # The entry that stays is the one its own pass listed, with that pass's prompt.
+        by_name = {image.name: image for image in self.collect()}
+        self.assertEqual(by_name["a_p0_0.png"].prompt, "recorded prompt")
+        self.assertEqual(by_name["a_p0_0.png"].source, "generated")
 
     def test_a_job_without_recorded_sets_falls_back_to_the_config(self):
         self._write_job(
