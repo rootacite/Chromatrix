@@ -104,7 +104,7 @@
         0
       ],
       "images": [
-        "198:196",
+        "198:197:86",
         0
       ]
     },
@@ -115,7 +115,7 @@
   },
   "224": {
     "inputs": {
-      "seed": 356950882113197
+      "seed": 530575833171005
     },
     "class_type": "SeedNode",
     "_meta": {
@@ -202,7 +202,7 @@
   "198:196": {
     "inputs": {
       "upscale_by": 2,
-      "seed": 33984616154389,
+      "seed": 365028658736753,
       "steps": 18,
       "cfg": 6,
       "sampler_name": "euler_ancestral",
@@ -305,12 +305,12 @@
       "title": "UltralyticsDetectorProvider"
     }
   },
-  "198:197:78": {
+  "198:197:86": {
     "inputs": {
       "guide_size": 384,
       "guide_size_for": true,
       "max_size": 512,
-      "seed": 864971177796054,
+      "seed": 159791613905363,
       "steps": 28,
       "cfg": 6,
       "sampler_name": "euler_ancestral",
@@ -321,11 +321,11 @@
       "force_inpaint": true,
       "bbox_threshold": 0.5,
       "bbox_dilation": 20,
-      "bbox_crop_factor": 1.7,
+      "bbox_crop_factor": 1.8,
       "sam_detection_hint": "center-1",
       "sam_dilation": 0,
       "sam_threshold": 0.93,
-      "sam_bbox_expansion": 0,
+      "sam_bbox_expansion": 16,
       "sam_mask_hint_threshold": 0.7,
       "sam_mask_hint_use_negative": "False",
       "drop_size": 10,
@@ -352,71 +352,7 @@
         2
       ],
       "positive": [
-        "215",
-        0
-      ],
-      "negative": [
-        "216",
-        0
-      ],
-      "bbox_detector": [
-        "198:197:85",
-        0
-      ]
-    },
-    "class_type": "FaceDetailer",
-    "_meta": {
-      "title": "FaceDetailer"
-    }
-  },
-  "198:197:86": {
-    "inputs": {
-      "guide_size": 384,
-      "guide_size_for": true,
-      "max_size": 512,
-      "seed": 630158094534926,
-      "steps": 28,
-      "cfg": 6,
-      "sampler_name": "euler_ancestral",
-      "scheduler": "karras",
-      "denoise": 0.4,
-      "feather": 10,
-      "noise_mask": true,
-      "force_inpaint": true,
-      "bbox_threshold": 0.5,
-      "bbox_dilation": 20,
-      "bbox_crop_factor": 1.8,
-      "sam_detection_hint": "center-1",
-      "sam_dilation": 0,
-      "sam_threshold": 0.93,
-      "sam_bbox_expansion": 51,
-      "sam_mask_hint_threshold": 0.7,
-      "sam_mask_hint_use_negative": "False",
-      "drop_size": 10,
-      "wildcard": "",
-      "cycle": 1,
-      "inpaint_model": false,
-      "noise_mask_feather": 20,
-      "tiled_encode": false,
-      "tiled_decode": false,
-      "image": [
-        "198:197:78",
-        0
-      ],
-      "model": [
-        "207:208",
-        0
-      ],
-      "clip": [
-        "207:219",
-        1
-      ],
-      "vae": [
-        "207:266",
-        2
-      ],
-      "positive": [
-        "215",
+        "198:259",
         0
       ],
       "negative": [
