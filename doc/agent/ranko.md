@@ -89,7 +89,8 @@ to `TagLexicon.isKnownTag`, leftmost in the first set; the lexicon keeps the CSV
 whether or not a row carries a translation). It reads the ComfyUI server from
 `automation_config_get`, lists `automation_loras`, reuses an entry whose file name matches the
 checkpoint (a copy under a subfolder counts) or copies the LoRA in with `checkpoint_export` to
-`<root>/<filename>`, then guesses. The guess is best-effort: a failure sends an empty trigger. State
+`<root>/models/loras/<filename>` (`root` is the install root `automation_loras` reports), then
+guesses. The guess is best-effort: a failure sends an empty trigger. State
 is `DashboardUiState.sendInFlightPath` / `sendResult` (`CheckpointSendResult`, rendered by
 `SendToAutomationStatus`), and the page switches only on success: `Stage` passes the `CheckpointSend`
 to `AutomationScreenViewModel.applyCheckpointSend`, which selects `AutomationSection.Universal`,

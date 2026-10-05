@@ -18,6 +18,7 @@ import com.acite.axlranko.model.GeneratedSampleJob
 import com.acite.axlranko.model.HardwareHistory
 import com.acite.axlranko.model.HardwareStatus
 import com.acite.axlranko.model.MetricPoint
+import com.acite.axlranko.model.RunSummary
 import com.acite.axlranko.model.SampleClearResult
 import com.acite.axlranko.model.UnpinnedClearResult
 import com.acite.axlranko.model.SampleItem
@@ -135,6 +136,9 @@ class DashboardScreenViewModel(
                 // Unpinning clears the id too: the run to follow is the next fetch's answer, and
                 // a leftover id would keep the page on the run just unpinned until it lands.
                 runId = run?.runId,
+                // A Home click arrives before this page has ever listed the runs, so an id with no
+                // entry behind it is kept for the next fetch to look up instead of dropped.
+                pendingRunId = if (run == null) runId else null,
                 chartPick = null,
                 previewIndex = null,
                 evaluationTarget = null,
@@ -1180,7 +1184,9 @@ class DashboardScreenViewModel(
         val name = existing ?: checkpoint.filename
         val copied = existing == null
         if (copied) {
-            ipc.checkpointExport(checkpoint.path, "${listed.root.trimEnd('/')}/${checkpoint.filename}")
+            // `root` is the ComfyUI install root; LoraLoader resolves the name under `models/loras`.
+            val loras = "${listed.root.trimEnd('/')}/models/loras"
+            ipc.checkpointExport(checkpoint.path, "$loras/${checkpoint.filename}")
         }
         return CheckpointSendResult(
             path = checkpoint.path,
@@ -1358,9 +1364,9 @@ class DashboardScreenViewModel(
         }
         try {
             val pinned = _uiState.value.selectedRun
+            val pending = _uiState.value.pendingRunId
             val runs = withContext(IoDispatcher) { ipc.listRuns() }.runs
-            // Re-read the pinned entry so its badge and figures follow the live list.
-            val selected = pinned?.let { run -> runs.firstOrNull { it.runId == run.runId } ?: run }
+            val selected = resolvePinnedRun(runs, pinned, pending)
             val dashboard = withContext(IoDispatcher) {
                 ipc.getDashboard(name = selected?.outputName, runId = selected?.runId)
             }
@@ -1421,6 +1427,9 @@ class DashboardScreenViewModel(
                     runId = dashboard.runId,
                     runs = runs,
                     selectedRun = selected,
+                    // Only the id this fetch consumed: a click that landed while it was in flight
+                    // has its own, newer id waiting for the refresh that click started.
+                    pendingRunId = if (state.pendingRunId == pending) null else state.pendingRunId,
                     latestStats = dashboard.latestStats,
                     metrics = dashboard.metrics,
                     stepsPerEpoch = dashboard.stepsPerEpoch,
@@ -1461,6 +1470,20 @@ class DashboardScreenViewModel(
     private fun currentPreviewList(state: DashboardUiState = _uiState.value): List<SampleItem> =
         previewList(state.checkpoints, state.samples, state.generatedJobs)
 }
+
+/**
+ * The run the page shows, against the run history just read: the pin, re-read from the list so its
+ * badge and figures follow it — or, when a click arrived before the page had a list at all, the id
+ * that click carried, looked up in the list. A pin whose run left the list keeps the entry the page
+ * picked; an id that is not in the list resolves to nothing, which follows the live run again.
+ */
+internal fun resolvePinnedRun(
+    runs: List<RunSummary>,
+    pinned: RunSummary?,
+    pendingRunId: String?,
+): RunSummary? =
+    pinned?.let { run -> runs.firstOrNull { it.runId == run.runId } ?: run }
+        ?: pendingRunId?.let { id -> runs.firstOrNull { it.runId == id } }
 
 /**
  * Start / Pause / Resume / Early Stop / Reset act on the run `state.json` is on. A run the

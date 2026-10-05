@@ -3,6 +3,7 @@ package com.acite.axlranko.pages.components
 import com.acite.axlranko.model.DashboardUiState
 import com.acite.axlranko.model.RunSummary
 import com.acite.axlranko.model.TrainStatus
+import com.acite.axlranko.pages.resolvePinnedRun
 import com.acite.axlranko.pages.trainingControlsEnabled
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -115,6 +116,34 @@ class RunHistoryTest {
         assertNull(displayedRun(emptyList(), null, null))
         // An empty history cannot satisfy an id either: the page names no run.
         assertNull(displayedRun(emptyList(), null, "rein_20260911_120000"))
+    }
+
+    @Test
+    fun aRunClickedBeforeTheHistoryWasReadIsLookedUpInIt() {
+        val history = listOf(
+            RunSummary(runId = "rein_20260911_120000", current = true),
+            RunSummary(runId = "konomi_20260912_090000"),
+        )
+        // Home's click arrives before the page has ever listed runs, so no entry can be pinned yet.
+        assertEquals(history[1], resolvePinnedRun(history, null, "konomi_20260912_090000"))
+    }
+
+    @Test
+    fun aPinnedRunIsReReadFromTheListAndSurvivesLeavingIt() {
+        val pinned = RunSummary(runId = "konomi_20260912_090000", lastStep = 10)
+        val refreshed = RunSummary(runId = "konomi_20260912_090000", lastStep = 300)
+        assertEquals(refreshed, resolvePinnedRun(listOf(refreshed), pinned, null))
+        // A run whose directory was deleted still shows the entry the page picked.
+        assertEquals(pinned, resolvePinnedRun(emptyList(), pinned, null))
+    }
+
+    @Test
+    fun aPendingIdThatIsNotInTheListResolvesToNothing() {
+        val history = listOf(RunSummary(runId = "rein_20260911_120000"))
+        assertNull(resolvePinnedRun(emptyList(), null, null))
+        assertNull(resolvePinnedRun(history, null, "gone_20260901_000000"))
+        // The pin wins over an id a click left behind.
+        assertEquals(history[0], resolvePinnedRun(history, history[0], "konomi_20260912_090000"))
     }
 
     @Test

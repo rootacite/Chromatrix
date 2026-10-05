@@ -666,6 +666,11 @@ data class DashboardUiState(
     val runs: List<RunSummary> = emptyList(),
     /** The run the user pinned in the run selector; `null` follows the current one. */
     val selectedRun: RunSummary? = null,
+    /**
+     * A run id the page was asked for while it had no run history yet, from a Home "Recent runs"
+     * click. `fetchOnce` resolves it against the list it reads and clears it; `null` otherwise.
+     */
+    val pendingRunId: String? = null,
     val latestStats: JsonObject = JsonObject(emptyMap()),
     val metrics: Map<String, List<MetricPoint>> = emptyMap(),
     val samples: Map<String, List<SampleItem>> = emptyMap(),
