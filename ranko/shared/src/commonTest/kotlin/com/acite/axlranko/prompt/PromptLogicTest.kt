@@ -442,7 +442,8 @@ class ChannelAndAnatomyTest {
             assertFalse(tags.contains("anal"), line)
             assertFalse(tags.contains("vaginal"), line)
             assertTrue(tags.contains("penis"), line)
-            assertTrue(tags.contains("anus"), line)
+            // The channel tag names what is in the body part, so the body part is not named too.
+            assertFalse(tags.contains(ANUS_TAG), line)
             assertTrue(tags.contains("ass"), line)
         }
     }
@@ -614,6 +615,47 @@ class ChannelAndAnatomyTest {
             PromptGenerator.anatomyTags(pose, PromptChannel.Vaginal, includePenis = false).contains("penis"),
         )
     }
+
+    @Test
+    fun anActWordDropsTheBodyPart() {
+        // A line that says what is *in* the anus does not also point at it.
+        val during = tagsOf(assembleLine(SexStage.During, PromptChannel.Anal))
+        assertTrue(during.contains(PromptLimits.ANAL_CHANNEL_TAG), during.toString())
+        assertFalse(during.contains(ANUS_TAG), during.toString())
+        val ejaculation = tagsOf(assembleLine(SexStage.Ejaculation, PromptChannel.Anal))
+        assertTrue(ejaculation.contains("cum in ass"), ejaculation.toString())
+        assertFalse(ejaculation.contains(ANUS_TAG), ejaculation.toString())
+        val inserted = tagsOf(assembleLine(SexStage.ObjectInsertion, PromptChannel.Anal))
+        assertTrue(inserted.contains("anal object insertion"), inserted.toString())
+        assertFalse(inserted.contains(ANUS_TAG), inserted.toString())
+    }
+
+    @Test
+    fun theStateWordsKeepTheBodyPart() {
+        // These describe the state around it instead: about to, just after, a hand at it.
+        listOf(
+            SexStage.Before to "imminent anal",
+            SexStage.After to "after anal",
+            SexStage.Done to "after anal",
+            SexStage.Fingering to "anal fingering",
+        ).forEach { (stage, word) ->
+            val tags = tagsOf(assembleLine(stage, PromptChannel.Anal))
+            assertTrue(tags.contains(word), "$stage: $tags")
+            assertTrue(tags.contains(ANUS_TAG), "$stage: $tags")
+        }
+        // A stage that names no act at all shows the body part and has no anal word.
+        val posing = tagsOf(assembleLine(SexStage.Pose, PromptChannel.Anal))
+        assertTrue(posing.contains(ANUS_TAG), posing.toString())
+        assertFalse(posing.any { it.contains("anal") }, posing.toString())
+    }
+
+    @Test
+    fun aVaginalDrawIsUntouched() {
+        val tags = tagsOf(assembleLine(SexStage.During, PromptChannel.Vaginal))
+        assertTrue(tags.contains("pussy"), tags.toString())
+        assertFalse(tags.contains(ANUS_TAG), tags.toString())
+        assertFalse(tags.any { it.contains("anal") }, tags.toString())
+    }
 }
 
 /**
@@ -710,7 +752,9 @@ class SinglePickGroupTest {
         )
         generatePrompts(spec, matrix, 65).forEach { line ->
             val tags = tagsOf(line)
-            assertTrue(tags.contains("anus"), line)
+            // The channel word, not `anus`: a draw that names the act drops the body part.
+            assertTrue(tags.contains(PromptLimits.ANAL_CHANNEL_TAG), line)
+            assertFalse(tags.contains(ANUS_TAG), line)
             assertFalse(tags.contains("labia"), line)
             assertFalse(tags.contains("shaved pussy"), line)
         }
@@ -1455,7 +1499,8 @@ class NoneChannelAndObjectStageTest {
             val tags = tagsOf(line)
             assertTrue(tags.contains("anal object insertion"), line)
             assertTrue(tags.contains("full nelson"), line)
-            assertTrue(tags.contains("anus"), line)
+            // An act word, so the body part it happens in is not named beside it.
+            assertFalse(tags.contains(ANUS_TAG), line)
             assertTrue(tags.contains("solo"), line)
             assertFalse(tags.contains("penis"), line)
             assertFalse(tags.contains("1boy"), line)

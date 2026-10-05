@@ -334,7 +334,7 @@ object PromptGenerator {
         val out = mutableListOf<String>()
         if (includePenis) out.add(PENIS_TAG)
         if (channel == PromptChannel.Vaginal) out.add("pussy")
-        else if (channel == PromptChannel.Anal) out.add("anus")
+        else if (channel == PromptChannel.Anal) out.add(ANUS_TAG)
         if (containsMarker(blob, ASS_MARKERS) && "ass" !in out) out.add("ass")
         if (containsMarker(blob, SPREAD_MARKERS)) {
             if ("pussy" !in out) out.add("pussy")
@@ -555,6 +555,21 @@ object PromptGenerator {
         if (channel == PromptChannel.Anal) PromptLimits.ANAL_CHANNEL_TAG else channel.wire
 
     /**
+     * The anal words a draw may carry *with* [ANUS_TAG]: they describe the state around the body
+     * part — about to, just after, a hand at it — rather than what is in it. Every other anal word
+     * (`(anal:1.2)` from [channelTag], and `anal object insertion`) names the act and excludes the
+     * body part, which is the maintainer's rule: the two never share a prompt.
+     */
+    private val ANAL_WORDS_WITH_ANUS: Set<String> =
+        setOf("imminent anal", "after anal", "anal fingering")
+
+    /** True for an anal word a line must not write beside [ANUS_TAG]. */
+    private fun isAnalWordWithoutAnus(tag: String): Boolean {
+        val text = tag.lowercase()
+        return "anal" in text && text !in ANAL_WORDS_WITH_ANUS
+    }
+
+    /**
      * The stages that put a hand on the body with no penis in play. On a pose that holds its own
      * legs one of these has no arm to use, so [assemble] gives those draws a partner.
      *
@@ -632,6 +647,11 @@ object PromptGenerator {
             }
             extra.addAll(stageTags(resolvedStage, hole))
         }
+        // A draw that says what is *in* the body part does not also point at the part itself: the
+        // channel tag `(anal:1.2)` and `anal object insertion` exclude `anus`, while the words that
+        // describe the state around it may stand beside it. Only the wizard's own tags are read —
+        // the character prefix is the user's text, which this generator never rewrites.
+        if (extra.any(::isAnalWordWithoutAnus)) extra.removeAll { it == ANUS_TAG }
         extra.addAll(scene.tags)
         extra.addAll(suffix.tags)
 

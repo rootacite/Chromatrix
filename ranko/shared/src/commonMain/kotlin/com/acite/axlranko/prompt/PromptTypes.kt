@@ -103,6 +103,13 @@ val HOLE_CHANNELS: Set<PromptChannel> = setOf(PromptChannel.Anal, PromptChannel.
 const val PENIS_TAG: String = "penis"
 const val INVISIBLE_PENIS_TAG: String = "invisible penis"
 
+/**
+ * The body part an anal-channel draw names. It and the words that say what is *in* it are mutually
+ * exclusive — see `PromptGenerator.ANAL_WORDS_WITH_ANUS`, which lists the anal words a line may
+ * still carry beside it.
+ */
+const val ANUS_TAG: String = "anus"
+
 /** Exposure levels, in wizard order. */
 val EXPOSURE_LEVELS: List<String> = listOf("covered", "casual", "revealing", "open", "nude")
 val HIGH_EXPOSURE: Set<String> = setOf("revealing", "open", "nude")

@@ -160,6 +160,27 @@ class RealMatrixPromptTest {
     }
 
     @Test
+    fun theAnalActWordsAndTheBodyPartNeverShareADraw() {
+        // Every stage weighted, so the run covers the channel tag, the ejaculation/after words and
+        // the object one — not just the default `during`.
+        val spec = PromptSpec(
+            mode = PromptMode.Sex,
+            exposure = listOf("open"),
+            count = 200,
+            stageWeights = SEX_STAGES.associateWith { 1.0 },
+        )
+        val lines = PromptGenerator.generate(spec, matrix, 34)
+        assertTrue(lines.any { splitTags(it).contains(ANUS_TAG) }, "no draw names the body part")
+        assertTrue(lines.any { splitTags(it).contains(PromptLimits.ANAL_CHANNEL_TAG) }, "no draw names the act")
+        val keepsAnus = setOf("imminent anal", "after anal", "anal fingering")
+        lines.forEach { line ->
+            val tags = splitTags(line).map { it.lowercase() }.toSet()
+            val act = tags.filter { "anal" in it && it !in keepsAnus }
+            if (act.isNotEmpty()) assertFalse(tags.contains(ANUS_TAG), "$act in $line")
+        }
+    }
+
+    @Test
     fun theInvisiblePenisOptionRewritesEveryDrawOfTheRealMatrix() {
         val plain = PromptGenerator.generate(
             PromptSpec(mode = PromptMode.Sex, exposure = listOf("open"), count = 200),
