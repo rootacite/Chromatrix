@@ -69,6 +69,7 @@ import com.acite.axlranko.data.jobPassProgress
 import com.acite.axlranko.model.AutomationUiState
 import com.acite.axlranko.model.GalleryImageAction
 import com.acite.axlranko.model.JobFilter
+import com.acite.axlranko.model.jobDirFor
 import com.acite.axlranko.model.jobElapsedSeconds
 import com.acite.axlranko.model.jobImagePathFor
 import com.acite.axlranko.model.jobProgress
@@ -247,7 +248,7 @@ fun GalleryPane(
                                 viewModel.downloadJobRecord()
                             }
                             GalleryAction(uiText(lang, "open_folder"), Icons.Default.FolderOpen, portrait, detail.outputDir.isNotBlank()) {
-                                openLocalDirectory(detail.outputDir)
+                                openLocalDirectory(jobDirFor(detail.id, detail.outputDir))
                             }
                             GalleryAction(
                                 uiText(lang, "delete"),

@@ -239,6 +239,12 @@ fun jobImagePathFor(jobId: String, outputDir: String, name: String): String {
     return "$root/$jobId/images/$name"
 }
 
+/**
+ * `<output_dir>/<job_id>`: the job's own directory — `output_dir` is the root all jobs sit under,
+ * not the job's. Its `job.json`, `log.txt` and `images/` live here.
+ */
+fun jobDirFor(jobId: String, outputDir: String): String = "${outputDir.trimEnd('/')}/$jobId"
+
 /** The label a list shows: the name when the job has one, otherwise its id. */
 fun jobTitle(name: String, id: String): String = name.trim().ifBlank { id }
 

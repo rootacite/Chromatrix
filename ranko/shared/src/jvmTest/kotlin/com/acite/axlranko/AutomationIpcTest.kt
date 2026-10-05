@@ -19,6 +19,7 @@ import com.acite.axlranko.model.GalleryImageRef
 import com.acite.axlranko.model.JobFilter
 import com.acite.axlranko.model.PromptExtendDraft
 import com.acite.axlranko.model.PromptProfileItem
+import com.acite.axlranko.model.jobDirFor
 import com.acite.axlranko.model.jobElapsedSeconds
 import com.acite.axlranko.model.jobImagePathFor
 import com.acite.axlranko.model.jobProgress
@@ -309,6 +310,12 @@ class AutomationIpcTest {
             "/repo/automation/jobs/Kirika_20260928_101500/images/p0001_01.png",
             jobImagePathFor(detail.id, detail.outputDir, detail.prompts.single().images.first()),
         )
+        // "Open folder" opens the job's own directory, not the root every job sits under.
+        assertEquals(
+            "/repo/automation/jobs/Kirika_20260928_101500",
+            jobDirFor(detail.id, detail.outputDir),
+        )
+        assertEquals("/repo/automation/jobs/Kirika_1", jobDirFor("Kirika_1", "/repo/automation/jobs/"))
 
         val state = AutomationUiState(
             jobs = listed.jobs,
