@@ -21,6 +21,13 @@ internal fun pythonRound(value: Double): Long {
 
 fun defaultExposure(mode: PromptMode): List<String> = MODE_EXPOSURE_DEFAULTS.getValue(mode)
 
+/**
+ * The scene blocks a mode draws from when the spec names none: every block the matrix has, less
+ * [SCENE_GROUP_EXCLUSIONS]. An ungrouped scene row is drawn by every pick and is not listed here.
+ */
+fun defaultSceneGroups(matrix: PromptMatrix, mode: PromptMode): List<String> =
+    matrix.sceneGroups.filter { it !in SCENE_GROUP_EXCLUSIONS.getValue(mode) }
+
 /** One stage gets all the weight unless the user says otherwise; `during` matches the old behaviour. */
 fun defaultStageWeights(): Map<SexStage, Double> =
     SEX_STAGES.associateWith { if (it == SexStage.During) 1.0 else 0.0 }
@@ -37,6 +44,13 @@ data class PromptSpec(
     var clothingKeys: Set<List<String>> = emptySet(),
     var sceneAny: Boolean = true,
     var sceneKeys: Set<List<String>> = emptySet(),
+    /**
+     * The scene blocks a draw may use, empty for [defaultSceneGroups]'s per-mode pick. Unlike
+     * [exposure] this starts empty: a profile written before the blocks existed draws the same way
+     * the mode default does, and a hand-edited block name the matrix does not have falls back to it
+     * rather than opening the whole file.
+     */
+    var sceneGroups: List<String> = emptyList(),
     var poseAny: Boolean = true,
     var poseKeys: Set<List<String>> = emptySet(),
     var familyAny: Boolean = true,
@@ -66,6 +80,7 @@ data class PromptSpec(
         exposure = exposure.toList(),
         clothingKeys = clothingKeys.toSet(),
         sceneKeys = sceneKeys.toSet(),
+        sceneGroups = sceneGroups.toList(),
         poseKeys = poseKeys.toSet(),
         families = families.toSet(),
         stageWeights = stageWeights.toMap(),

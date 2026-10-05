@@ -35,6 +35,20 @@ object ManifestModel {
     fun pickValue(tags: List<String>, lang: PromptLang): String =
         tags.joinToString(", ").ifEmpty { t(lang, "pick_off") }
 
+    /**
+     * The scene row: the row pick, led by the block pick when the profile names one. An empty block
+     * pick is the mode's own default and shows as the row pick alone, which is also what a profile
+     * written before the blocks existed reads as.
+     */
+    fun sceneValue(spec: PromptSpec, lang: PromptLang): String {
+        val rows = if (spec.sceneAny) {
+            t(lang, "any")
+        } else {
+            t(lang, "manifest_selected").replace("{n}", spec.sceneKeys.size.toString())
+        }
+        return if (spec.sceneGroups.isEmpty()) rows else "${spec.sceneGroups.joinToString(", ")} · $rows"
+    }
+
     fun items(spec: PromptSpec, lang: PromptLang): List<ManifestRow> {
         fun label(key: String) = t(lang, "item_$key")
         fun picked(anyFlag: Boolean, count: Int) =
@@ -57,7 +71,7 @@ object ManifestModel {
         rows.add(ManifestRow("belly", label("belly"), spec.belly))
         rows.add(ManifestRow("figure", label("figure"), pickValue(spec.figure, lang)))
         rows.add(ManifestRow("face", label("face"), faceValue(spec, lang)))
-        rows.add(ManifestRow("scene", label("scene"), picked(spec.sceneAny, spec.sceneKeys.size)))
+        rows.add(ManifestRow("scene", label("scene"), sceneValue(spec, lang)))
         if (spec.mode == PromptMode.Sex) {
             rows.add(ManifestRow("family", label("family"), picked(spec.familyAny, spec.families.size)))
             rows.add(ManifestRow("ratio", label("ratio"), trimNumber(spec.vaginalRatio)))

@@ -21,6 +21,13 @@ class PromptMatrix(
     val poses: List<MatrixEntry>,
     val clothing: List<MatrixEntry>,
     val scenes: List<MatrixEntry>,
+    /**
+     * The scene blocks the file declares with `[name]` headers under `SCENE:`, in file order. A row
+     * above the first header carries no block and is drawn by every selection.
+     */
+    val sceneGroups: List<String> = emptyList(),
+    /** A block's `#` line, as the wizard's chip label: `[warm]` over `# 暖色` reads as `暖色`. */
+    val sceneGroupLabels: Map<String, String> = emptyMap(),
     val suffixes: List<MatrixEntry>,
     val sfwPoses: List<MatrixEntry>,
     val questionablePoses: List<MatrixEntry>,
@@ -48,6 +55,12 @@ fun parseMatrix(text: String): PromptMatrix {
     )
     var section: String? = null
     var group: String? = null
+    // The `[name]` block a SCENE row sits under, and the block a `#` line directly under a header
+    // is labelling (both null outside SCENE).
+    var sceneGroup: String? = null
+    var sceneGroupPending: String? = null
+    val sceneGroups = linkedSetOf<String>()
+    val sceneGroupLabels = linkedMapOf<String, String>()
     var pending: MatrixEntry? = null
 
     fun commit() {
@@ -65,6 +78,8 @@ fun parseMatrix(text: String): PromptMatrix {
             commit()
             section = line.dropLast(1)
             group = null
+            sceneGroup = null
+            sceneGroupPending = null
             return@forEachIndexed
         }
         // A header this parser does not know would otherwise land in the section above it as a tag
@@ -79,11 +94,28 @@ fun parseMatrix(text: String): PromptMatrix {
             group = groupMatch.groupValues[1]
             return@forEachIndexed
         }
-        if (line.startsWith("#")) {
-            val current = pending ?: return@forEachIndexed
-            pending = current.copy(comment = line.drop(1).trim())
+        // `[warm]` inside SCENE opens a block, the way `[covered]` opens a CLOTHING exposure group.
+        // Without this a block label is read as a tag row and its own name is drawn as a tag.
+        val sceneMatch = SCENE_GROUP_RE.matchEntire(line)
+        if (section == "SCENE" && sceneMatch != null) {
+            commit()
+            val name = sceneMatch.groupValues[1]
+            sceneGroup = name
+            sceneGroupPending = name
+            sceneGroups.add(name)
             return@forEachIndexed
         }
+        if (line.startsWith("#")) {
+            val current = pending
+            if (current != null) {
+                pending = current.copy(comment = line.drop(1).trim())
+            } else {
+                // A comment directly under the block header labels the block itself.
+                sceneGroupPending?.let { sceneGroupLabels[it] = line.drop(1).trim() }
+            }
+            return@forEachIndexed
+        }
+        sceneGroupPending = null
         commit()
         if (section == null) throw MatrixException("line $lineno: tags before a section header")
         if (section == "POSES") {
@@ -115,6 +147,8 @@ fun parseMatrix(text: String): PromptMatrix {
         pending = MatrixEntry(
             tags = splitTags(body),
             openClothes = openClothes,
+            // Only SCENE rows carry a block; a CLOTHING row's group was set at its `[group]` header.
+            group = if (section == "SCENE") sceneGroup else null,
             selfStated = section == "QUESTIONABLE_POSES",
         )
     }
@@ -131,6 +165,8 @@ fun parseMatrix(text: String): PromptMatrix {
         poses = buckets.getValue("POSES").toList(),
         clothing = clothing.toList(),
         scenes = buckets.getValue("SCENE").toList(),
+        sceneGroups = sceneGroups.toList(),
+        sceneGroupLabels = sceneGroupLabels.toMap(),
         suffixes = buckets.getValue("SUFFIX").toList(),
         sfwPoses = buckets.getValue("SFW_POSES").toList(),
         questionablePoses = buckets.getValue("QUESTIONABLE_POSES").toList(),

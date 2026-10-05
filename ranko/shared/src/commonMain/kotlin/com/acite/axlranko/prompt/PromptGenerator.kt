@@ -487,6 +487,24 @@ object PromptGenerator {
         return chosen to (bucket == "open")
     }
 
+    /** The rows of [groups], plus every ungrouped row, in file order. */
+    fun scenePool(matrix: PromptMatrix, groups: List<String>): List<MatrixEntry> =
+        matrix.scenes.filter { it.group == null || it.group in groups }
+
+    /**
+     * The scene rows a draw picks from: the blocks the spec names, or the mode's own default when
+     * it names none. A pick whose blocks the matrix does not have at all — a block renamed in the
+     * file, or a hand-written profile — is ignored and the mode's default answers instead; the
+     * whole file is only the last resort for a matrix that has nothing else, so a SFW draw cannot
+     * drift onto a block its own default leaves out.
+     */
+    fun scenePoolFor(matrix: PromptMatrix, spec: PromptSpec): List<MatrixEntry> {
+        val groups = spec.sceneGroups.ifEmpty { defaultSceneGroups(matrix, spec.mode) }
+        if (matrix.scenes.any { it.group != null && it.group in groups }) return scenePool(matrix, groups)
+        val defaults = scenePool(matrix, defaultSceneGroups(matrix, spec.mode))
+        return defaults.ifEmpty { matrix.scenes }
+    }
+
     fun pickScene(
         matrix: PromptMatrix,
         spec: PromptSpec,
@@ -494,7 +512,7 @@ object PromptGenerator {
         rng: Random,
         warnings: MutableList<String>,
     ): MatrixEntry {
-        val pool = preferredPool(matrix.scenes, spec.sceneAny, spec.sceneKeys)
+        val pool = preferredPool(scenePoolFor(matrix, spec), spec.sceneAny, spec.sceneKeys)
         var compatible = pool.filter { sceneCompatible(pose, it) }
         if (compatible.isEmpty()) {
             warnings.add("no compatible scene for pose '${pose.blob}'; using full list")

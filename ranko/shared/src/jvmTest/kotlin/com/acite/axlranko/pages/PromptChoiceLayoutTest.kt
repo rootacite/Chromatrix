@@ -57,7 +57,8 @@ class PromptChoiceLayoutTest {
         setCharacter = {}, setQualitySuffix = {}, setMode = {}, setExposure = { _, _ -> }, setClothingAny = {},
         toggleClothing = {}, setChest = {}, setBelly = {}, setFigure = {}, setPussyShape = {},
         setPussyHair = {}, setFaceGroup = { _, _ -> },
-        toggleFaceTag = { _, _ -> }, setSceneAny = {}, toggleScene = {}, setFamilyAny = {},
+        toggleFaceTag = { _, _ -> }, setSceneAny = {}, toggleScene = {}, setSceneGroup = { _, _ -> },
+        setFamilyAny = {},
         toggleFamily = {}, setVaginalRatio = {}, setStageWeight = { _, _ -> }, setPoseAny = {},
         togglePose = {}, setCount = {}, setSeedText = {},
     )

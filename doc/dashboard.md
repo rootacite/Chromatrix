@@ -246,6 +246,15 @@ of the app uses, so no new image path exists.
   sleeping` reads as lying to it and used to land on a sofa. A row that names two places accepts
   either (`on railing` + `looking outside` is a rooftop or a window). The table is `POSE_PLACES` in
   `prompt/PromptTypes.kt`; a place no scene carries warns and falls back to the whole scene list.
+- The `SCENE:` section may file its rows under `[name]` block headers (`[warm]`, `[clear]`,
+  `[nsfw]`, `[common]`, …), the way `CLOTHING:` uses `[covered]` for exposure. A block label is not
+  a scene of its own, and a `#` line directly under a header labels the block, which is what the
+  wizard's chips show. The scene step lists one chip per block plus the rows of the ticked ones: a
+  SFW profile draws every block except `nsfw`, NSFW and SEX draw all of them, and a row written
+  above the first header belongs to no block, so every pick draws it. Ticking a chip resolves that
+  default into an explicit list; nothing ticked means the mode's default again, and a block the file
+  no longer has falls back to it rather than opening the whole section. `SCENE_GROUP_EXCLUSIONS` in
+  `prompt/PromptTypes.kt` is the one mode rule; the rest is the file's own data.
 - The pose pool is per mode: SFW draws `SFW_POSES`, SEX draws `POSES`, and **NSFW draws
   `SFW_POSES` + `QUESTIONABLE_POSES`** — never the sex rows, whose run-up the SEX mode's stage page
   already covers. A `QUESTIONABLE_POSES` row states its own clothing and body exposure (`panties`,
@@ -257,11 +266,12 @@ of the app uses, so no new image path exists.
   words are `POSE_CHEST_WORDS` / `POSE_BOTTOM_WORDS` in `prompt/PromptTypes.kt` and the fill is
   `PromptGenerator.stateFill`; every questionable row also keeps its own place constraints.
 - **Profiles** are the `prompt_profiles/*.json` files, listed with their format version, size and
-  mtime. Loading one opens the configuration list; a v1 or v2 profile is upgraded in memory (the
-  row then shows what changed, e.g. `upgraded from v2 to v3`) and is only rewritten when you save.
-  **Save as** writes a v3 profile, with an overwrite switch for a name that is taken; **Delete**
-  removes the file. The three pick groups are stored as the chosen row's tags, and a profile without
-  those keys reads as off.
+  mtime. Loading one opens the configuration list; a v1, v2 or v3 profile is upgraded in memory (the
+  row then shows what changed, e.g. `upgraded from v3 to v4`, and a v3 profile also notes that its
+  scene blocks are now the mode's default) and is only rewritten when you save. **Save as** writes a
+  v4 profile, with an overwrite switch for a name that is taken; **Delete** removes the file. The
+  three pick groups are stored as the chosen row's tags, the scene blocks as `scene_groups`, and a
+  profile without those keys reads as off — or, for the blocks, as the mode's default.
 - **Wizard**: 16 steps (character, mode, exposure, clothing, chest, belly, figure, face, scene,
   family, ratio, stages, pussy shape, pussy hair, pose, count) with a step list on the left,
   back/next at the bottom, and pages the current mode or exposure does not use skipped (`nude` drops

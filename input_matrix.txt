@@ -236,6 +236,152 @@ outdoors, forest, shade
 # 森林树荫
 poolside, outdoors, pool
 # 泳池边
+[warm]
+bedroom, indoors, lamp, night
+# 卧室夜灯，偏暖、偏私密
+bedroom, indoors, morning, sunlight through window
+# 卧室早晨窗光，清醒但不硬
+living room, indoors, couch, blanket
+# 客厅沙发加毯子，居家温馨
+kitchen, indoors, morning, sunlight
+# 厨房早晨，窗边灶台
+dining room, indoors, table
+# 餐厅餐桌，坐着吃饭或靠桌
+library, indoors, bookshelf, window
+# 图书馆靠窗，安静、光干净
+flower shop, indoors, flowers
+# 花店，色彩暖、背景丰富但好虚化
+bakery, indoors, window
+# 面包店靠窗，暖色
+japanese room, indoors, tatami
+# 和室榻榻米，配浴衣、跪坐
+veranda, indoors, engawa, sunlight
+# 缘侧，室内外交界，光软
+greenhouse, indoors, plants, sunlight
+# 温室植物，光斑清楚
+balcony, outdoors, railing, morning
+# 阳台早晨栏杆，能靠也能站
+garden, outdoors, flowers, sunlight
+# 花园白天，比公园更近人
+cherry blossoms, outdoors, petals
+# 樱花树下，落瓣
+autumn, outdoors, falling leaves
+# 秋叶，公园、神社、庭院都能借
+snow, outdoors, winter, soft lighting
+# 雪景，光漫、偏静
+festival, outdoors, night, lantern
+# 祭典灯笼夜，暖但不霓虹
+[clear]
+blue sky, outdoors, cloud
+# 晴空白云，几乎纯外景
+outdoors, field, blue sky, sunlight
+# 开阔草地加晴空，比公园更空
+hill, outdoors, blue sky
+# 坡地远景，全身好摆
+lake, outdoors, water, blue sky
+# 湖边，倒影和岸
+riverbank, outdoors, river
+# 河岸，可坐可站
+bridge, outdoors, city, day
+# 桥上白天，城市但清楚
+rooftop, outdoors, blue sky, fence
+# 天台晴空加围栏，比原 rooftop 更亮
+school gate, outdoors, day
+# 校门口白天
+classroom, indoors, empty, sunlight
+# 空教室直射光，桌椅清楚
+art classroom, indoors, window
+# 美术教室窗边，画架可有可无
+music room, indoors, window
+# 音乐教室，钢琴可虚掉
+gym storeroom, indoors
+# 体育馆仓库，狭、光一般，诱惑和日常都能用
+locker room, indoors
+# 更衣室，镜和柜子
+train station, outdoors, platform, day
+# 站台白天，清楚、公共
+crosswalk, outdoors, city, day
+# 斑马线白天
+park, outdoors, path, sunlight
+# 公园小路，比长椅更适合走
+[nsfw]
+love hotel, indoors, bed, dim lighting
+# 情人旅馆，床和暗光，诱惑向默认
+bedroom, indoors, mirror, night
+# 卧室夜镜，对镜、脱衣
+bathroom, indoors, mirror, steam
+# 浴室镜加蒸汽，湿发、毛巾
+shower, indoors, wet, steam
+# 淋浴间，水汽
+bathtub, indoors, wet
+# 浴缸，坐或靠沿
+onsen, outdoors, night, steam
+# 露天温泉夜，比室内温泉更暗
+changing room, indoors, curtain
+# 更衣隔间帘后
+bedroom, indoors, unmade bed
+# 凌乱床，事后或诱惑都合适
+hotel room, indoors, bed, window, night
+# 酒店夜窗，城市灯在外面
+backstage, indoors, dim lighting
+# 后台暗光，偶像服、脱到一半
+alley, outdoors, night
+# 窄巷夜，站立靠墙
+car interior, night
+# 车内夜，坐姿、狭空间
+office, indoors, night, desk
+# 夜间办公室桌边
+classroom, indoors, after school, dusk
+# 放学后空教室黄昏，公共场合但空
+rooftop, outdoors, night, fence
+# 天台夜，栏杆和暗
+pool, indoors, night, wet
+# 室内泳池夜，水面反光
+sauna, indoors, steam, wooden wall
+# 桑拿木墙蒸汽
+[common]
+stairs, indoors
+# 室内楼梯，坐阶、从下往上
+stairwell, indoors, school
+# 学校楼梯间
+elevator, indoors
+# 电梯，狭、站或靠壁
+convenience store, indoors, night
+# 便利店夜，冷白光
+bookstore, indoors, shelf
+# 书店书架
+museum, indoors
+# 美术馆，空墙和侧光
+church, indoors
+# 教堂内，窗光长
+shrine, indoors
+# 神社本殿内，比鸟居更近
+torii, outdoors, path
+# 鸟居参道，比单鸟居更有纵深
+school clubroom, indoors
+# 社团活动室
+infirmary, indoors, bed
+# 保健室床
+cafeteria, indoors, table
+# 食堂餐桌
+amusement park, outdoors, day
+# 游乐园白天
+amusement park, outdoors, night
+# 游乐园夜灯
+aquarium, indoors, blue light
+# 水族馆蓝光
+planetarium, indoors, dark
+# 天文馆暗场
+campsite, outdoors, night, tent
+# 营地帐篷夜
+picnic, outdoors, blanket, grass
+# 野餐垫草地
+pier, outdoors, ocean
+# 码头海边，比沙滩更窄
+lighthouse, outdoors, ocean
+# 灯塔海岸
+cityscape, night, from above
+# 城市夜景俯视，天台或高窗
 
 SUFFIX:
 warm atmosphere

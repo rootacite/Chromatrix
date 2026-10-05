@@ -14,6 +14,7 @@ private fun fullSpec(): PromptSpec = testSpec(
     clothingKeys = setOf(listOf("bikini", "side-tie bikini bottom")),
     sceneAny = false,
     sceneKeys = setOf(listOf("bedroom", "indoors", "bed")),
+    sceneGroups = listOf("warm", "common"),
     poseAny = false,
     poseKeys = setOf(listOf("cowgirl position", "girl on top", "sitting", "straddling", "looking at viewer")),
     familyAny = false,
@@ -80,7 +81,11 @@ class ProfileCodecTest {
         val loaded = ProfileCodec.loadProfile(text, "sena test")
         assertEquals(spec, loaded.spec)
         assertEquals("sena test", loaded.name)
-        assertTrue(text.contains(""""version": 3"""), text)
+        assertTrue(text.contains(""""version": 4"""), text)
+        assertTrue(
+            Regex("\"scene_groups\": \\[[^\\]]*\"warm\"[^\\]]*\"common\"[^\\]]*]").containsMatchIn(text),
+            text,
+        )
         assertTrue(loaded.notes.isEmpty(), loaded.notes.toString())
     }
 
@@ -214,7 +219,7 @@ class ProfileCodecTest {
         val spec = fullSpec()
         spec.face = spec.face + ("expression" to FacePick.Tags(listOf("smile", "shy")))
         val text = ProfileCodec.profileText("multi", spec)
-        assertTrue(text.contains(""""version": 3"""))
+        assertTrue(text.contains(""""version": 4"""))
         val loaded = ProfileCodec.loadProfile(text, "multi")
         assertEquals(FacePick.Tags(listOf("smile", "shy")), loaded.spec.face["expression"])
     }
@@ -283,7 +288,7 @@ class ProfileCodecTest {
     @Test
     fun aV2TagBecomesACandidateList() {
         val text = ProfileCodec.profileText("v2tag", fullSpec())
-            .replace(""""version": 3""", """"version": 2""")
+            .replace(""""version": 4""", """"version": 2""")
             .replace(
                 Regex("\"face\": \\{[^}]*}"),
                 """"face": {"expression": "smile", "gaze": "none", "eyes": "any"}""",
@@ -297,10 +302,44 @@ class ProfileCodecTest {
 
     @Test
     fun anUnsupportedVersionIsRejected() {
-        val text = ProfileCodec.profileText("p", fullSpec()).replace(""""version": 3""", """"version": 99""")
+        val text = ProfileCodec.profileText("p", fullSpec()).replace(""""version": 4""", """"version": 99""")
         assertFailsWith<ProfileException> { ProfileCodec.loadProfile(text, "p") }
-        val stringVersion = ProfileCodec.profileText("p", fullSpec()).replace(""""version": 3""", """"version": "3"""")
+        val stringVersion = ProfileCodec.profileText("p", fullSpec()).replace(""""version": 4""", """"version": "3"""")
         assertFailsWith<ProfileException> { ProfileCodec.loadProfile(stringVersion, "p") }
+    }
+
+    @Test
+    fun aV3ProfileNamesNoBlocksAndIsNotedAsChanged() {
+        // What every profile written before the blocks existed loads in: the mode's own pick, which
+        // is also the one behaviour change a v3 file goes through.
+        val text = ProfileCodec.profileText("v3", fullSpec())
+            .replace(""""version": 4""", """"version": 3""")
+            .replace(Regex("\"scene_groups\": \\[[^\\]]*],\\s*"), "")
+        val loaded = ProfileCodec.loadProfile(text, "v3")
+        assertTrue(loaded.spec.sceneGroups.isEmpty(), loaded.spec.sceneGroups.toString())
+        assertTrue(loaded.notes.any { it.contains("upgraded from v3") }, loaded.notes.toString())
+        assertTrue(loaded.notes.any { it.contains("scene blocks") }, loaded.notes.toString())
+    }
+
+    @Test
+    fun aProfileWithoutTheSceneGroupsDrawsTheModeDefault() {
+        // A hand-written or older file with no key at all reads as the mode's own pick.
+        val text = ProfileCodec.profileText("old", fullSpec())
+            .replace(Regex("\"scene_groups\": \\[[^\\]]*],\\s*"), "")
+        val spec = ProfileCodec.loadProfile(text, "old").spec
+        assertTrue(spec.sceneGroups.isEmpty(), spec.sceneGroups.toString())
+        assertEquals(listOf("warm", "common"), defaultSceneGroups(blockMatrix(), PromptMode.Sfw))
+    }
+
+    @Test
+    fun aBadSceneGroupsValueIsRejected() {
+        listOf("3", "[\"\"]", "{\"a\": 1}", "[\"warm\", true]").forEach { bad ->
+            val text = ProfileCodec.profileText("bad", fullSpec())
+                .replace(Regex("\"scene_groups\": \\[[^\\]]*]"), "\"scene_groups\": $bad")
+            assertFailsWith<ProfileException>("scene_groups -> $bad") {
+                ProfileCodec.loadProfile(text, "bad")
+            }
+        }
     }
 
     @Test
@@ -413,12 +452,15 @@ class ManifestModelTest {
         val rows = ManifestModel.items(spec, PromptLang.English).associate { it.pageKey to it.value }
         assertEquals("1 selected", rows["clothing"])
         assertEquals("1 selected", rows["pose"])
-        assertEquals("1 selected", rows["scene"])
+        // The scene row leads with the blocks, since they narrow what the row pick can offer.
+        assertEquals("warm, common · 1 selected", rows["scene"])
         assertEquals("1 selected", rows["family"])
         val anySpec = testSpec(mode = PromptMode.Sex)
         val anyRows = ManifestModel.items(anySpec, PromptLang.English).associate { it.pageKey to it.value }
         assertEquals("Any", anyRows["clothing"])
         assertEquals("Any", anyRows["family"])
+        // No block pick = the mode's own default, which the row leaves unsaid.
+        assertEquals("Any", anyRows["scene"])
     }
 
     @Test

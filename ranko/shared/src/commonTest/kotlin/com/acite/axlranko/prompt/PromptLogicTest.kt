@@ -5,6 +5,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /** The same small matrix the Python suite uses, so the ported expectations stay comparable. */
@@ -84,6 +85,55 @@ shaved pussy
 
 internal fun miniMatrix(): PromptMatrix = parseMatrix(MINI_MATRIX)
 
+/** The smallest matrix with scene blocks: one ungrouped row, then three labelled blocks. */
+internal const val BLOCK_MATRIX = """POSES:
+mating press, legs up, folded, knees to chest : both
+# press
+CLOTHING:
+[covered]
+serafuku, white thighhighs
+# sailor
+SCENE:
+bedroom, indoors, bed
+# 卧室
+[warm]
+# 暖调
+bedroom, indoors, lamp, warm lighting
+# 暖色
+balcony, outdoors, railing, morning
+# 阳台
+[nsfw]
+# 情人旅馆
+love hotel, indoors, bed, dim lighting
+# 暗光
+[common]
+# 走廊
+hallway, indoors, school
+# 学校
+SUFFIX:
+soft lighting, warm light
+# soft
+SFW_POSES:
+standing, looking at viewer, arms behind back
+# stand
+lying, on back, looking at viewer
+# lie
+QUESTIONABLE_POSES:
+standing, topless, nipples, looking at viewer
+# topless
+FIGURE:
+petite
+# petite
+PUSSY_SHAPE:
+cleft of venus
+# cleft
+PUSSY_HAIR:
+shaved pussy
+# shaved
+"""
+
+internal fun blockMatrix(): PromptMatrix = parseMatrix(BLOCK_MATRIX)
+
 /** The whole-config helper the Python suite calls `_spec`. */
 internal fun testSpec(
     character: String = "(sena_character:1.1), 1girl",
@@ -93,6 +143,7 @@ internal fun testSpec(
     clothingKeys: Set<List<String>> = emptySet(),
     sceneAny: Boolean = true,
     sceneKeys: Set<List<String>> = emptySet(),
+    sceneGroups: List<String> = emptyList(),
     poseAny: Boolean = true,
     poseKeys: Set<List<String>> = emptySet(),
     familyAny: Boolean = true,
@@ -115,6 +166,7 @@ internal fun testSpec(
     clothingKeys = clothingKeys,
     sceneAny = sceneAny,
     sceneKeys = sceneKeys,
+    sceneGroups = sceneGroups,
     poseAny = poseAny,
     poseKeys = poseKeys,
     familyAny = familyAny,
@@ -229,6 +281,25 @@ class ParseMatrixTest {
     fun aMissingSectionIsRejected() {
         val broken = MINI_MATRIX.substringBefore("SUFFIX:") + "SUFFIX:\n"
         assertFailsWith<MatrixException> { parseMatrix(broken) }
+    }
+
+    @Test
+    fun aSceneBlockHeaderGroupsTheRowsUnderItOnly() {
+        val blocky = parseMatrix(BLOCK_MATRIX)
+        assertEquals(listOf("warm", "nsfw", "common"), blocky.sceneGroups)
+        assertEquals(5, blocky.scenes.size)
+        // The header is not a row of its own any more: its own name never reaches a prompt.
+        assertFalse(blocky.scenes.any { row -> row.tags.any { it.contains("[") || it.contains("]") } })
+        assertNull(find(blocky.scenes, "bedroom, indoors, bed").group)
+        assertEquals("warm", find(blocky.scenes, "lamp, warm lighting").group)
+        assertEquals("nsfw", find(blocky.scenes, "love hotel").group)
+        assertEquals("common", find(blocky.scenes, "hallway, indoors, school").group)
+        // A comment right under the header labels the block; a row's own comment still sticks to it.
+        assertEquals(mapOf("warm" to "暖调", "nsfw" to "情人旅馆", "common" to "走廊"), blocky.sceneGroupLabels)
+        assertEquals("暖色", find(blocky.scenes, "lamp, warm lighting").comment)
+        // A matrix without blocks lists none, and every row stays ungrouped.
+        assertTrue(matrix.sceneGroups.isEmpty(), matrix.sceneGroups.toString())
+        assertTrue(matrix.scenes.all { it.group == null })
     }
 }
 
@@ -707,6 +778,89 @@ class CompatibilityTest {
         generatePrompts(spec, matrix, 10).forEach { line ->
             assertFalse(line.contains("on bed"), line)
         }
+    }
+}
+
+/** The scene blocks: which rows a mode draws, and what an explicit block pick does. */
+class SceneBlockTest {
+    private val matrix = blockMatrix()
+
+    private fun draws(spec: PromptSpec, seeds: IntRange = 1..8): List<String> =
+        seeds.flatMap { seed -> generatePrompts(spec.copy(count = 20), matrix, seed.toLong()) }
+
+    @Test
+    fun theModeDefaultLeavesTheNsfwBlockOut() {
+        assertEquals(listOf("warm", "common"), defaultSceneGroups(matrix, PromptMode.Sfw))
+        assertEquals(listOf("warm", "nsfw", "common"), defaultSceneGroups(matrix, PromptMode.Nsfw))
+        assertEquals(listOf("warm", "nsfw", "common"), defaultSceneGroups(matrix, PromptMode.Sex))
+        // An ungrouped row is not a block, so it is drawn in every mode and never listed.
+        assertTrue(draws(testSpec(mode = PromptMode.Sfw)).any { it.contains("bedroom, indoors, bed") })
+        assertFalse(draws(testSpec(mode = PromptMode.Sfw)).any { it.contains("love hotel") })
+        assertTrue(draws(testSpec(mode = PromptMode.Nsfw)).any { it.contains("love hotel") })
+    }
+
+    @Test
+    fun anExplicitPickDrawsOnlyItsBlocks() {
+        val spec = testSpec(mode = PromptMode.Sfw, sceneGroups = listOf("warm"))
+        val lines = draws(spec)
+        assertTrue(lines.any { it.contains("lamp, warm lighting") }, "the warm block was never drawn")
+        assertTrue(lines.any { it.contains("balcony") })
+        // The ungrouped row still rides along: it belongs to no block that a pick could leave out.
+        assertTrue(lines.any { it.contains("bedroom, indoors, bed") })
+        assertFalse(lines.any { it.contains("hallway") })
+        assertFalse(lines.any { it.contains("love hotel") })
+    }
+
+    @Test
+    fun aPickedNsfwBlockDrawsItInEveryMode() {
+        val spec = testSpec(mode = PromptMode.Sfw, sceneGroups = listOf("nsfw"))
+        val lines = draws(spec)
+        assertTrue(lines.any { it.contains("love hotel") })
+        assertFalse(lines.any { it.contains("hallway") })
+    }
+
+    @Test
+    fun aBlockTheMatrixDoesNotHaveFallsBackToTheModeDefault() {
+        // A renamed block, or a hand-written profile: SFW still cannot reach the nsfw block.
+        val spec = testSpec(mode = PromptMode.Sfw, sceneGroups = listOf("gone"))
+        val lines = draws(spec)
+        assertFalse(lines.any { it.contains("love hotel") })
+        assertTrue(lines.any { it.contains("lamp, warm lighting") })
+    }
+
+    @Test
+    fun theScenePageListsWhatTheBlockPickOffers() {
+        val warm = testSpec(mode = PromptMode.Sfw, sceneGroups = listOf("warm"))
+        assertEquals(
+            listOf("bedroom, indoors, bed", "bedroom, indoors, lamp, warm lighting", "balcony, outdoors, railing, morning"),
+            WizardModel.allowedScenes(matrix, warm).map { it.blob },
+        )
+        assertEquals(listOf("warm"), WizardModel.sceneGroupsFor(matrix, warm))
+        // Empty reads as the mode's own pick, which the first toggle resolves into an explicit list.
+        assertEquals(listOf("warm", "common"), WizardModel.sceneGroupsFor(matrix, testSpec(mode = PromptMode.Sfw)))
+    }
+
+    @Test
+    fun switchingModePutsTheBlocksBackOnTheModeDefault() {
+        val spec = testSpec(mode = PromptMode.Nsfw, sceneGroups = listOf("nsfw"))
+        WizardModel.applyModeChange(spec, PromptMode.Sfw)
+        assertTrue(spec.sceneGroups.isEmpty(), spec.sceneGroups.toString())
+        assertFalse(draws(spec).any { it.contains("love hotel") })
+    }
+
+    @Test
+    fun theUnpickedBlocksAreStillReachableByAPinnedScene() {
+        // A pinned row the block pick leaves out is not drawn, and the draw stays on the pick.
+        val nsfwRow = find(matrix.scenes, "love hotel")
+        val spec = testSpec(
+            mode = PromptMode.Sfw,
+            sceneAny = false,
+            sceneKeys = setOf(nsfwRow.key),
+            sceneGroups = listOf("warm", "common"),
+        )
+        val lines = draws(spec)
+        assertFalse(lines.any { it.contains("love hotel") })
+        assertTrue(lines.any { it.contains("lamp, warm lighting") })
     }
 }
 

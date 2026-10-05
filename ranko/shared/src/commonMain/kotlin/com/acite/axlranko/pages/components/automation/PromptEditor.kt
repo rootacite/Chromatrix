@@ -81,6 +81,7 @@ class PromptEditorActions(
     val toggleFaceTag: (String, String) -> Unit,
     val setSceneAny: () -> Unit,
     val toggleScene: (List<String>) -> Unit,
+    val setSceneGroup: (String, Boolean) -> Unit,
     val setFamilyAny: () -> Unit,
     val toggleFamily: (PoseFamily) -> Unit,
     val setVaginalRatio: (Double) -> Unit,
@@ -401,8 +402,27 @@ fun PromptPageEditor(
             "clothing", "scene", "pose" -> {
                 val entries = when (pageKey) {
                     "clothing" -> matrix?.let { WizardModel.allowedClothing(it, spec.exposure) }.orEmpty()
-                    "scene" -> matrix?.scenes.orEmpty()
+                    // A block pick narrows the rows this page offers, the way exposure does clothing.
+                    "scene" -> matrix?.let { WizardModel.allowedScenes(it, spec) }.orEmpty()
                     else -> matrix?.let { currentPosePool(it, spec) }.orEmpty()
+                }
+                if (pageKey == "scene" && matrix != null && matrix.sceneGroups.isNotEmpty()) {
+                    Text(
+                        text = uiText(lang, "scene_groups_title"),
+                        color = colors.text,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    MultiChoice(
+                        options = matrix.sceneGroups.map { group ->
+                            group to (matrix.sceneGroupLabels[group] ?: group)
+                        },
+                        selected = WizardModel.sceneGroupsFor(matrix, spec).toSet(),
+                        onToggle = actions.setSceneGroup,
+                    )
+                    if (spec.sceneGroups.isEmpty()) {
+                        dimHint(uiText(lang, "scene_groups_empty"))
+                    }
                 }
                 val anyOn = when (pageKey) {
                     "clothing" -> spec.clothingAny

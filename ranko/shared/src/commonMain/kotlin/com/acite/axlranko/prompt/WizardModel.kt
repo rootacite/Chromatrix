@@ -53,12 +53,14 @@ object WizardModel {
     /**
      * Switching mode resets the fields whose value is mode-specific, like `_page_mode`: exposure,
      * chest, belly, the whole face page, and the two SEX-only pussy picks. A figure is not
-     * mode-specific, so it stays.
+     * mode-specific, so it stays. The scene blocks go back to the mode's own pick, which is what
+     * keeps a SFW draw off the `nsfw` block after a NSFW profile switches modes.
      */
     fun applyModeChange(spec: PromptSpec, mode: PromptMode) {
         if (mode == spec.mode) return
         spec.mode = mode
         spec.exposure = defaultExposure(mode)
+        spec.sceneGroups = emptyList()
         spec.chest = CHEST_DEFAULT.getValue(mode)
         spec.belly = BELLY_DEFAULT.getValue(mode)
         spec.face = defaultFace()
@@ -75,6 +77,14 @@ object WizardModel {
 
     fun needsSfwFaceWarning(spec: PromptSpec): Boolean =
         needsSfwFaceWarning(spec.mode, selectedFaceTags(spec.face))
+
+    /** The blocks the scene page shows as ticked: the spec's own pick, else the mode's default. */
+    fun sceneGroupsFor(matrix: PromptMatrix, spec: PromptSpec): List<String> =
+        spec.sceneGroups.ifEmpty { defaultSceneGroups(matrix, spec.mode) }
+
+    /** The scene rows the current block pick offers, the way [allowedClothing] follows exposure. */
+    fun allowedScenes(matrix: PromptMatrix, spec: PromptSpec): List<MatrixEntry> =
+        PromptGenerator.scenePoolFor(matrix, spec)
 
     /** The clothing rows a given exposure setting can offer, in bucket order and without repeats. */
     fun allowedClothing(matrix: PromptMatrix, exposure: List<String>): List<MatrixEntry> {

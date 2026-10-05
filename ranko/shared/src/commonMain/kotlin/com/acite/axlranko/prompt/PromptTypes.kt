@@ -107,6 +107,17 @@ val MODE_EXPOSURE_DEFAULTS: Map<PromptMode, List<String>> = mapOf(
     PromptMode.Sex to listOf("open"),
 )
 
+/**
+ * The scene blocks a mode leaves out of its default pick. `nsfw` is the block the matrix files the
+ * seductive scenes under — the same word `RATING_TAGS` keeps out of a prompt — so a SFW draw does
+ * not start on a love hotel; every other block, and every ungrouped row, is drawn in all modes.
+ */
+val SCENE_GROUP_EXCLUSIONS: Map<PromptMode, Set<String>> = mapOf(
+    PromptMode.Sfw to setOf("nsfw"),
+    PromptMode.Nsfw to emptySet(),
+    PromptMode.Sex to emptySet(),
+)
+
 val CHEST_LEVELS: List<String> = listOf("covered", "cleavage", "breasts_out", "nipples", "auto")
 val BELLY_LEVELS: List<String> = listOf("covered", "midriff", "navel", "auto")
 val CHEST_DEFAULT: Map<PromptMode, String> =
@@ -278,6 +289,9 @@ val SECTION_NAMES: Set<String> = setOf(
     "PUSSY_HAIR",
 )
 val CLOTHING_GROUP_RE = Regex("^\\[(covered|casual|revealing)]\$")
+
+/** A SCENE block header: `[warm]`. The names are the matrix's own, so any row of them is taken. */
+val SCENE_GROUP_RE = Regex("^\\[([A-Za-z0-9][A-Za-z0-9_ -]*)]\$")
 val CHANNEL_RE = Regex("^(.+?)\\s*:\\s*(both|anal only|vaginal only|none)\\s*\$")
 
 /** Tags the wizard never appends, whatever the matrix says. */

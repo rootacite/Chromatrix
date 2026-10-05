@@ -386,18 +386,88 @@ class RealMatrixPromptTest {
 
     @Test
     fun generatedSfwPromptsKeepEveryPlaceWithItsScene() {
-        val spec = PromptSpec(mode = PromptMode.Sfw, count = 200)
+        // The check is on the pose the draw was pinned to, because a scene can carry a word that
+        // POSE_PLACES also reads as a place (`sauna, indoors, steam, wooden wall` says `steam`,
+        // which a pose saying `steam` means as `onsen`). Reading the finished line cannot tell the
+        // two apart, and used to fail on any such scene.
+        val spec = PromptSpec(mode = PromptMode.Sfw, count = 8)
         val warnings = mutableListOf<String>()
-        val lines = (1..5).flatMap { PromptGenerator.generate(spec, matrix, seed = 700L + it, warnings) }
-        assertEquals(1000, lines.size)
-        assertTrue(warnings.isEmpty(), warnings.toString())
-        lines.forEach { line ->
-            // A row may name two places (`on railing, looking outside`); either one may be the scene.
-            val named = POSE_PLACES.filter { line.contains(it.marker) }
-            if (named.isNotEmpty()) {
+        val naming = (matrix.poses + matrix.sfwPoses).filter { PromptGenerator.posePlaces(it).isNotEmpty() }
+        assertTrue(naming.size >= 40, "rows naming a place: ${naming.size}")
+        naming.forEach { pose ->
+            val lines = PromptGenerator.generate(
+                spec.copy(poseAny = false, poseKeys = setOf(pose.key)),
+                matrix,
+                seed = 700L + pose.blob.length,
+                warnings = warnings,
+            )
+            val places = PromptGenerator.posePlaces(pose)
+            lines.forEach { line ->
+                // A row may name two places (`on railing, looking outside`); either one may be it.
                 assertTrue(
-                    named.any { place -> place.scenes.any { line.contains(it) } },
-                    "${named.map { it.marker }}: $line",
+                    places.any { place -> place.scenes.any { line.contains(it) } },
+                    "${pose.blob} (${places.map { it.marker }}): $line",
+                )
+            }
+        }
+        assertTrue(warnings.isEmpty(), warnings.toString())
+    }
+
+    @Test
+    fun theSceneBlocksOfTheRealMatrixAreReadAndKept() {
+        // The file files its scenes under `[warm] [clear] [nsfw] [common]`; a block label is not a
+        // scene of its own, and the rows under it carry the label as their block.
+        assertEquals(listOf("warm", "clear", "nsfw", "common"), matrix.sceneGroups)
+        assertFalse(matrix.scenes.any { row -> row.tags.any { it.contains("[") || it.contains("]") } })
+        assertTrue(matrix.scenes.any { it.group == null }, "the ungrouped rows above the first block")
+        matrix.scenes.filter { it.group != null }.forEach { row ->
+            assertTrue(row.group!! in matrix.sceneGroups, row.blob)
+        }
+        // The block a row sits under is the one the file writes it under.
+        assertEquals("nsfw", find(matrix.scenes, "love hotel").group)
+        assertEquals("warm", find(matrix.scenes, "bakery, indoors, window").group)
+    }
+
+    @Test
+    fun aSfwDrawNeverReachesTheNsfwBlockAndAnExplicitPickStillDoes() {
+        val nsfwRows = matrix.scenes.filter { it.group == "nsfw" }
+        assertTrue(nsfwRows.size >= 15, "nsfw rows: ${nsfwRows.size}")
+        // The pool a SFW draw picks from, and a batch drawn from it: `love hotel` is a row of the
+        // nsfw block and of no other.
+        assertTrue(
+            PromptGenerator.scenePoolFor(matrix, PromptSpec(mode = PromptMode.Sfw)).none { it.group == "nsfw" },
+            "the SFW scene pool carries an nsfw row",
+        )
+        val sfw = (1..5).flatMap { seed ->
+            PromptGenerator.generate(PromptSpec(mode = PromptMode.Sfw, count = 200), matrix, seed = 700L + seed)
+        }
+        assertEquals(1000, sfw.size)
+        assertFalse(sfw.any { it.contains("love hotel") }, "a SFW draw reached the nsfw block")
+        // Every block is still reachable when the profile asks for it, and the ungrouped rows ride
+        // along with any pick.
+        val picked = PromptGenerator.generate(
+            PromptSpec(mode = PromptMode.Sfw, count = 60, sceneGroups = listOf("nsfw")),
+            matrix,
+            4242,
+        )
+        assertTrue(picked.any { it.contains("love hotel") }, picked.first())
+        assertTrue(picked.none { it.contains("bakery") }, "a row outside the pick was drawn")
+    }
+
+    /** Every place-naming pose of a mode's own scene pool keeps a scene that carries its place. */
+    @Test
+    fun everyPlaceNamingPoseHasASceneInItsModesOwnBlocks() {
+        listOf(PromptMode.Sfw, PromptMode.Nsfw, PromptMode.Sex).forEach { mode ->
+            val pool = PromptGenerator.scenePoolFor(matrix, PromptSpec(mode = mode))
+            assertTrue(pool.isNotEmpty(), mode.wire)
+            if (mode == PromptMode.Sfw) {
+                assertTrue(pool.none { it.group == "nsfw" }, "the SFW pool carries an nsfw row")
+            }
+            (matrix.poses + matrix.sfwPoses).forEach { pose ->
+                if (PromptGenerator.posePlaces(pose).isEmpty()) return@forEach
+                assertTrue(
+                    pool.any { PromptGenerator.sceneCompatible(pose, it) },
+                    "$mode: no scene for ${pose.blob}",
                 )
             }
         }

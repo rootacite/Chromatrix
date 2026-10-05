@@ -409,6 +409,24 @@ class AutomationScreenViewModel(
         spec.sceneAny = keys.isEmpty()
     }
 
+    /**
+     * A scene block the draws may use. The first toggle resolves the mode's own default into an
+     * explicit list, so unticking `nsfw` on a NSFW profile is what pins the rest; the stored order
+     * is the matrix's, and a block the matrix no longer has drops out.
+     */
+    fun setSceneGroup(group: String, on: Boolean) {
+        val matrix = _uiState.value.matrix
+        edit { spec ->
+            val groups = (matrix?.let { WizardModel.sceneGroupsFor(it, spec) } ?: spec.sceneGroups).toMutableList()
+            if (on) {
+                if (!groups.contains(group)) groups.add(group)
+            } else {
+                groups.remove(group)
+            }
+            spec.sceneGroups = matrix?.sceneGroups?.filter { it in groups } ?: groups.toList()
+        }
+    }
+
     fun setFamilyAny() = edit { spec ->
         spec.familyAny = true
         spec.families = emptySet()

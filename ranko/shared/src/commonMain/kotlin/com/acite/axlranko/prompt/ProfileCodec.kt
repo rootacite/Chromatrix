@@ -15,14 +15,14 @@ import kotlinx.serialization.json.jsonPrimitive
 /**
  * The named wizard profiles under repo-root `prompt_profiles/`, ported from `tools/gen_prompts.py`.
  *
- * The file format is version 3; profiles written by the older script versions (v1 without the
- * grouped face page, v2 with a single tag per group) are upgraded on load and never rewritten
- * until the user saves again.
+ * The file format is version 4; profiles written by the older script versions (v1 without the
+ * grouped face page, v2 with a single tag per group, v3 without the scene blocks) are upgraded on
+ * load and never rewritten until the user saves again.
  */
 @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
 object ProfileCodec {
 
-    const val PROFILE_VERSION = 3
+    const val PROFILE_VERSION = 4
 
     private val json = Json { prettyPrint = true; prettyPrintIndent = "  " }
 
@@ -63,10 +63,11 @@ object ProfileCodec {
         val upgraded = when (version) {
             1 -> upgradeV1(specObject, notes)
             2 -> upgradeV2(specObject)
+            3 -> upgradeV3(specObject, notes)
             PROFILE_VERSION -> specObject
             else -> throw ProfileException("$fallbackName: unsupported profile version $version")
         }
-        if (upgraded !== specObject) {
+        if (version != PROFILE_VERSION) {
             notes.add(0, "upgraded from v$version to v$PROFILE_VERSION")
         }
         val name = payload["name"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty().ifEmpty { fallbackName }
@@ -110,6 +111,7 @@ object ProfileCodec {
             "clothing_keys" to keysToJson(spec.clothingKeys),
             "scene_any" to JsonPrimitive(spec.sceneAny),
             "scene_keys" to keysToJson(spec.sceneKeys),
+            "scene_groups" to JsonArray(spec.sceneGroups.map { JsonPrimitive(it) }),
             "pose_any" to JsonPrimitive(spec.poseAny),
             "pose_keys" to keysToJson(spec.poseKeys),
             "family_any" to JsonPrimitive(spec.familyAny),
@@ -204,6 +206,7 @@ object ProfileCodec {
             clothingKeys = keySetAt(data, "clothing_keys"),
             sceneAny = boolAt(data, "scene_any", true),
             sceneKeys = keySetAt(data, "scene_keys"),
+            sceneGroups = stringListAt(data, "scene_groups"),
             poseAny = boolAt(data, "pose_any", true),
             poseKeys = keySetAt(data, "pose_keys"),
             familyAny = boolAt(data, "family_any", true),
@@ -272,6 +275,21 @@ object ProfileCodec {
             }
         }
         return keys
+    }
+
+    /**
+     * A list of scene block names. A missing key is the mode's own default, so an empty list is the
+     * answer; the names are not checked against the matrix, exactly like `scene_keys` are not.
+     */
+    private fun stringListAt(data: JsonObject, key: String): List<String> {
+        val raw = data[key] ?: return emptyList()
+        if (raw is JsonNull) return emptyList()
+        val array = raw as? JsonArray ?: throw ProfileException("$key must be a list of strings")
+        return array.map {
+            val text = (it as? JsonPrimitive)?.takeIf { primitive -> primitive.isString }?.content
+            if (text.isNullOrEmpty()) throw ProfileException("$key must be a list of strings")
+            text
+        }.distinct()
     }
 
     private fun stringSetAt(data: JsonObject, key: String, allowed: List<String>?): Set<String> {
@@ -383,6 +401,15 @@ object ProfileCodec {
         buckets.forEach { (groupId, tags) -> face[groupId] = JsonArray(tags.distinct().map { JsonPrimitive(it) }) }
         upgraded["face"] = JsonObject(face)
         return JsonObject(upgraded)
+    }
+
+    /**
+     * v4 adds the scene blocks. A v3 profile names none, which reads as the mode's own default —
+     * and that default is what keeps a SFW draw off the `nsfw` block, so the change is noted.
+     */
+    private fun upgradeV3(specData: JsonObject, notes: MutableList<String>): JsonObject {
+        notes.add("scene blocks: the mode's default")
+        return specData
     }
 
     /** v2 stored one tag per group; v3 stores a candidate list, so wrap bare tags. */
