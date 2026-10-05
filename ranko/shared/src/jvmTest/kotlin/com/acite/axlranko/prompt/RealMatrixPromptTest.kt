@@ -179,8 +179,13 @@ class RealMatrixPromptTest {
         )
         assertTrue(renamed.any { INVISIBLE_PENIS_TAG in splitTags(it) })
         renamed.forEach { line ->
-            assertFalse(splitTags(line).contains(PENIS_TAG), line)
+            val tags = splitTags(line).toSet()
+            assertFalse(tags.contains(PENIS_TAG), line)
             assertFalse(line.replace(INVISIBLE_PENIS_TAG, "").contains(PENIS_TAG), line)
+            // The phrase and a partner in frame contradict each other.
+            assertTrue(tags.contains("solo"), line)
+            assertFalse(tags.contains("1boy"), line)
+            assertFalse(tags.contains("hetero"), line)
         }
     }
 

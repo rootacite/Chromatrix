@@ -1263,6 +1263,10 @@ class InvisiblePenisOptionTest {
             assertFalse(tags.contains(PENIS_TAG), line)
             // Every occurrence of the word in the line is the one inside the phrase.
             assertFalse(line.replace(INVISIBLE_PENIS_TAG, "").contains(PENIS_TAG), line)
+            // An invisible penis is no body in frame: the draw claims she is alone, never a partner.
+            assertTrue(tags.contains("solo"), line)
+            assertFalse(tags.contains("1boy"), line)
+            assertFalse(tags.contains("hetero"), line)
         }
     }
 
@@ -1272,9 +1276,40 @@ class InvisiblePenisOptionTest {
         assertTrue(anal.contains("invisible penis on ass"), anal.toString())
         assertFalse(anal.contains("penis on ass"), anal.toString())
         assertFalse(anal.contains(PENIS_TAG), anal.toString())
+        assertTrue(anal.contains("solo"), anal.toString())
+        assertFalse(anal.contains("1boy"), anal.toString())
+        assertFalse(anal.contains("hetero"), anal.toString())
         val vaginal = tagsOf(assembleLine(SexStage.Before, PromptChannel.Vaginal, invisiblePenis = true))
         assertTrue(vaginal.contains("invisible penis on pussy"), vaginal.toString())
         assertFalse(vaginal.contains("penis on pussy"), vaginal.toString())
+        assertTrue(vaginal.contains("solo"), vaginal.toString())
+        assertFalse(vaginal.contains("hetero"), vaginal.toString())
+    }
+
+    @Test
+    fun aHandStageOnAHeldLegsPoseKeepsItsPartner() {
+        // The hand-only rule is about the arm holding the legs, and a fingering draw writes no penis
+        // word at all — so the option does not reach it, and the third-hand guard stays in place.
+        val nelson = find(matrix.poses, "full nelson")
+        val spec = testSpec(
+            mode = PromptMode.Sex,
+            exposure = listOf("open"),
+            poseAny = false,
+            poseKeys = setOf(nelson.key),
+            stageWeights = defaultStageWeights() + mapOf(
+                SexStage.During to 0.0,
+                SexStage.Fingering to 1.0,
+            ),
+            invisiblePenis = true,
+            count = 6,
+        )
+        generatePrompts(spec, matrix, 51).forEach { line ->
+            val tags = tagsOf(line)
+            assertFalse(tags.contains(INVISIBLE_PENIS_TAG), line)
+            assertTrue(tags.contains("1boy"), line)
+            assertTrue(tags.contains("hetero"), line)
+            assertFalse(tags.contains("solo"), line)
+        }
     }
 
     @Test

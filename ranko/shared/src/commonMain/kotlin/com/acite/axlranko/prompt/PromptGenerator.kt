@@ -588,7 +588,17 @@ object PromptGenerator {
             // instead of `solo`, which is the tag that claimed she was alone to begin with.
             val withPartner = resolvedStage in STAGES_WITH_PARTNER ||
                 (resolvedStage in HAND_ONLY_STAGES && poseHoldsLegs(pose))
-            if (withPartner) extra.addAll(listOf("1boy", "hetero")) else extra.add("solo")
+            // An invisible penis is not a body in frame: those draws stay `solo`, the way the
+            // maintainer's own lines pair it — writing `1boy, hetero` while the tag says the penis
+            // cannot be seen was the contradiction. The hand-only rule above keeps its partner: it
+            // is about the arm holding the legs, and those stages write no penis word at all.
+            if (spec.invisiblePenis && resolvedStage in STAGES_WITH_PARTNER) {
+                extra.add("solo")
+            } else if (withPartner) {
+                extra.addAll(listOf("1boy", "hetero"))
+            } else {
+                extra.add("solo")
+            }
         } else {
             extra.add("solo")
         }
