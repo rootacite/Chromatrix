@@ -150,6 +150,7 @@ internal fun testSpec(
     families: Set<PoseFamily> = emptySet(),
     vaginalRatio: Double = PromptLimits.VAGINAL_RATIO_DEFAULT,
     stageWeights: Map<SexStage, Double> = defaultStageWeights(),
+    invisiblePenis: Boolean = false,
     chest: String = "auto",
     belly: String = "auto",
     figure: List<String> = emptyList(),
@@ -173,6 +174,7 @@ internal fun testSpec(
     families = families,
     vaginalRatio = vaginalRatio,
     stageWeights = stageWeights,
+    invisiblePenis = invisiblePenis,
     chest = chest,
     belly = belly,
     figure = figure,
@@ -1039,8 +1041,18 @@ class TorsoTagTest {
 }
 
 /** The slot order of a full sex line, with the stage picked explicitly. */
-private fun assembleLine(stage: SexStage, channel: PromptChannel = PromptChannel.Vaginal): String {
-    val spec = testSpec(mode = PromptMode.Sex, exposure = listOf("open"))
+private fun assembleLine(
+    stage: SexStage,
+    channel: PromptChannel = PromptChannel.Vaginal,
+    invisiblePenis: Boolean = false,
+    character: String = "(sena_character:1.1), 1girl",
+): String {
+    val spec = testSpec(
+        character = character,
+        mode = PromptMode.Sex,
+        exposure = listOf("open"),
+        invisiblePenis = invisiblePenis,
+    )
     val pose = MatrixEntry(listOf("doggystyle", "sex from behind"), channel = PromptChannel.Both)
     val clothes = MatrixEntry(listOf("serafuku", "white thighhighs"), openClothes = true, group = "covered")
     val scene = MatrixEntry(listOf("bedroom", "indoors", "bed"))
@@ -1222,6 +1234,77 @@ internal val NONE_MINI_MATRIX: String = MINI_MATRIX.replace(
     "full nelson : anal only",
     "full nelson : anal only\noral, fellatio : none\n# oral\npaizuri : none\n# paizuri\nnursing handjob : none\n# nursing",
 )
+
+/**
+ * The wizard's `invisible penis` option: an enabled spec writes the phrase wherever its own words
+ * would say `penis`, and leaves the character prefix — the one field the wizard never rewrites —
+ * alone.
+ */
+class InvisiblePenisOptionTest {
+    private val matrix = miniMatrix()
+
+    @Test
+    fun theOptionIsOffUnlessAskedFor() {
+        val spec = testSpec(mode = PromptMode.Sex, exposure = listOf("open"))
+        assertFalse(spec.invisiblePenis)
+        assertTrue(tagsOf(assembleLine(SexStage.During)).contains(PENIS_TAG))
+    }
+
+    @Test
+    fun anEnabledDrawWritesThePhraseInstead() {
+        val prompts = generatePrompts(
+            testSpec(mode = PromptMode.Sex, exposure = listOf("open"), invisiblePenis = true, count = 20),
+            matrix,
+            7,
+        )
+        prompts.forEach { line ->
+            val tags = tagsOf(line)
+            assertTrue(tags.contains(INVISIBLE_PENIS_TAG), line)
+            assertFalse(tags.contains(PENIS_TAG), line)
+            // Every occurrence of the word in the line is the one inside the phrase.
+            assertFalse(line.replace(INVISIBLE_PENIS_TAG, "").contains(PENIS_TAG), line)
+        }
+    }
+
+    @Test
+    fun theStageWordsBuiltAroundItCarryThePhraseToo() {
+        val anal = tagsOf(assembleLine(SexStage.Before, PromptChannel.Anal, invisiblePenis = true))
+        assertTrue(anal.contains("invisible penis on ass"), anal.toString())
+        assertFalse(anal.contains("penis on ass"), anal.toString())
+        assertFalse(anal.contains(PENIS_TAG), anal.toString())
+        val vaginal = tagsOf(assembleLine(SexStage.Before, PromptChannel.Vaginal, invisiblePenis = true))
+        assertTrue(vaginal.contains("invisible penis on pussy"), vaginal.toString())
+        assertFalse(vaginal.contains("penis on pussy"), vaginal.toString())
+    }
+
+    @Test
+    fun aStageThatNamesNoPenisIsUnaffected() {
+        val tags = tagsOf(assembleLine(SexStage.Done, PromptChannel.Anal, invisiblePenis = true))
+        assertFalse(tags.contains(PENIS_TAG))
+        assertFalse(tags.contains(INVISIBLE_PENIS_TAG))
+    }
+
+    @Test
+    fun aPrefixThatAlreadySaysThePhraseIsNotRepeated() {
+        val line = assembleLine(
+            SexStage.During,
+            invisiblePenis = true,
+            character = "sena_character, invisible penis",
+        )
+        assertEquals(1, line.split(INVISIBLE_PENIS_TAG).size - 1, line)
+    }
+
+    @Test
+    fun theManifestRowNamesTheOptionWhenItIsOn() {
+        fun stages(spec: PromptSpec) =
+            ManifestModel.items(spec, PromptLang.English).first { it.label == "Stage weights" }.value
+
+        val plain = testSpec(mode = PromptMode.Sex)
+        assertFalse(stages(plain).contains("Invisible penis"), stages(plain))
+        val renamed = testSpec(mode = PromptMode.Sex, invisiblePenis = true)
+        assertTrue(stages(renamed).contains("Invisible penis"), stages(renamed))
+    }
+}
 
 class NoneChannelAndObjectStageTest {
     private val matrix = parseMatrix(NONE_MINI_MATRIX)

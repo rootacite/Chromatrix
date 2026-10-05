@@ -28,7 +28,10 @@ object ManifestModel {
     fun stageValue(spec: PromptSpec, lang: PromptLang): String {
         val parts = SEX_STAGES.filter { stageWeightValue(spec, it) > 0 }
             .map { "${it.wire} ${trimNumber(spec.stageWeights[it] ?: 0.0)}" }
-        return parts.joinToString(", ").ifEmpty { t(lang, "manifest_stage_fallback") }
+        val stages = parts.joinToString(", ").ifEmpty { t(lang, "manifest_stage_fallback") }
+        // The option that renames the anatomy word rides this row, the way the scene row leads with
+        // the block pick: named when it is on, unsaid while it is the plain default.
+        return if (spec.invisiblePenis) "$stages · ${t(lang, "item_invisible_penis")}" else stages
     }
 
     /** A single-pick group's value: the chosen row's tags, or the "off" label. */

@@ -24,6 +24,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -86,6 +87,7 @@ class PromptEditorActions(
     val toggleFamily: (PoseFamily) -> Unit,
     val setVaginalRatio: (Double) -> Unit,
     val setStageWeight: (SexStage, Double) -> Unit,
+    val setInvisiblePenis: (Boolean) -> Unit,
     val setPoseAny: () -> Unit,
     val togglePose: (List<String>) -> Unit,
     val setCount: (String) -> Unit,
@@ -619,6 +621,21 @@ fun PromptPageEditor(
                 }
                 if (SEX_STAGES.all { stageWeightValue(spec, it) == 0 }) {
                     Text(text = t(lang, "manifest_stage_fallback"), color = colors.qualityYellow, fontSize = 11.sp)
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = t(lang, "invisible_penis_title"),
+                            color = colors.text,
+                            fontSize = 12.sp,
+                        )
+                        dimHint(t(lang, "invisible_penis_hint"))
+                    }
+                    Switch(checked = spec.invisiblePenis, onCheckedChange = actions.setInvisiblePenis)
                 }
             }
 

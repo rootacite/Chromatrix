@@ -96,6 +96,13 @@ val STAGES_PENETRATING: Set<SexStage> = setOf(SexStage.During, SexStage.Ejaculat
 val STAGES_OBJECT: Set<SexStage> = setOf(SexStage.ObjectInsertion, SexStage.Fingering)
 val HOLE_CHANNELS: Set<PromptChannel> = setOf(PromptChannel.Anal, PromptChannel.Vaginal)
 
+/**
+ * The anatomy word a stage with a partner writes. `PromptSpec.invisiblePenis` rewrites it — and the
+ * stage words built around it (`penis on ass`, `penis on pussy`) — to [INVISIBLE_PENIS_TAG].
+ */
+const val PENIS_TAG: String = "penis"
+const val INVISIBLE_PENIS_TAG: String = "invisible penis"
+
 /** Exposure levels, in wizard order. */
 val EXPOSURE_LEVELS: List<String> = listOf("covered", "casual", "revealing", "open", "nude")
 val HIGH_EXPOSURE: Set<String> = setOf("revealing", "open", "nude")

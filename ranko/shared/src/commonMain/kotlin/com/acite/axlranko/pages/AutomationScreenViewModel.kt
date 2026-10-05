@@ -445,6 +445,8 @@ class AutomationScreenViewModel(
         spec.stageWeights = spec.stageWeights + (stage to value.coerceIn(0.0, 1.0))
     }
 
+    fun setInvisiblePenis(value: Boolean) = edit { it.invisiblePenis = value }
+
     fun setPoseAny() = edit { spec ->
         spec.poseAny = true
         spec.poseKeys = emptySet()

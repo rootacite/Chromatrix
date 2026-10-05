@@ -28,6 +28,7 @@ private fun fullSpec(): PromptSpec = testSpec(
         SexStage.After to 0.1,
         SexStage.Done to 0.1,
     ),
+    invisiblePenis = true,
     chest = "nipples",
     belly = "navel",
     figure = listOf("petite"),
@@ -113,6 +114,17 @@ class ProfileCodecTest {
         assertFailsWith<ProfileException> { ProfileCodec.loadProfile(text, "bad") }
         assertFailsWith<ProfileException> { ProfileCodec.loadProfile("not json", "bad") }
         assertFailsWith<ProfileException> { ProfileCodec.loadProfile("""{"name": "x"}""", "x") }
+    }
+
+    @Test
+    fun aProfileWithoutTheInvisiblePenisOptionReadsAsOff() {
+        // A file written before the option existed, and a hand-edited wrong value.
+        val text = ProfileCodec.profileText("old", fullSpec())
+            .replace(Regex("\"invisible_penis\": (true|false),\\s*"), "")
+        assertFalse(ProfileCodec.loadProfile(text, "old").spec.invisiblePenis)
+        val bad = ProfileCodec.profileText("bad", fullSpec())
+            .replace(Regex("\"invisible_penis\": (true|false)"), "\"invisible_penis\": \"yes\"")
+        assertFailsWith<ProfileException> { ProfileCodec.loadProfile(bad, "bad") }
     }
 
     @Test

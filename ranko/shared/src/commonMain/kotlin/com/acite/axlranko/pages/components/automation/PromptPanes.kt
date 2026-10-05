@@ -653,6 +653,7 @@ private fun editorActions(viewModel: AutomationScreenViewModel): PromptEditorAct
     toggleFamily = viewModel::toggleFamily,
     setVaginalRatio = viewModel::setVaginalRatio,
     setStageWeight = viewModel::setStageWeight,
+    setInvisiblePenis = viewModel::setInvisiblePenis,
     setPoseAny = viewModel::setPoseAny,
     togglePose = viewModel::togglePose,
     setCount = viewModel::setCount,

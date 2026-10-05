@@ -57,6 +57,13 @@ data class PromptSpec(
     var families: Set<PoseFamily> = emptySet(),
     var vaginalRatio: Double = PromptLimits.VAGINAL_RATIO_DEFAULT,
     var stageWeights: Map<SexStage, Double> = defaultStageWeights(),
+    /**
+     * Write `invisible penis` where the wizard would write `penis`, the stage words that name it
+     * (`penis on ass`, `penis on pussy`) included. The character prefix is left alone: it is the
+     * user's own trigger, the one field the wizard keeps untouched. Missing from a profile means
+     * false, so a file written before the option existed reads as off.
+     */
+    var invisiblePenis: Boolean = false,
     var chest: String = "auto",
     var belly: String = "auto",
     /**

@@ -332,7 +332,7 @@ object PromptGenerator {
     fun anatomyTags(pose: MatrixEntry, channel: PromptChannel, includePenis: Boolean = true): List<String> {
         val blob = pose.blob
         val out = mutableListOf<String>()
-        if (includePenis) out.add("penis")
+        if (includePenis) out.add(PENIS_TAG)
         if (channel == PromptChannel.Vaginal) out.add("pussy")
         else if (channel == PromptChannel.Anal) out.add("anus")
         if (containsMarker(blob, ASS_MARKERS) && "ass" !in out) out.add("ass")
@@ -629,17 +629,30 @@ object PromptGenerator {
         val out = prefix.toMutableList()
         for (tag in extra) {
             if (isForbiddenTag(tag)) continue
-            val key = tag.lowercase()
+            // Renamed before the dedupe, so a character prefix that already says `invisible penis`
+            // keeps the tag from being written twice.
+            val text = withInvisiblePenis(tag, spec)
+            val key = text.lowercase()
             if (!seen.add(key)) continue
-            out.add(tag)
+            out.add(text)
         }
         // After the filter on purpose: the matrix may not add quality tags, the user suffix may.
         for (tag in splitTags(spec.qualitySuffix)) {
-            if (!seen.add(tag.lowercase())) continue
-            out.add(tag)
+            val text = withInvisiblePenis(tag, spec)
+            if (!seen.add(text.lowercase())) continue
+            out.add(text)
         }
         return out.joinToString(", ")
     }
+
+    /**
+     * The word this spec writes for the drawn anatomy: `penis`, or `invisible penis` when the
+     * wizard's option is on. The stage words that name it (`penis on ass`, `penis on pussy`) carry
+     * the substitution too, so an enabled spec never writes the bare word. The character prefix does
+     * not go through here — it is the user's own trigger, not a word the wizard chose.
+     */
+    internal fun withInvisiblePenis(tag: String, spec: PromptSpec): String =
+        if (spec.invisiblePenis) tag.replace(PENIS_TAG, INVISIBLE_PENIS_TAG) else tag
 
     private data class Combo(
         val pose: List<String>,

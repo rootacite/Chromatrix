@@ -160,6 +160,31 @@ class RealMatrixPromptTest {
     }
 
     @Test
+    fun theInvisiblePenisOptionRewritesEveryDrawOfTheRealMatrix() {
+        val plain = PromptGenerator.generate(
+            PromptSpec(mode = PromptMode.Sex, exposure = listOf("open"), count = 200),
+            matrix,
+            32,
+        )
+        assertTrue(plain.any { PENIS_TAG in splitTags(it) }, "no plain draw names it")
+        val renamed = PromptGenerator.generate(
+            PromptSpec(
+                mode = PromptMode.Sex,
+                exposure = listOf("open"),
+                count = 200,
+                invisiblePenis = true,
+            ),
+            matrix,
+            32,
+        )
+        assertTrue(renamed.any { INVISIBLE_PENIS_TAG in splitTags(it) })
+        renamed.forEach { line ->
+            assertFalse(splitTags(line).contains(PENIS_TAG), line)
+            assertFalse(line.replace(INVISIBLE_PENIS_TAG, "").contains(PENIS_TAG), line)
+        }
+    }
+
+    @Test
     fun aSelfStatedRowIsNeverContradicted() {
         val spec = PromptSpec(mode = PromptMode.Nsfw, count = 200)
         val warnings = mutableListOf<String>()

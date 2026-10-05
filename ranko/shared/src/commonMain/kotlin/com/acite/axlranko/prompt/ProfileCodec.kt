@@ -120,6 +120,7 @@ object ProfileCodec {
             "stage_weights" to JsonObject(
                 SEX_STAGES.associate { it.wire to JsonPrimitive(spec.stageWeights[it] ?: 0.0) },
             ),
+            "invisible_penis" to JsonPrimitive(spec.invisiblePenis),
             "chest" to JsonPrimitive(spec.chest),
             "belly" to JsonPrimitive(spec.belly),
             "figure" to tagsToJson(spec.figure),
@@ -215,6 +216,7 @@ object ProfileCodec {
                 .toSet(),
             vaginalRatio = ratio,
             stageWeights = stageWeightsAt(data),
+            invisiblePenis = boolAt(data, "invisible_penis", false),
             chest = chest,
             belly = belly,
             figure = pickAt(data, "figure"),
