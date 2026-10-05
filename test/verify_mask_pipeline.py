@@ -22,6 +22,12 @@ Tiers
 
 Results go to <report-dir>/mask_verify_report.md and .json. Nothing is ever written into the
 real dataset directories: images are copied first, and every run gets its own temp runtime dir.
+
+TEMPORARILY DISABLED: `main` refuses to run (see `DISABLED` below). The step arithmetic counts
+`len(LoraImageDataset(...))`, which now includes the validation folder the repo `config.toml`
+names, and the mirrored child runs inherit that same `val_data_dir` — so they under-train and
+score (and write a latent cache into) that folder. Fix `base_config()` and the mirror's
+`[training]` overrides, then delete the guard.
 """
 
 from __future__ import annotations
@@ -2190,9 +2196,27 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+# --- temporarily disabled ---------------------------------------------------------------
+# `n_images` below (and the tiers' own counting) reads `len(LoraImageDataset(...))`, which includes
+# the validation folder the repo `config.toml` names once `val_data_dir` is set, and the mirrored
+# children inherit that key: they score that folder every `val_interval` steps and write a
+# `.latents_cache/` into it. Measured with the config this repo sits beside, the train tier runs 48
+# of its 120 steps and the stand tier 9 of its 60 — its checks would be evaluated against runs that
+# never took a cadence sample. Clear `val_data_dir` in `base_config()` (beside `train_data`) and in
+# the mirror's `[training]` overrides, then delete this guard.
+DISABLED = (
+    "the mask pipeline verification is temporarily disabled: its step arithmetic reads the repo "
+    "config.toml's `val_data_dir`, so the mirrored runs under-train (train tier 48 of 120 steps, "
+    "stand tier 9 of 60), score that folder every `val_interval` steps, and write a latent cache "
+    "into it. Fix base_config() and the mirror's [training] overrides first."
+)
+
+
 def main(argv: Iterable[str] | None = None) -> int:
     os.chdir(REPO_ROOT)  # config.toml is read relative to the repo root
-    args = parse_args(argv)
+    args = parse_args(argv)  # parsed first, so `--help` still answers
+    # Delete this line (and the DISABLED block above) once the two fixes are in.
+    raise SystemExit(DISABLED)
     tiers = list(TIERS if args.tiers == "all" else (t.strip() for t in args.tiers.split(",") if t.strip()))
     for tier in tiers:
         if tier not in TIERS:
