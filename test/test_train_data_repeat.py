@@ -51,8 +51,10 @@ def _cfg(folders: list[tuple[Path, int]], **overrides) -> TrainConfig:
     cfg.cache_latents_to_disk = True
     cfg.train_batch_size = 2
     cfg.max_data_loader_n_workers = 0
-    # These tests draw every image; the validation split has its own tests.
+    # These tests draw every image; the validation split has its own tests, and the repo's
+    # `val_data_dir` would add that folder as a second dataset instead of leaving the split alone.
     cfg.val_split_percent = 0.0
+    cfg.val_data_dir = ""
     for key, value in overrides.items():
         setattr(cfg, key, value)
     return cfg

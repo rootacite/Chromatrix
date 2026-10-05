@@ -69,6 +69,9 @@ def _cfg(folders: list[tuple[Path, int]], **overrides) -> TrainConfig:
     cfg = TrainConfig()
     cfg.train_data = [{"path": str(path), "repeat": repeat} for path, repeat in folders]
     cfg.train_data_dir = str(folders[0][0])
+    # The repo's `val_data_dir` replaces the split with a folder of its own; a test that names one
+    # in `overrides` still wins, and one that does not gets the split it is testing.
+    cfg.val_data_dir = ""
     cfg.enable_bucket = False
     cfg.train_resolution = 512
     cfg.cache_latents = True
@@ -245,6 +248,7 @@ class DatasetFixedSubsetTest(unittest.TestCase):
         cfg = TrainConfig()
         cfg.train_data = [{"path": str(self.root), "repeat": 1}]
         cfg.train_data_dir = str(self.root)
+        cfg.val_data_dir = ""  # the repo's folder would replace the split under test
         cfg.enable_bucket = False
         cfg.cache_latents = False
         cfg.cache_latents_to_disk = False

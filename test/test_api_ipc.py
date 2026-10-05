@@ -2367,6 +2367,9 @@ class DatasetCountsIpcTest(unittest.TestCase):
                     "train_data": [{"path": raw, "repeat": 2}],
                     "val_split_percent": 20.0,
                     "seed": 11,
+                    # A config this test builds has no validation folder of its own; without this
+                    # the repo's `val_data_dir` would replace the split the test reads back.
+                    "val_data_dir": "",
                 },
             ):
                 result = api.handle_dataset_counts({})
@@ -2390,10 +2393,22 @@ class DatasetCountsIpcTest(unittest.TestCase):
             root = Path(raw)
             for i in range(10):
                 (root / f"{i:02d}.png").write_bytes(b"x")
-            params = {"dirs": [{"path": raw, "repeat": 3}], "val_split_percent": 10.0, "seed": 5}
+            # `val_data_dir` is named as empty on purpose: the repo's own folder would replace the
+            # split with its images, and this test is about the split.
+            params = {
+                "dirs": [{"path": raw, "repeat": 3}],
+                "val_split_percent": 10.0,
+                "seed": 5,
+                "val_data_dir": "",
+            }
             result = api.handle_dataset_counts(params)
             no_split = api.handle_dataset_counts(
-                {"dirs": [{"path": raw, "repeat": 3}], "val_split_percent": 0.0, "seed": 5}
+                {
+                    "dirs": [{"path": raw, "repeat": 3}],
+                    "val_split_percent": 0.0,
+                    "seed": 5,
+                    "val_data_dir": "",
+                }
             )
 
         self.assertEqual(result["images"], 10)

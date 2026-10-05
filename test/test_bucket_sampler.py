@@ -41,11 +41,12 @@ def _write_images(root: Path, sizes: list[tuple[int, int]]) -> None:
 
 def _cfg(data_dir: Path, **overrides) -> TrainConfig:
     cfg = TrainConfig()
-    # The repo's `[[environment.train_data]]` blocks outrank `train_data_dir`, so a test that
-    # points the config at its own folder has to drop them: leaving them in reads - and writes
-    # latents into - the dataset `config.toml` names.
+    # The repo's `[[environment.train_data]]` blocks outrank `train_data_dir` and its `val_data_dir`
+    # brings a dataset of its own, so a test that points the config at its own folder has to drop
+    # both: leaving them in reads - and writes latents into - the dataset `config.toml` names.
     cfg.train_data = []
     cfg.train_data_dir = str(data_dir)
+    cfg.val_data_dir = ""
     cfg.enable_bucket = True
     cfg.train_resolution = 1024
     cfg.min_bucket_reso = 384

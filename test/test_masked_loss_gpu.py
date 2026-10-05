@@ -63,6 +63,7 @@ class MaskedLossGpuTest(unittest.TestCase):
 
             cfg.train_data = []  # the blocks outrank `train_data_dir`: train the clone, not the source
             cfg.train_data_dir = str(dest)
+            cfg.val_data_dir = ""  # and the repo's validation folder is a dataset of its own
             cfg.cache_latents = False
             cfg.cache_latents_to_disk = False
             cfg.max_data_loader_n_workers = 0
@@ -199,6 +200,7 @@ class MaskedLossGpuTest(unittest.TestCase):
 
             cfg.train_data = []  # the blocks outrank `train_data_dir`: train the clone, not the source
             cfg.train_data_dir = str(dest)
+            cfg.val_data_dir = ""  # and the repo's validation folder is a dataset of its own
             cfg.cache_latents = False
             cfg.cache_latents_to_disk = False
             cfg.max_data_loader_n_workers = 0

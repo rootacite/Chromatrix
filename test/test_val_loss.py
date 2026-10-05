@@ -119,6 +119,8 @@ class ValidationPassTest(unittest.TestCase):
         self.cfg = TrainConfig()
         self.cfg.train_data = [{"path": str(self.folder), "repeat": 1}]
         self.cfg.train_data_dir = str(self.folder)
+        # The repo's own validation folder would replace the split these tests are about.
+        self.cfg.val_data_dir = ""
         self.cfg.enable_bucket = False
         self.cfg.train_resolution = 512
         self.cfg.cache_latents = False
@@ -295,6 +297,8 @@ class RunValidationPassesTest(unittest.TestCase):
         self.cfg = TrainConfig()
         self.cfg.train_data = [{"path": str(self.folder), "repeat": 1}]
         self.cfg.train_data_dir = str(self.folder)
+        # The repo's own validation folder would replace the split these tests are about.
+        self.cfg.val_data_dir = ""
         self.cfg.enable_bucket = False
         self.cfg.train_resolution = 512
         self.cfg.cache_latents = False
