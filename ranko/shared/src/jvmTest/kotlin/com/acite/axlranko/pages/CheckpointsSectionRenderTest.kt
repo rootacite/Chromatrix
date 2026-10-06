@@ -26,6 +26,7 @@ import com.acite.axlranko.model.EvaluationTarget
 import com.acite.axlranko.model.GeneratedSampleJob
 import com.acite.axlranko.model.PromptTagCount
 import com.acite.axlranko.model.RegenerateError
+import com.acite.axlranko.model.SampleBackendChoice
 import com.acite.axlranko.model.SampleClearResult
 import com.acite.axlranko.model.SampleItem
 import com.acite.axlranko.pages.components.EvaluationDialog
@@ -366,6 +367,12 @@ class CheckpointsSectionRenderTest {
                                     selectedTags = setOf("anal"),
                                     starting = false,
                                     error = null,
+                                    backendChoice = SampleBackendChoice.BuiltIn,
+                                    comfyCheckpoints = null,
+                                    comfyCheckpointsLoading = false,
+                                    comfyCheckpointsError = null,
+                                    onBackendChoice = {},
+                                    onRefreshCheckpoints = {},
                                     // The room the page's `BoxWithConstraints` hands the dialog.
                                     maxWidth = panelRoom.width,
                                     maxHeight = panelRoom.height,
@@ -375,7 +382,7 @@ class CheckpointsSectionRenderTest {
                                     onClearTags = {},
                                     onToggleDetails = {},
                                     onCancel = {},
-                                    onStart = { _, _, _, _ -> },
+                                    onStart = { _, _, _, _, _ -> },
                                     onDismiss = {},
                                 )
                             }

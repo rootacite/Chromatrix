@@ -1,0 +1,181 @@
+{
+  "19": {
+    "inputs": {
+      "seed": [
+        "224",
+        0
+      ],
+      "steps": 35,
+      "cfg": 6,
+      "sampler_name": "euler_ancestral",
+      "scheduler": "normal",
+      "denoise": 1,
+      "model": [
+        "207:208",
+        0
+      ],
+      "positive": [
+        "215",
+        0
+      ],
+      "negative": [
+        "216",
+        0
+      ],
+      "latent_image": [
+        "217",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "21": {
+    "inputs": {
+      "samples": [
+        "19",
+        0
+      ],
+      "vae": [
+        "207:266",
+        2
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "215": {
+    "inputs": {
+      "text": "kano_character, 1girl, large breasts, hair ornament, long hair,  solo, serafuku, white thighhighs, cleavage, shy, open eyes, blush, standing, holding umbrella, looking at viewer, lighthouse, outdoors, ocean, soft lighting, warm light, best quality, newest, highres",
+      "clip": [
+        "207:219",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  },
+  "216": {
+    "inputs": {
+      "text": "worst quality, low quality, deformed, bad anatomy, out of frame, logo, watermark, censorship, internal, gore, horror, non-human, monster, alien, zombie, fused fingers, distorted anatomy, bad composition, bad quality, dead eyes, (censored, mosaic censoring:1.2), (pointy chin, sharp chin, sharp jawline:1.2), (v-shaped face:1.1),",
+      "clip": [
+        "207:219",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  },
+  "217": {
+    "inputs": {
+      "width": 1152,
+      "height": 768,
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "Empty Latent Image"
+    }
+  },
+  "222": {
+    "inputs": {
+      "filename_prefix": [
+        "227",
+        0
+      ],
+      "images": [
+        "21",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "224": {
+    "inputs": {
+      "seed": 726271750294503
+    },
+    "class_type": "SeedNode",
+    "_meta": {
+      "title": "Seed"
+    }
+  },
+  "227": {
+    "inputs": {
+      "string_a": "Kano_",
+      "string_b": [
+        "228",
+        0
+      ],
+      "delimiter": ""
+    },
+    "class_type": "StringConcatenate",
+    "_meta": {
+      "title": "Concatenate Text"
+    }
+  },
+  "228": {
+    "inputs": {
+      "int_": [
+        "224",
+        0
+      ],
+      "use_commas": "false"
+    },
+    "class_type": "Int to String",
+    "_meta": {
+      "title": "Int to String (Mikey)"
+    }
+  },
+  "207:219": {
+    "inputs": {
+      "lora_name": "Kano_s002450.safetensors",
+      "strength_model": 0.95,
+      "strength_clip": 0.95,
+      "model": [
+        "207:266",
+        0
+      ],
+      "clip": [
+        "207:266",
+        1
+      ]
+    },
+    "class_type": "LoraLoader",
+    "_meta": {
+      "title": "Load LoRA (Model and CLIP)"
+    }
+  },
+  "207:208": {
+    "inputs": {
+      "multiplier": 0.6,
+      "model": [
+        "207:219",
+        0
+      ]
+    },
+    "class_type": "RescaleCFG",
+    "_meta": {
+      "title": "RescaleCFG"
+    }
+  },
+  "207:266": {
+    "inputs": {
+      "ckpt_name": "waiIllustriousSDXL_v170.safetensors"
+    },
+    "class_type": "CheckpointLoaderSimple",
+    "_meta": {
+      "title": "Load Checkpoint"
+    }
+  }
+}

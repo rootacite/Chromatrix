@@ -376,6 +376,18 @@ class ComfyClient:
     def history(self, prompt_id: str) -> dict[str, Any]:
         return self._json("GET", f"/history/{urllib.parse.quote(prompt_id, safe='')}")
 
+    def progress(self) -> dict[str, Any]:
+        """`{value, max, prompt_id, node}` of what ComfyUI is denoising right now; `{}` at rest.
+
+        The only step-level progress a queued prompt offers: `/history` reports nothing until the
+        prompt is finished. `value` already counts the sampler's own steps.
+        """
+        return self._json("GET", "/progress")
+
+    def interrupt(self) -> None:
+        """Ask ComfyUI to stop its current execution (the Cancel button of a queued prompt)."""
+        self._request("POST", "/interrupt")
+
     def wait_for_prompt(
         self,
         prompt_id: str,

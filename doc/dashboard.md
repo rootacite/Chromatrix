@@ -150,6 +150,25 @@ Clicking a thumbnail opens the same fullscreen preview as everywhere else (Esc c
     another generation. **Stop** asks the generator to finish the step it is in and stop: the cards
     keep what was already rendered, the batch closes as cancelled (not as a failure), and the
     checkpoint it was in the middle of shows the images it had written.
+  - **Renderer: built-in or ComfyUI**: **Sample range**, **Generate pinned samples**, a card's
+    **Generate samples** and **Evaluate** all open a small dialog first and ask *how* the images
+    should be drawn — the local pipeline, as before, or a **listening ComfyUI** on the bundled
+    `beta/Sampling.json`. The dialog says what it is about to render (`Steps 1000–3000 · 5
+    checkpoints`, `3 checkpoints pinned · round 2/2`, `The run's 2 sample sets`) because the fields
+    that decide *what* stay where they are: the range row keeps its steps, the pinned row its rounds,
+    the card its checkpoint. On the ComfyUI path the user picks the **base model** from that
+    instance's own `models/checkpoints` (its first entry keeps whatever the workflow names) and a
+    **LoRA strength** (default 0.95, applied to the model and the CLIP); everything else — prompt,
+    negative, size, steps, CFG, RescaleCFG multiplier, seed and repeats — is the run's own prompt
+    sets, exactly what the local path renders with. The checkpoint being sampled *is* the LoRA: the
+    helper copies it into ComfyUI's LoRA folder under a per-pass name and removes it when the pass
+    ends, so nothing in that folder is shadowed or left behind. The images land in the same place,
+    with the same names and provenance, and the card shows their progress the same way. The dialog
+    refuses what the helper would refuse — no ComfyUI listening, a base model it does not have, a
+    strength outside 0–2 — with the reason beside the button, so a click that cannot work costs no
+    GPU time. The choice (including the model and the strength) is remembered for the session.
+    **Evaluate**'s picker sits in its own panel, under the tags: it applies to the top-up render
+    only, since tagging and scoring are this machine's either way.
   - **Evaluate**: every checkpoint card can be *scored* against the prompt it was drawn from. The
     card carries the entry point — **Evaluate** for a checkpoint that has never been scored, else a
     capsule reading `Evaluation · Recall 0.62` (or `running…` / `failed`) — and the evaluation panel

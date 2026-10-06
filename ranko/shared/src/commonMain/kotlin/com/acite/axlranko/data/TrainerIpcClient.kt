@@ -12,6 +12,8 @@ import com.acite.axlranko.model.HardwareStatus
 import com.acite.axlranko.model.RunsResponse
 import com.acite.axlranko.model.RegenerateSampleResponse
 import com.acite.axlranko.model.ChartViewResponse
+import com.acite.axlranko.model.SAMPLE_BACKEND_COMFY
+import com.acite.axlranko.model.SampleBackend
 import com.acite.axlranko.model.SampleClearResult
 import com.acite.axlranko.model.UnpinnedClearResult
 import com.acite.axlranko.model.SamplePromptsResponse
@@ -44,6 +46,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -538,11 +541,15 @@ class TrainerIpcClient {
     /**
      * Render this checkpoint's `[[validation.samples]]` sets as one detached job (one image per
      * set and repeat). Refused while a live trainer is using the GPU.
+     *
+     * [backend] picks the renderer: absent (or the built-in one) draws locally, `comfy` queues the
+     * bundled `beta/Sampling.json` on the listening ComfyUI — see [SampleBackend].
      */
     suspend fun generateCheckpointSamples(
         checkpoint: String,
         name: String? = null,
         runId: String? = null,
+        backend: SampleBackend? = null,
     ): GenerateSampleResponse {
         val result = call(
             "generate_checkpoint_samples",
@@ -550,6 +557,7 @@ class TrainerIpcClient {
                 put("checkpoint", checkpoint)
                 name?.let { put("name", it) }
                 runId?.let { put("run_id", it) }
+                putSampleBackend(backend)
             },
         )
         return json.decodeFromJsonElement(result)
@@ -565,6 +573,7 @@ class TrainerIpcClient {
         toStep: Int,
         name: String? = null,
         runId: String? = null,
+        backend: SampleBackend? = null,
     ): GenerateSampleResponse {
         val result = call(
             "generate_checkpoint_samples_batch",
@@ -573,6 +582,7 @@ class TrainerIpcClient {
                 put("to_step", toStep)
                 name?.let { put("name", it) }
                 runId?.let { put("run_id", it) }
+                putSampleBackend(backend)
             },
         )
         return json.decodeFromJsonElement(result)
@@ -582,12 +592,14 @@ class TrainerIpcClient {
     suspend fun generatePinnedCheckpointSamples(
         name: String? = null,
         runId: String? = null,
+        backend: SampleBackend? = null,
     ): GenerateSampleResponse {
         val result = call(
             "generate_pinned_checkpoint_samples",
             buildJsonObject {
                 name?.let { put("name", it) }
                 runId?.let { put("run_id", it) }
+                putSampleBackend(backend)
             },
         )
         return json.decodeFromJsonElement(result)
@@ -608,6 +620,7 @@ class TrainerIpcClient {
         tags: List<String> = emptyList(),
         name: String? = null,
         runId: String? = null,
+        backend: SampleBackend? = null,
     ): GenerateSampleResponse {
         val result = call(
             "evaluate_checkpoint",
@@ -623,6 +636,7 @@ class TrainerIpcClient {
                 }
                 name?.let { put("name", it) }
                 runId?.let { put("run_id", it) }
+                putSampleBackend(backend)
             },
         )
         return json.decodeFromJsonElement(result)
@@ -1302,5 +1316,19 @@ class TrainerIpcClient {
 
     private suspend fun closeConnection() {
         lanes.values.forEach { it.close() }
+    }
+}
+
+/**
+ * The renderer fields of a sample pass, when the caller picked one. Absent `backend` is the
+ * built-in path, so a caller that has nothing to say sends nothing; the ComfyUI fields travel only
+ * with `comfy`, where they are the whole point.
+ */
+private fun JsonObjectBuilder.putSampleBackend(backend: SampleBackend?) {
+    if (backend == null) return
+    put("backend", backend.backend)
+    if (backend.backend == SAMPLE_BACKEND_COMFY) {
+        put("comfy_checkpoint", backend.comfyCheckpoint)
+        backend.comfyLoraStrength?.let { put("comfy_lora_strength", it.toDouble()) }
     }
 }

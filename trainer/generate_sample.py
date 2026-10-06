@@ -14,6 +14,13 @@ it was trained with rather than with whatever config.toml says today. An
 evaluation (`mode: evaluate`, see `run_evaluation`) adds one more source: the
 config the run saved beside its logs, which is what decides the prompts and the
 sampling values its images are held to.
+
+A spec whose `backend` is `comfy` draws the same sets on a listening ComfyUI
+instead, on the bundled `beta/Sampling.json` (`trainer/comfy_sample.py`): the
+prompts, sizes, steps, CFG, RescaleCFG multiplier and seeds are still the run's
+own, while the base model and the LoRA strength come from the spec's `comfy`
+block. The two renderers write the same files, names and job counters, so
+nothing downstream has to know which one drew a picture.
 """
 
 from __future__ import annotations
@@ -24,8 +31,9 @@ import signal
 import sys
 import traceback
 from dataclasses import asdict, replace
+from io import BytesIO
 from pathlib import Path
-from typing import Any, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence
 
 import numpy as np
 import torch
@@ -33,6 +41,8 @@ import torch
 # `python trainer/generate_sample.py` puts trainer/ on sys.path, `import api` does
 # not; support both (see AGENT.md "Import dualism").
 try:
+    import comfy
+    import comfy_sample
     import evaluation
     import genjob
     import provenance
@@ -47,7 +57,7 @@ try:
     from family import require_trainable, resolve_family
     from models import enable_flash_attention, sample_scheduler_kwargs
 except ImportError:
-    from trainer import evaluation, genjob
+    from trainer import comfy, comfy_sample, evaluation, genjob
     from trainer import provenance
     from trainer.checkpoints import (
         conv_dim_alpha_from_metadata,
@@ -540,31 +550,22 @@ def _render_sets(
             image = _decode(pipe, latents, device, torch.bfloat16)
             pipe.vae.to("cpu")
 
-            target = genjob.set_image_path(generated, job_id, set_index, repeat_idx)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            Image.fromarray(image).save(
-                target,
-                pnginfo=provenance.build_pnginfo(
-                    seed=seed,
-                    prompt=str(sample_set.prompt),
-                    negative=str(sample_set.negative),
-                    width=sample_set.width,
-                    height=sample_set.height,
-                    steps=sample_set.steps,
-                    guidance=sample_set.guidance_scale,
-                    guidance_rescale=sample_set.guidance_rescale,
-                    run_id=run_id,
-                    output_name=output_name,
-                    step=step,
-                    set_index=set_index,
-                    repeat_idx=repeat_idx,
-                    source=source,
-                    writer=provenance.WRITER_GENERATOR,
-                    checkpoint=checkpoint,
-                    lora=provenance.lora_fields(cfg),
-                ),
+            target = _emit_sample(
+                image=Image.fromarray(image),
+                generated=generated,
+                job_id=job_id,
+                sample_set=sample_set,
+                seed=seed,
+                set_index=set_index,
+                repeat_idx=repeat_idx,
+                run_id=run_id,
+                output_name=output_name,
+                step=step,
+                source=source,
+                checkpoint=checkpoint,
+                lora=provenance.lora_fields(cfg),
             )
-            rendered.append((set_index, repeat_idx, str(target)))
+            rendered.append((set_index, repeat_idx, target))
             genjob.update_job(
                 generated,
                 job_id,
@@ -581,6 +582,201 @@ def _render_sets(
     return rendered
 
 
+def _emit_sample(
+    *,
+    image: Image.Image,
+    generated: Path,
+    job_id: str,
+    sample_set: Any,
+    seed: int,
+    set_index: int,
+    repeat_idx: int,
+    run_id: str,
+    output_name: str,
+    step: Any,
+    source: str,
+    checkpoint: str,
+    lora: Mapping[str, Any],
+) -> str:
+    """Write one rendered image as `{job_id}_p{set}_{repeat}.png`, with its provenance chunks.
+
+    Both renderers come through here, so a ComfyUI pass produces files the rest of the app cannot
+    tell apart from a local one: the same name, the same `axl_*` metadata, the same place under
+    `{name}_samples/generated/`.
+    """
+    target = genjob.set_image_path(generated, job_id, set_index, repeat_idx)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    image.save(
+        target,
+        pnginfo=provenance.build_pnginfo(
+            seed=seed,
+            prompt=str(sample_set.prompt),
+            negative=str(sample_set.negative),
+            width=sample_set.width,
+            height=sample_set.height,
+            steps=sample_set.steps,
+            guidance=sample_set.guidance_scale,
+            guidance_rescale=sample_set.guidance_rescale,
+            run_id=run_id,
+            output_name=output_name,
+            step=step,
+            set_index=set_index,
+            repeat_idx=repeat_idx,
+            source=source,
+            writer=provenance.WRITER_GENERATOR,
+            checkpoint=checkpoint,
+            lora=lora,
+        ),
+    )
+    return str(target)
+
+
+def _renders_on_comfy(spec: Mapping[str, Any]) -> bool:
+    """Whether this job's images come from a listening ComfyUI instead of the local pipeline."""
+    return str(spec.get("backend") or genjob.BACKEND_BUILTIN) == genjob.BACKEND_COMFY
+
+
+def _comfy_block(spec: Mapping[str, Any]) -> dict[str, Any]:
+    block = spec.get("comfy")
+    return dict(block) if isinstance(block, dict) else {}
+
+
+def _metadata_lora_fields(metadata: dict[str, str]) -> dict[str, Any]:
+    """The LoRA settings a checkpoint's own kohya metadata carries, keyed as provenance writes them.
+
+    The ComfyUI path has no `TrainConfig` to read them off (`provenance.lora_fields`): the base
+    model and the strength are the user's picks, and the graph itself is ComfyUI's.
+    """
+    conv_dim, conv_alpha = conv_dim_alpha_from_metadata(metadata)
+    return {
+        "network_type": infer_network_type(metadata),
+        "network_dim": _meta_int(metadata, "ss_network_dim", 0),
+        "network_alpha": _meta_int(metadata, "ss_network_alpha", 0),
+        "conv_dim": conv_dim,
+        "conv_alpha": conv_alpha,
+        "base_model_version": str(metadata.get("ss_base_model_version") or ""),
+        "clip_skip": _meta_int(metadata, "ss_clip_skip", 0),
+        "max_token_length": _meta_int(metadata, "ss_max_token_length", 0),
+    }
+
+
+def _render_sets_comfy(
+    *,
+    spec: Mapping[str, Any],
+    sets: Sequence[SampleSet],
+    generated: Path,
+    job_id: str,
+    checkpoint: Path,
+    plan: Optional[Sequence[tuple[int, int]]] = None,
+    run_id: str = "",
+    output_name: str = "",
+    step: Any = None,
+    source: str = provenance.SOURCE_SETS,
+) -> list[tuple[int, int, str]]:
+    """Render the slots of `sets` through ComfyUI, on the bundled `beta/Sampling.json`.
+
+    The same slots, names, provenance and counters as `_render_sets` — only the renderer differs.
+    The checkpoint is staged under ComfyUI's `models/loras` for the length of this pass and removed
+    again in a `finally`, a cancel included, so a name in that folder can never be shadowed by it.
+    """
+    block = _comfy_block(spec)
+    server = str(block.get("server") or "")
+    if not server:
+        raise RuntimeError("this job records no ComfyUI server to render on")
+    strength = float(block.get("strength") or 0.0)
+    base_model = str(block.get("checkpoint") or "")
+
+    staged = comfy_sample.stage_lora(server, checkpoint, job_id)
+    rendered: list[tuple[int, int, str]] = []
+    try:
+        sampler = comfy_sample.open_sampler(
+            server, lora_name=staged.name, strength=strength, checkpoint_name=base_model
+        )
+        lora = _metadata_lora_fields(read_lora_metadata(checkpoint))
+        # What a local pass cannot say: which renderer drew this, on which base model, at what
+        # strength. `regenerate_sample` still redraws through the local path, and reads only the
+        # seed back, so these are a record rather than a setting.
+        lora["backend"] = genjob.BACKEND_COMFY
+        lora["comfy_checkpoint"] = base_model
+        lora["comfy_lora_strength"] = strength
+
+        slots = _plan_slots(sets, plan)
+        total_images = sum(len(repeats) for repeats in slots.values())
+        for set_index, sample_set in enumerate(sets):
+            repeats = slots.get(set_index, [])
+            if not repeats:
+                continue
+            _log(
+                f"set {set_index + 1}/{len(sets)} {sample_set.name}: {len(repeats)} image(s), "
+                f"{sample_set.width}x{sample_set.height}, {sample_set.steps} steps, "
+                f"cfg {sample_set.guidance_scale}, seed {sample_set.seed} (ComfyUI)"
+            )
+            for repeat_idx in repeats:
+                if _cancel_asked():
+                    raise _Cancelled()
+                seed = _seed_for(sample_set, repeat_idx)
+
+                def _on_progress(value: int, maximum: int) -> None:
+                    genjob.update_job(
+                        generated,
+                        job_id,
+                        current_step=int(value),
+                        total_steps=int(maximum),
+                        images_done=len(rendered),
+                        total_images=total_images,
+                        current_set=set_index + 1,
+                        total_sets=len(sets),
+                    )
+
+                try:
+                    data = sampler.render(
+                        sample_set,
+                        seed,
+                        should_stop=_cancel_asked,
+                        on_progress=_on_progress,
+                    )
+                except comfy.ComfyCancelled as exc:
+                    # The queued prompt would keep the GPU busy after this process is gone.
+                    sampler.interrupt()
+                    raise _Cancelled() from exc
+                image = Image.open(BytesIO(data))
+                image.load()
+                target = _emit_sample(
+                    image=image,
+                    generated=generated,
+                    job_id=job_id,
+                    sample_set=sample_set,
+                    seed=seed,
+                    set_index=set_index,
+                    repeat_idx=repeat_idx,
+                    run_id=run_id,
+                    output_name=output_name,
+                    step=step,
+                    source=source,
+                    checkpoint=checkpoint.name,
+                    lora=lora,
+                )
+                rendered.append((set_index, repeat_idx, target))
+                genjob.update_job(
+                    generated,
+                    job_id,
+                    files=[path for _set, _repeat, path in rendered],
+                    images_done=len(rendered),
+                    total_images=total_images,
+                    current_step=0,
+                    total_steps=sample_set.steps,
+                    current_set=set_index + 1,
+                    total_sets=len(sets),
+                    seed=seed,
+                )
+                _log(f"saved {target} ({len(rendered)}/{total_images})")
+    except comfy.ComfyError as exc:
+        raise RuntimeError(str(exc)) from exc
+    finally:
+        comfy_sample.unstage_lora(staged)
+    return rendered
+
+
 @torch.no_grad()
 def run_sample_sets(spec: dict, generated: Path) -> None:
     """Render every `[[validation.samples]]` set for this checkpoint.
@@ -592,20 +788,35 @@ def run_sample_sets(spec: dict, generated: Path) -> None:
     metadata, through `_build_config`. A spec without recorded sets (a hand-written one) resolves
     them from the run's config directory instead. Images go to `{name}_samples/generated/`, named
     `{job_id}_p{set}_{repeat}.png`; the run's own samples are never touched.
+
+    A job whose `backend` is `comfy` draws the same sets on a listening ComfyUI instead (see
+    `_render_sets_comfy`): same prompts, sizes, steps, CFG, seeds and names, and the two settings
+    the local path takes from the metadata — the base model and the LoRA strength — come from the
+    request.
     """
     job_id = str(spec["id"])
     checkpoint = resolve_resume_path(spec["checkpoint"])
-    metadata = read_lora_metadata(checkpoint)
-    cfg = _build_config(metadata, checkpoint, base_cfg=_record_config(spec))
-    sets = _record_sets(spec) or resolve_sample_sets(cfg)
+    base_cfg = _record_config(spec)
+    comfy = _renders_on_comfy(spec)
+    if comfy:
+        # No local model to describe: the base model and the strength are the request's, and the
+        # checkpoint's own metadata is read only for the provenance it writes.
+        cfg = None
+        sets = _record_sets(spec) or resolve_sample_sets(base_cfg)
+    else:
+        cfg = _build_config(read_lora_metadata(checkpoint), checkpoint, base_cfg=base_cfg)
+        sets = _record_sets(spec) or resolve_sample_sets(cfg)
     total_images = sum(sample_set.repeat for sample_set in sets)
 
-    dtype = torch.float16 if cfg.mixed_precision == "fp16" else torch.bfloat16
+    dtype = None if comfy else (torch.float16 if cfg.mixed_precision == "fp16" else torch.bfloat16)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    _log(
-        f"checkpoint={checkpoint} type={cfg.network_type} dim={cfg.network_dim} "
-        f"alpha={cfg.network_alpha} sets={len(sets)} images={total_images} on {device}"
-    )
+    if comfy:
+        _log(f"checkpoint={checkpoint} sets={len(sets)} images={total_images} on ComfyUI")
+    else:
+        _log(
+            f"checkpoint={checkpoint} type={cfg.network_type} dim={cfg.network_dim} "
+            f"alpha={cfg.network_alpha} sets={len(sets)} images={total_images} on {device}"
+        )
 
     genjob.update_job(
         generated,
@@ -619,26 +830,38 @@ def run_sample_sets(spec: dict, generated: Path) -> None:
         total_sets=len(sets),
     )
 
-    pipe, modules = _load_family(cfg, dtype)
-    try:
-        rendered = _render_sets(
-            pipe=pipe,
-            modules=modules,
-            cfg=cfg,
+    if comfy:
+        rendered = _render_sets_comfy(
+            spec=spec,
             sets=sets,
             generated=generated,
             job_id=job_id,
-            device=device,
-            dtype=dtype,
+            checkpoint=checkpoint,
             run_id=str(spec.get("run_id") or ""),
             output_name=str(spec.get("output_name") or ""),
             step=spec.get("step"),
-            checkpoint=checkpoint.name,
         )
-    finally:
-        for module in (modules.denoise, *modules.text_encoders):
-            module.to("cpu")
-        flush_memory(device)
+    else:
+        pipe, modules = _load_family(cfg, dtype)
+        try:
+            rendered = _render_sets(
+                pipe=pipe,
+                modules=modules,
+                cfg=cfg,
+                sets=sets,
+                generated=generated,
+                job_id=job_id,
+                device=device,
+                dtype=dtype,
+                run_id=str(spec.get("run_id") or ""),
+                output_name=str(spec.get("output_name") or ""),
+                step=spec.get("step"),
+                checkpoint=checkpoint.name,
+            )
+        finally:
+            for module in (modules.denoise, *modules.text_encoders):
+                module.to("cpu")
+            flush_memory(device)
 
     files = [path for _set, _repeat, path in rendered]
     genjob.update_job(
@@ -670,8 +893,12 @@ def run_sample_batch(spec: dict, generated: Path) -> None:
     if not entries:
         raise RuntimeError("this batch has no checkpoints to render")
 
+    comfy = _renders_on_comfy(spec)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    _log(f"batch {batch_id}: {len(entries)} checkpoint(s) on {device}")
+    _log(
+        f"batch {batch_id}: {len(entries)} checkpoint(s) on "
+        f"{'ComfyUI' if comfy else device}"
+    )
 
     # Every checkpoint of a batch belongs to one run: the prompts come off the record, the way a
     # single-checkpoint pass takes them, and only a record that carries none (an older one, or a
@@ -727,9 +954,12 @@ def run_sample_batch(spec: dict, generated: Path) -> None:
                     current_checkpoint=str(checkpoint),
                     checkpoint_index=index,
                 )
-                metadata = read_lora_metadata(checkpoint)
-                cfg = _build_config(metadata, checkpoint, base_cfg=prompt_cfg)
-                sets = recorded_sets or resolve_sample_sets(cfg)
+                cfg = None
+                if comfy:
+                    sets = recorded_sets or resolve_sample_sets(prompt_cfg)
+                else:
+                    cfg = _build_config(read_lora_metadata(checkpoint), checkpoint, base_cfg=prompt_cfg)
+                    sets = recorded_sets or resolve_sample_sets(cfg)
 
                 job = genjob.new_job(
                     {"step": entry.get("step")},
@@ -741,6 +971,9 @@ def run_sample_batch(spec: dict, generated: Path) -> None:
                     # This process renders the checkpoint, so its pid is known now; a record that
                     # says `running` without one reads as a generator that died before it started.
                     pid=os.getpid(),
+                    # The child renders what the batch was planned with, renderer included.
+                    backend=str(spec.get("backend") or genjob.BACKEND_BUILTIN),
+                    comfy=_comfy_block(spec) if comfy else None,
                     extra={
                         "batch_id": batch_id,
                         "batch_index": index,
@@ -768,30 +1001,44 @@ def run_sample_batch(spec: dict, generated: Path) -> None:
                     total_sets=len(sets),
                 )
 
-                dtype = torch.float16 if cfg.mixed_precision == "fp16" else torch.bfloat16
-                shape = (_shape_key(cfg), dtype)
-                if shape != loaded_key:
-                    _log(f"[{index}/{len(entries)}] loading {cfg.pretrained_model_name_or_path} ({cfg.network_type})")
-                    pipe, modules = _load_family(cfg, dtype)
-                    loaded_key = shape
+                if comfy:
+                    # ComfyUI loads each checkpoint itself, so nothing here is reused between
+                    # entries: one staged copy per checkpoint, gone when its pass ends.
+                    rendered = _render_sets_comfy(
+                        spec=spec,
+                        sets=sets,
+                        generated=generated,
+                        job_id=job_id,
+                        checkpoint=checkpoint,
+                        run_id=str(spec.get("run_id") or ""),
+                        output_name=str(spec.get("output_name") or ""),
+                        step=entry.get("step"),
+                    )
                 else:
-                    _log(f"[{index}/{len(entries)}] loading the LoRA weights of {label}")
-                    resolve_family(cfg).load_lora(cfg, modules)
+                    dtype = torch.float16 if cfg.mixed_precision == "fp16" else torch.bfloat16
+                    shape = (_shape_key(cfg), dtype)
+                    if shape != loaded_key:
+                        _log(f"[{index}/{len(entries)}] loading {cfg.pretrained_model_name_or_path} ({cfg.network_type})")
+                        pipe, modules = _load_family(cfg, dtype)
+                        loaded_key = shape
+                    else:
+                        _log(f"[{index}/{len(entries)}] loading the LoRA weights of {label}")
+                        resolve_family(cfg).load_lora(cfg, modules)
 
-                rendered = _render_sets(
-                    pipe=pipe,
-                    modules=modules,
-                    cfg=cfg,
-                    sets=sets,
-                    generated=generated,
-                    job_id=job_id,
-                    device=device,
-                    dtype=dtype,
-                    run_id=str(spec.get("run_id") or ""),
-                    output_name=str(spec.get("output_name") or ""),
-                    step=entry.get("step"),
-                    checkpoint=label,
-                )
+                    rendered = _render_sets(
+                        pipe=pipe,
+                        modules=modules,
+                        cfg=cfg,
+                        sets=sets,
+                        generated=generated,
+                        job_id=job_id,
+                        device=device,
+                        dtype=dtype,
+                        run_id=str(spec.get("run_id") or ""),
+                        output_name=str(spec.get("output_name") or ""),
+                        step=entry.get("step"),
+                        checkpoint=label,
+                    )
                 files = [path for _set, _repeat, path in rendered]
                 images_done += len(files)
                 checkpoints_done += 1
@@ -913,7 +1160,10 @@ def run_evaluation(spec: dict, generated: Path) -> None:
     job_id = str(spec["id"])
     checkpoint = resolve_resume_path(spec["checkpoint"])
     metadata = read_lora_metadata(checkpoint)
-    cfg = _build_config(metadata, checkpoint, base_cfg=_record_config(spec))
+    # A ComfyUI top-up has no local pipeline to describe, and the base-model check inside
+    # `_build_config` does not hold for it: ComfyUI loads the base model the request named.
+    comfy = _renders_on_comfy(spec)
+    cfg = None if comfy else _build_config(metadata, checkpoint, base_cfg=_record_config(spec))
     plan = dict(spec.get("plan") or {})
     slots = evaluation.render_slots(plan)
     images = evaluation.images_from_payload(spec.get("images"))
@@ -939,31 +1189,47 @@ def run_evaluation(spec: dict, generated: Path) -> None:
     )
 
     if slots:
-        sets = _record_sets(spec) or resolve_sample_sets(cfg)
-        dtype = torch.float16 if cfg.mixed_precision == "fp16" else torch.bfloat16
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        pipe, modules = _load_family(cfg, dtype)
-        try:
-            rendered = _render_sets(
-                pipe=pipe,
-                modules=modules,
-                cfg=cfg,
+        sets = _record_sets(spec) or resolve_sample_sets(
+            cfg if cfg is not None else _record_config(spec)
+        )
+        if comfy:
+            rendered = _render_sets_comfy(
+                spec=spec,
                 sets=sets,
                 generated=generated,
                 job_id=job_id,
-                device=device,
-                dtype=dtype,
+                checkpoint=checkpoint,
                 plan=slots,
                 run_id=str(spec.get("run_id") or ""),
                 output_name=str(spec.get("output_name") or ""),
                 step=spec.get("step"),
                 source=provenance.SOURCE_EVALUATE,
-                checkpoint=checkpoint.name,
             )
-        finally:
-            for module in (modules.denoise, *modules.text_encoders):
-                module.to("cpu")
-            flush_memory(device)
+        else:
+            dtype = torch.float16 if cfg.mixed_precision == "fp16" else torch.bfloat16
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            pipe, modules = _load_family(cfg, dtype)
+            try:
+                rendered = _render_sets(
+                    pipe=pipe,
+                    modules=modules,
+                    cfg=cfg,
+                    sets=sets,
+                    generated=generated,
+                    job_id=job_id,
+                    device=device,
+                    dtype=dtype,
+                    plan=slots,
+                    run_id=str(spec.get("run_id") or ""),
+                    output_name=str(spec.get("output_name") or ""),
+                    step=spec.get("step"),
+                    source=provenance.SOURCE_EVALUATE,
+                    checkpoint=checkpoint.name,
+                )
+            finally:
+                for module in (modules.denoise, *modules.text_encoders):
+                    module.to("cpu")
+                flush_memory(device)
 
         for set_index, repeat_idx, path in rendered:
             images.append(

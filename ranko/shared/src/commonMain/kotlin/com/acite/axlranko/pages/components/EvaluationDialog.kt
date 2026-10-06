@@ -31,10 +31,13 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import com.acite.axlranko.data.ComfyCheckpointList
 import com.acite.axlranko.model.DEFAULT_TAGGER_CATEGORY
 import com.acite.axlranko.model.EvaluationPromptsResponse
 import com.acite.axlranko.model.EvaluationTarget
 import com.acite.axlranko.model.GeneratedSampleJob
+import com.acite.axlranko.model.SampleBackend
+import com.acite.axlranko.model.SampleBackendChoice
 import com.acite.axlranko.model.TaggerInfoResult
 import com.acite.axlranko.ui.components.CapsuleButton
 import com.acite.axlranko.ui.components.CapsuleChoice
@@ -79,11 +82,24 @@ internal fun EvaluationDialog(
     /** Room the window leaves for the panel; the content scrolls inside it. */
     maxWidth: Dp,
     maxHeight: Dp,
+    /** The renderer the pass will use; the picker's edits go back through [onBackendChoice]. */
+    backendChoice: SampleBackendChoice,
+    comfyCheckpoints: ComfyCheckpointList?,
+    comfyCheckpointsLoading: Boolean,
+    comfyCheckpointsError: String?,
+    onBackendChoice: (SampleBackendChoice) -> Unit,
+    onRefreshCheckpoints: () -> Unit,
     onToggleTag: (String) -> Unit,
     onClearTags: () -> Unit,
     onToggleDetails: () -> Unit,
     onCancel: (String) -> Unit,
-    onStart: (depth: Int, threshold: Float, categories: List<String>, tags: List<String>) -> Unit,
+    onStart: (
+        depth: Int,
+        threshold: Float,
+        categories: List<String>,
+        tags: List<String>,
+        backend: SampleBackend?,
+    ) -> Unit,
     onDismiss: () -> Unit,
     /** Hoisted so the panel's own test can measure the viewport it scrolls in. */
     scrollState: ScrollState = rememberScrollState(),
@@ -96,6 +112,8 @@ internal fun EvaluationDialog(
     var selected by remember(key) { mutableStateOf(setOf(DEFAULT_TAGGER_CATEGORY)) }
 
     val requestError = evaluationRequestError(depth, threshold)
+    // Only the top-up renders; the tagging and scoring that follow are this machine's either way.
+    val backendError = sampleBackendError(backendChoice, comfyCheckpoints, comfyCheckpointsLoading)
     val running = job?.takeIf { it.state == JOB_RUNNING }
 
     Dialog(onDismissRequest = onDismiss) {
@@ -200,7 +218,21 @@ internal fun EvaluationDialog(
                     onClear = onClearTags,
                 )
 
-                (requestError ?: error)?.let { message ->
+                HorizontalDivider(color = colors.stroke.copy(alpha = 0.4f))
+                Text(text = "Renderer", color = colors.text, fontSize = 12.sp)
+                BackendChoices(choice = backendChoice, onChoiceChange = onBackendChoice)
+                if (backendChoice.isComfy) {
+                    ComfyBackendFields(
+                        choice = backendChoice,
+                        checkpoints = comfyCheckpoints,
+                        loading = comfyCheckpointsLoading,
+                        error = comfyCheckpointsError,
+                        onChoiceChange = onBackendChoice,
+                        onRefresh = onRefreshCheckpoints,
+                    )
+                }
+
+                (requestError ?: backendError ?: error)?.let { message ->
                     Text(text = message, color = colors.qualityRed, fontSize = 12.sp)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -218,12 +250,13 @@ internal fun EvaluationDialog(
                                     ?: DEFAULT_EVALUATION_THRESHOLD,
                                 if (known.isEmpty()) emptyList() else selected.toList(),
                                 selectedTags.toList(),
+                                sampleBackendPayload(backendChoice),
                             )
                         },
                         emphasized = true,
                         // One pass at a time: the GPU is single-tenant and the helper refuses a
                         // second job while this one runs, so the button says so instead.
-                        enabled = requestError == null && !starting && running == null,
+                        enabled = requestError == null && backendError == null && !starting && running == null,
                     )
                     CapsuleButton(text = "Close", onClick = onDismiss, enabled = !starting)
                 }

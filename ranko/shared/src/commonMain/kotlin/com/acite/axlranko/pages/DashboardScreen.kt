@@ -117,6 +117,8 @@ import com.acite.axlranko.model.RegenerateConfirm
 import com.acite.axlranko.model.RegenerateError
 import com.acite.axlranko.model.SampleClearResult
 import com.acite.axlranko.model.SampleItem
+import com.acite.axlranko.model.SamplePassKind
+import com.acite.axlranko.model.SamplePassRequest
 import com.acite.axlranko.model.UnpinnedClearResult
 import com.acite.axlranko.pages.components.ChartCard
 import com.acite.axlranko.pages.components.ChartPickMarkers
@@ -142,6 +144,8 @@ import com.acite.axlranko.pages.components.PANEL_MAX_WIDTH
 import com.acite.axlranko.pages.components.PANEL_MIN_HEIGHT
 import com.acite.axlranko.pages.components.PathChip
 import com.acite.axlranko.pages.components.RunSelector
+import com.acite.axlranko.pages.components.SampleBackendDialog
+import com.acite.axlranko.pages.components.samplePassDetail
 import com.acite.axlranko.pages.components.SamplePromptsEditorDialog
 import com.acite.axlranko.pages.components.SamplingPromptsSection
 import com.acite.axlranko.pages.components.SAMPLES_PER_ROW
@@ -470,7 +474,21 @@ fun DashboardScreen(
                         starting = uiState.isStartingBatch,
                         canStart = gpuFree,
                         note = uiState.batchError ?: uiState.generatedError,
-                        onSampleRange = viewModel::startSampleBatch,
+                        onSampleRange = { from, to ->
+                            viewModel.openSamplePass(
+                                SamplePassRequest(
+                                    kind = SamplePassKind.SAMPLE_RANGE,
+                                    detail = samplePassDetail(
+                                        SamplePassKind.SAMPLE_RANGE,
+                                        checkpointsInRange(checkpointCards, from, to).size,
+                                        fromStep = from,
+                                        toStep = to,
+                                    ),
+                                    fromStep = from,
+                                    toStep = to,
+                                )
+                            )
+                        },
                         onCancel = { id -> viewModel.cancelGeneration(id) },
                         portrait = portrait,
                     )
@@ -482,7 +500,19 @@ fun DashboardScreen(
                             canStart = gpuFree && runningBatchJob == null,
                             roundIndex = uiState.pinnedRoundIndex,
                             roundTotal = uiState.pinnedRoundsTotal,
-                            onGeneratePinned = viewModel::startPinnedSampleBatch,
+                            onGeneratePinned = { rounds ->
+                                viewModel.openSamplePass(
+                                    SamplePassRequest(
+                                        kind = SamplePassKind.PINNED,
+                                        detail = samplePassDetail(
+                                            SamplePassKind.PINNED,
+                                            pinnedCount,
+                                            rounds = rounds,
+                                        ),
+                                        rounds = rounds,
+                                    )
+                                )
+                            },
                         )
                     }
                 }
@@ -530,7 +560,18 @@ fun DashboardScreen(
                                 ?.takeIf { it.checkpointPath == row.checkpoint?.path },
                             onRegenerate = viewModel::planRegenerateSample,
                             onOpen = { viewModel.openPreview(it) },
-                            onGenerate = viewModel::generateCheckpointSamples,
+                            onGenerate = { checkpoint ->
+                                viewModel.openSamplePass(
+                                    SamplePassRequest(
+                                        kind = SamplePassKind.CHECKPOINT_SAMPLES,
+                                        detail = samplePassDetail(
+                                            SamplePassKind.CHECKPOINT_SAMPLES,
+                                            uiState.samplePrompts?.sets?.size ?: 0,
+                                        ),
+                                        checkpoint = checkpoint,
+                                    )
+                                )
+                            },
                             onEvaluate = { checkpoint, images, jobId ->
                                 viewModel.openEvaluation(checkpoint, images, jobId)
                             },
@@ -616,16 +657,45 @@ fun DashboardScreen(
                     starting = uiState.isStartingEvaluation == target.checkpoint.path,
                     error = uiState.evaluationError,
                     detailsOpen = uiState.evaluationDetailsOpen,
+                    backendChoice = uiState.sampleBackendChoice,
+                    comfyCheckpoints = uiState.comfyCheckpoints,
+                    comfyCheckpointsLoading = uiState.comfyCheckpointsLoading,
+                    comfyCheckpointsError = uiState.comfyCheckpointsError,
+                    onBackendChoice = viewModel::setSampleBackendChoice,
+                    onRefreshCheckpoints = viewModel::refreshComfyCheckpoints,
                     maxWidth = maxWidth - PAGE_PANEL_MARGIN,
                     maxHeight = maxHeight - PAGE_PANEL_MARGIN,
                     onToggleTag = viewModel::toggleEvaluationTag,
                     onClearTags = viewModel::clearEvaluationTags,
                     onToggleDetails = viewModel::toggleEvaluationDetails,
                     onCancel = { id -> viewModel.cancelGeneration(id) },
-                    onStart = { depth, threshold, categories, tags ->
-                        viewModel.startEvaluation(depth, threshold, categories, tags)
+                    onStart = { depth, threshold, categories, tags, backend ->
+                        viewModel.startEvaluation(depth, threshold, categories, tags, backend)
                     },
                     onDismiss = viewModel::dismissEvaluation,
+                )
+            }
+        }
+
+        uiState.samplePassRequest?.let { request ->
+            // Like the evaluation panel, a dialog cannot inherit this page's constraints.
+            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                SampleBackendDialog(
+                    request = request,
+                    choice = uiState.sampleBackendChoice,
+                    checkpoints = uiState.comfyCheckpoints,
+                    checkpointsLoading = uiState.comfyCheckpointsLoading,
+                    checkpointsError = uiState.comfyCheckpointsError,
+                    // One entry at a time, and only one of these is ever open.
+                    starting = uiState.isStartingBatch ||
+                        uiState.isStartingPinnedBatch ||
+                        uiState.isGeneratingCheckpoint != null,
+                    error = uiState.batchError ?: uiState.generatedError,
+                    onChoiceChange = viewModel::setSampleBackendChoice,
+                    onRefreshCheckpoints = viewModel::refreshComfyCheckpoints,
+                    onConfirm = viewModel::confirmSamplePass,
+                    onDismiss = viewModel::closeSamplePass,
+                    maxWidth = maxWidth - PAGE_PANEL_MARGIN,
                 )
             }
         }

@@ -368,6 +368,9 @@ Params:
 |---|---|---|---|
 | `checkpoint` | string | Yes | Path to a `.safetensors` LoRA file (any run's). |
 | `name` / `run_id` | string \| null | No | Resolve the run like `dashboard`. |
+| `backend` | string | No | `"builtin"` (default) draws locally; `"comfy"` queues the bundled `beta/Sampling.json` on a listening ComfyUI — see [Rendering samples through ComfyUI](#rendering-samples-through-comfyui). |
+| `comfy_checkpoint` | string | No | ComfyUI path — the base model the workflow loads, as a name under that instance's `models/checkpoints`. Blank keeps the workflow's own (`waiIllustriousSDXL_v170.safetensors`). |
+| `comfy_lora_strength` | number | No | ComfyUI path — the LoRA strength for both the model and the CLIP, `0`–`2` (default `0.95`). |
 
 Images land in `{output_dir}/{run_id}/{output_name}_samples/generated/` as
 `{job_id}_p{set}_{repeat}.png` — sets counting from zero, like the run's own
@@ -397,6 +400,7 @@ Params:
 |---|---|---|---|
 | `from_step` / `to_step` | integer | Yes | Inclusive bounds, `0 <= from_step <= to_step`. |
 | `name` / `run_id` | string \| null | No | Resolve the run like `dashboard`. |
+| `backend` / `comfy_checkpoint` / `comfy_lora_strength` | — | No | As in `generate_checkpoint_samples`: the renderer the whole range uses. The batch records it, and each checkpoint's own `sets` job carries the same block. |
 
 The plan is a `batch` job record — `selection: "range"`, the ordered work list,
 `from_step`/`to_step`, how many
@@ -432,6 +436,7 @@ Params:
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `name` / `run_id` | string \| null | No | Resolve the run like `dashboard`. |
+| `backend` / `comfy_checkpoint` / `comfy_lora_strength` | — | No | As in `generate_checkpoint_samples`: the renderer every pinned pass uses. |
 
 Result: `{job, log_path}` with `mode: "batch"`, the same record shape the range form writes.
 
@@ -452,6 +457,7 @@ Params:
 | `categories` | string \| array | No | Tagger categories to score (default `general`). A prompt's tags in another category (`character`, `copyright`) count as misses unless it is selected. |
 | `tags` | string \| array | No | **Narrow the scoring to these tags** (normalized the same way a caption's tags are). Every other prompt tag stops counting as a miss and every other label the tagger reports stops counting as an extra, so the scores answer "how well are these tags drawn" instead of "how well does the caption match the prompt". Omitted or empty scores every tag the prompt asks for. `evaluation_prompts` is what a client offers as the picker. |
 | `name` / `run_id` | string \| null | No | Resolve the run like `dashboard`; the checkpoint's own run wins when its path sits under `output_dir`. |
+| `backend` / `comfy_checkpoint` / `comfy_lora_strength` | — | No | As in `generate_checkpoint_samples`, and only the **top-up** renders: the tagging and scoring that follow are this machine's either way. A pass with nothing to render never reaches ComfyUI at all. |
 
 The record is a job with `mode: "evaluate"`:
 
@@ -476,6 +482,45 @@ cost the most, most frequent first — every tag the tagger reports that the pro
 a false positive. Both are always floats, and every counter is an integer: `0.0` when a denominator
 is empty. `scores.tags` echoes the `tags` the request narrowed to, and an image whose prompt asks for
 none of them is counted in `images_skipped` rather than scored.
+
+### Rendering samples through ComfyUI
+
+The four entries above — `generate_checkpoint_samples`, its range and pinned batch forms, and
+`evaluate_checkpoint` — render a checkpoint's sample sets either locally or on a **listening
+ComfyUI**, chosen per request with `backend`.
+
+The graph is the bundled `beta/Sampling.json`, not a user setting, so its nodes are fixed: the
+positive (`215`) and negative (`216`) prompts, the KSampler's steps and CFG (`19`), the seed node
+(`224`), the empty latent's size (`217`), RescaleCFG's multiplier (`207:208`), the `LoraLoader`
+(`207:219`) and the `CheckpointLoaderSimple` (`207:266`). Every value the run's own prompt sets
+carry goes in unchanged — prompt, negative, `width`/`height`, `steps`, `guidance_scale` as CFG,
+`guidance_rescale` as the RescaleCFG multiplier (the same number, the same meaning: `0` = no
+rescale) and `seed` (`0` = a fresh random seed per image, as the built-in path draws it).
+
+What the request adds is only what the built-in path reads off the checkpoint itself: `comfy_checkpoint`
+is the base model name (blank keeps the one the bundled workflow names) and `comfy_lora_strength`
+applies to both the model and the CLIP. The checkpoint being sampled *is* the LoRA: the runner
+copies it to `<install>/models/loras/axl-sample/<job_id>.safetensors` for the length of its pass and
+removes it in a `finally`, so the copy is named per pass (two runs whose checkpoints share a file
+name can never load each other's weights) and a cancel cleans up as well. A process the OOM killer
+takes leaves that one file behind; nothing ever loads it, and the next pass writes a new name.
+
+The job record carries `backend` plus `comfy: {server, checkpoint, strength, workflow}` — a batch
+copies its block onto each checkpoint's `sets` child — and everything else is exactly what the
+built-in path writes: the same file names (`{job_id}_p{set}_{repeat}.png`) in
+`{output_dir}/{run_id}/{output_name}_samples/generated/`, the same `axl_*` provenance (plus
+`backend`, `comfy_checkpoint` and `comfy_lora_strength`), and the same counters. A ComfyUI job
+reports `current_step`/`total_steps` from that instance's `/progress` for its own `prompt_id`;
+`cancel_generation` stops the wait and posts ComfyUI's `/interrupt` so the queue does not keep the
+card.
+
+Refused before anything is spawned, with a message the client shows as-is: an unknown `backend`; no
+ComfyUI listening on the machine and none saved in the Automation settings; a `comfy_checkpoint`
+that instance does not have (a blank one is fine); a `comfy_lora_strength` outside `0`–`2`; and the
+bundled workflow missing or not holding the nodes above.
+
+ComfyUI also keeps its own copy of each rendered image in its own output directory, exactly as the
+Automation runner's jobs do; the Dashboard reads the downloaded copy under the run's samples.
 
 ### `evaluation_prompts`
 

@@ -1744,6 +1744,123 @@ class GeneratedSampleIpcTest(GeneratedFixture, unittest.TestCase):
         self.assertIn("already running", str(ctx.exception))
 
 
+class ComfyBackendIpcTest(GeneratedFixture, unittest.TestCase):
+    """The ComfyUI backend of the generation entries: what is recorded, what is refused first."""
+
+    LISTING = {"root": "/opt/comfyui", "checkpoints": ["waiIllustrated_v170.safetensors"], "error": ""}
+
+    def setUp(self):
+        super().setUp()
+        self.automation_dir = Path(self.tmp.name) / "automation"
+        self.automation_dir.mkdir()
+        self.env = mock.patch.dict(os.environ, {"AXL_AUTOMATION_DIR": str(self.automation_dir)})
+        self.env.start()
+        self.addCleanup(self.env.stop)
+        self.save_server("http://127.0.0.1:8188")
+
+    def save_server(self, value: str) -> None:
+        (self.automation_dir / "settings.json").write_text(json.dumps({"server": value}), encoding="utf-8")
+
+    def listing(self, **overrides):
+        payload = dict(self.LISTING)
+        payload.update(overrides)
+        return mock.patch.object(api.comfy, "checkpoints_for_server", return_value=payload)
+
+    def test_a_request_without_a_backend_stays_the_local_path(self):
+        result = api.handle_generate_checkpoint_samples({"checkpoint": str(self.checkpoint)})
+        self.assertEqual(genjob.BACKEND_BUILTIN, result["job"]["backend"])
+        self.assertNotIn("comfy", result["job"])
+
+    def test_the_recorded_block_is_everything_the_runner_needs(self):
+        with self.listing():
+            result = api.handle_generate_checkpoint_samples(
+                {
+                    "checkpoint": str(self.checkpoint),
+                    "backend": "comfy",
+                    "comfy_checkpoint": "waiIllustrated_v170.safetensors",
+                    "comfy_lora_strength": 0.8,
+                }
+            )
+        stored = self._spec_written_by_last_spawn()
+        self.assertEqual(genjob.BACKEND_COMFY, stored["backend"])
+        self.assertEqual("http://127.0.0.1:8188", stored["comfy"]["server"])
+        self.assertEqual("waiIllustrated_v170.safetensors", stored["comfy"]["checkpoint"])
+        self.assertEqual(0.8, stored["comfy"]["strength"])
+        self.assertTrue(stored["comfy"]["workflow"].endswith("beta/Sampling.json"))
+        self.assertEqual(stored["id"], result["job"]["id"])
+        self.popen.assert_called_once()
+
+    def test_a_blank_base_model_keeps_the_workflows_own(self):
+        with self.listing():
+            api.handle_generate_checkpoint_samples(
+                {"checkpoint": str(self.checkpoint), "backend": "comfy"}
+            )
+        stored = self._spec_written_by_last_spawn()
+        self.assertEqual("", stored["comfy"]["checkpoint"])
+        self.assertEqual(0.95, stored["comfy"]["strength"])
+
+    def test_a_batch_and_an_evaluation_record_the_backend_too(self):
+        with self.listing():
+            batch = api.handle_generate_checkpoint_samples_batch(
+                {"from_step": 3050, "to_step": 3050, "backend": "comfy"}
+            )
+            self.assertEqual(genjob.BACKEND_COMFY, batch["job"]["backend"])
+            self.assertEqual(
+                "http://127.0.0.1:8188", self._spec_written_by_last_spawn()["comfy"]["server"]
+            )
+            api.handle_evaluate_checkpoint(
+                {"checkpoint": str(self.checkpoint), "depth": 1, "backend": "comfy"}
+            )
+            stored = self._spec_written_by_last_spawn()
+        self.assertEqual(genjob.MODE_EVALUATE, stored["mode"])
+        self.assertEqual(genjob.BACKEND_COMFY, stored["backend"])
+        self.assertEqual("0.95", str(stored["comfy"]["strength"]))
+
+    def test_no_comfyui_listening_refuses_before_anything_is_spawned(self):
+        self.save_server("")
+        with mock.patch.object(api.comfy, "discover", return_value={"found": False}):
+            with self.assertRaises(ValueError) as ctx:
+                api.handle_generate_checkpoint_samples(
+                    {"checkpoint": str(self.checkpoint), "backend": "comfy"}
+                )
+        self.assertIn("no ComfyUI found", str(ctx.exception))
+        self.popen.assert_not_called()
+
+    def test_a_base_model_comfyui_does_not_have_is_refused(self):
+        with self.listing():
+            with self.assertRaises(ValueError) as ctx:
+                api.handle_generate_checkpoint_samples(
+                    {
+                        "checkpoint": str(self.checkpoint),
+                        "backend": "comfy",
+                        "comfy_checkpoint": "missing.safetensors",
+                    }
+                )
+        self.assertIn("no checkpoint named missing.safetensors", str(ctx.exception))
+        self.popen.assert_not_called()
+
+    def test_a_lora_strength_outside_the_range_is_refused(self):
+        with self.listing():
+            for bad in (9, -1, "nope"):
+                with self.assertRaises(ValueError):
+                    api.handle_generate_checkpoint_samples(
+                        {
+                            "checkpoint": str(self.checkpoint),
+                            "backend": "comfy",
+                            "comfy_lora_strength": bad,
+                        }
+                    )
+        self.popen.assert_not_called()
+
+    def test_an_unknown_backend_is_refused(self):
+        with self.assertRaises(ValueError) as ctx:
+            api.handle_generate_checkpoint_samples(
+                {"checkpoint": str(self.checkpoint), "backend": "flux"}
+            )
+        self.assertIn("unknown render backend", str(ctx.exception))
+        self.popen.assert_not_called()
+
+
 class RegenerateSampleIpcTest(GeneratedFixture, unittest.TestCase):
     """`regenerate_sample`: redraw one sample in place from its own seed and the run's prompts."""
 

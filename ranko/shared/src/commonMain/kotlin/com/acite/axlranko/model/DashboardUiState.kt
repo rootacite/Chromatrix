@@ -4,6 +4,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
+import com.acite.axlranko.data.ComfyCheckpointList
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
@@ -793,6 +794,14 @@ data class DashboardUiState(
     val unpinnedClearResult: UnpinnedClearResult? = null,
     /** The tagger's own categories, for the dialog; fetched once when one opens. */
     val taggerInfo: TaggerInfoResult? = null,
+    /** The pass a backend dialog is open for, if any (the three Checkpoints entries, not Evaluate). */
+    val samplePassRequest: SamplePassRequest? = null,
+    /** The renderer the dialogs open on, remembered for the session. */
+    val sampleBackendChoice: SampleBackendChoice = SampleBackendChoice.BuiltIn,
+    /** ComfyUI's `models/checkpoints`, read while a backend picker is open. */
+    val comfyCheckpoints: ComfyCheckpointList? = null,
+    val comfyCheckpointsLoading: Boolean = false,
+    val comfyCheckpointsError: String? = null,
     val hardware: HardwareStatus = HardwareStatus(),
     val hardwareHistory: HardwareHistory = HardwareHistory(),
 )

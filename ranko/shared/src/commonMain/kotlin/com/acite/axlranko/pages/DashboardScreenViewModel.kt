@@ -21,7 +21,11 @@ import com.acite.axlranko.model.MetricPoint
 import com.acite.axlranko.model.RegenerateConfirm
 import com.acite.axlranko.model.RegenerateError
 import com.acite.axlranko.model.RunSummary
+import com.acite.axlranko.model.SampleBackend
+import com.acite.axlranko.model.SampleBackendChoice
 import com.acite.axlranko.model.SampleClearResult
+import com.acite.axlranko.model.SamplePassKind
+import com.acite.axlranko.model.SamplePassRequest
 import com.acite.axlranko.model.UnpinnedClearResult
 import com.acite.axlranko.model.SampleItem
 import com.acite.axlranko.model.SampleSetForm
@@ -586,11 +590,70 @@ class DashboardScreenViewModel(
     }
 
     /**
+     * Opens the renderer picker for one Checkpoints entry: locally, or through a listening ComfyUI.
+     *
+     * The entry has already decided *what* it renders (the range row's steps, the pinned row's
+     * rounds, the card's checkpoint), so the dialog only answers *how*. ComfyUI's own
+     * `models/checkpoints` list is read on the way in, because that is where the base-model
+     * dropdown comes from; a failed read leaves the picker on the built-in path.
+     */
+    fun openSamplePass(request: SamplePassRequest) {
+        _uiState.update { it.copy(samplePassRequest = request) }
+        refreshComfyCheckpoints()
+    }
+
+    fun closeSamplePass() {
+        _uiState.update { it.copy(samplePassRequest = null) }
+    }
+
+    /** The renderer the dialogs open on next: session-only, one choice shared by all of them. */
+    fun setSampleBackendChoice(choice: SampleBackendChoice) {
+        _uiState.update { it.copy(sampleBackendChoice = choice) }
+    }
+
+    /** Reads the base models a listening ComfyUI offers. Never throws: the reply carries the reason. */
+    fun refreshComfyCheckpoints() {
+        if (_uiState.value.comfyCheckpointsLoading) return
+        _uiState.update { it.copy(comfyCheckpointsLoading = true, comfyCheckpointsError = null) }
+        viewModelScope.launch {
+            try {
+                val listed = withContext(IoDispatcher) { ipc.automationCheckpoints() }
+                _uiState.update { state ->
+                    state.copy(
+                        comfyCheckpointsLoading = false,
+                        comfyCheckpoints = listed,
+                        comfyCheckpointsError = listed.error.ifBlank { null },
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        comfyCheckpointsLoading = false,
+                        comfyCheckpointsError = e.message ?: e.toString(),
+                    )
+                }
+            }
+        }
+    }
+
+    /** Starts the pass the picker was opened for, with the renderer the user chose. */
+    fun confirmSamplePass(backend: SampleBackend?) {
+        val request = _uiState.value.samplePassRequest ?: return
+        _uiState.update { it.copy(samplePassRequest = null) }
+        when (request.kind) {
+            SamplePassKind.SAMPLE_RANGE -> startSampleBatch(request.fromStep, request.toStep, backend)
+            SamplePassKind.PINNED -> startPinnedSampleBatch(request.rounds, backend)
+            SamplePassKind.CHECKPOINT_SAMPLES ->
+                request.checkpoint?.let { generateCheckpointSamples(it, backend) }
+        }
+    }
+
+    /**
      * "Generate samples" for one checkpoint: the config's whole `[[validation.samples]]` list,
      * rendered detached into the run's `_samples/generated/`. Only offered while the GPU is free
      * (the run is paused, stopped or over) — api.py refuses it otherwise.
      */
-    fun generateCheckpointSamples(checkpoint: CheckpointItem) {
+    fun generateCheckpointSamples(checkpoint: CheckpointItem, backend: SampleBackend? = null) {
         if (_uiState.value.isGeneratingCheckpoint != null) return
         _uiState.update { it.copy(isGeneratingCheckpoint = checkpoint.path, generatedError = null) }
         viewModelScope.launch {
@@ -601,6 +664,7 @@ class DashboardScreenViewModel(
                         checkpoint = checkpoint.path,
                         name = selected?.outputName,
                         runId = selected?.runId ?: _uiState.value.runId,
+                        backend = backend,
                     )
                 }
                 sessionJobIds += response.job.id
@@ -627,7 +691,7 @@ class DashboardScreenViewModel(
      * "Sample range": one detached job that renders the config's sample sets for every checkpoint
      * whose step is inside `fromStep..toStep`, oldest first.
      */
-    fun startSampleBatch(fromStep: Int, toStep: Int) {
+    fun startSampleBatch(fromStep: Int, toStep: Int, backend: SampleBackend? = null) {
         if (_uiState.value.isStartingBatch) return
         _uiState.update { it.copy(isStartingBatch = true, batchError = null) }
         viewModelScope.launch {
@@ -639,6 +703,7 @@ class DashboardScreenViewModel(
                         toStep = toStep,
                         name = selected?.outputName,
                         runId = selected?.runId ?: _uiState.value.runId,
+                        backend = backend,
                     )
                 }
                 sessionJobIds += response.job.id
@@ -665,7 +730,7 @@ class DashboardScreenViewModel(
      * next one starts only once the previous job has stopped. A round that failed, or that the user
      * stopped, ends the sequence. A stale pin cannot fail the batch: the helper drops it.
      */
-    fun startPinnedSampleBatch(rounds: Int = 1) {
+    fun startPinnedSampleBatch(rounds: Int = 1, backend: SampleBackend? = null) {
         if (_uiState.value.isStartingPinnedBatch) return
         val total = rounds.coerceIn(1, MAX_PINNED_ROUNDS)
         _uiState.update {
@@ -684,7 +749,11 @@ class DashboardScreenViewModel(
                 val runId = selected?.runId ?: _uiState.value.runId
                 val started = try {
                     withContext(IoDispatcher) {
-                        ipc.generatePinnedCheckpointSamples(name = selected?.outputName, runId = runId)
+                        ipc.generatePinnedCheckpointSamples(
+                            name = selected?.outputName,
+                            runId = runId,
+                            backend = backend,
+                        )
                     }
                 } catch (e: Exception) {
                     failure = e.message ?: e.toString()
@@ -770,6 +839,8 @@ class DashboardScreenViewModel(
                 _uiState.update { state -> state.copy(taggerInfo = info) }
             }
         }
+        // The panel's renderer picker needs the same base-model list the other dialogs use.
+        refreshComfyCheckpoints()
         loadEvaluationPrompts(checkpoint)
     }
 
@@ -1039,6 +1110,7 @@ class DashboardScreenViewModel(
         threshold: Float,
         categories: List<String>,
         tags: List<String> = emptyList(),
+        backend: SampleBackend? = null,
     ) {
         val target = _uiState.value.evaluationTarget ?: return
         if (_uiState.value.isStartingEvaluation != null) return
@@ -1055,6 +1127,7 @@ class DashboardScreenViewModel(
                         tags = tags,
                         name = selected?.outputName,
                         runId = selected?.runId ?: _uiState.value.runId,
+                        backend = backend,
                     )
                 }
                 sessionJobIds += response.job.id

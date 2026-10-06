@@ -75,7 +75,17 @@ from trainer.runs import (
     safe_name,
     write_chart_view,
 )
-from trainer import automation, blobcodec, comfy, evaluation, fsrpc, genjob, provenance, run_automation
+from trainer import (
+    automation,
+    blobcodec,
+    comfy,
+    comfy_sample,
+    evaluation,
+    fsrpc,
+    genjob,
+    provenance,
+    run_automation,
+)
 
 _TAG_BLOCKED = frozenset(
     {
@@ -1270,6 +1280,52 @@ def _claim_generation_run(params: dict[str, Any]) -> tuple[dict[str, Any], str, 
     return cfg, run_id, output_name, generated
 
 
+def _comfy_backend(params: dict[str, Any]) -> tuple[str, Optional[dict[str, Any]]]:
+    """`(backend, comfy block)` of a generation request, validated before anything is spawned.
+
+    A request without `backend` (or with `"builtin"`) is the local diffusers path and carries no
+    block. The ComfyUI path uses the server the Automation page already talks to — its saved
+    address, else discovery — checks the bundled `beta/Sampling.json` and the base model against
+    that instance's `models/checkpoints` (a blank name keeps the workflow's own), and validates the
+    LoRA strength. Every refusal is a `ValueError` the client shows as-is, so nothing is spawned
+    for a request ComfyUI could not serve. The staged LoRA is the runner's business, not this
+    function's: a batch of N checkpoints must not stage N files at plan time.
+    """
+    backend = genjob.normalize_backend(params.get("backend"))
+    if backend != genjob.BACKEND_COMFY:
+        return backend, None
+
+    server = str(automation.load_settings().get("server") or "").strip()
+    if not server:
+        found = comfy.discover()
+        if not found.get("found"):
+            raise ValueError("no ComfyUI found listening on this machine")
+        server = str(found.get("url") or "")
+    listed = comfy.checkpoints_for_server(server)
+    if not str(listed.get("root") or ""):
+        raise ValueError(str(listed.get("error") or "ComfyUI's models/checkpoints was not found"))
+
+    checkpoint_name = comfy_sample.normalize_checkpoint_name(params.get("comfy_checkpoint"))
+    available = listed.get("checkpoints") or []
+    if checkpoint_name and checkpoint_name not in available:
+        raise ValueError(f"ComfyUI has no checkpoint named {checkpoint_name}")
+    strength = comfy_sample.normalize_strength(params.get("comfy_lora_strength"))
+
+    workflow = comfy_sample.sampling_workflow_path()
+    if not workflow.is_file():
+        raise ValueError(f"missing bundled workflow: {workflow}")
+    try:
+        comfy_sample.require_sampling_nodes(automation.load_workflow(workflow))
+    except comfy.ComfyError as exc:
+        raise ValueError(str(exc)) from exc
+    return backend, {
+        "server": server,
+        "checkpoint": checkpoint_name,
+        "strength": strength,
+        "workflow": str(workflow),
+    }
+
+
 def _claim_generation(params: dict[str, Any]) -> tuple[dict[str, Any], str, str, Path, Path]:
     """`_claim_generation_run` plus the checkpoint one of the two forms renders from."""
     cfg, run_id, output_name, generated = _claim_generation_run(params)
@@ -1461,8 +1517,14 @@ def handle_generate_checkpoint_samples(params: dict[str, Any]) -> dict[str, Any]
     `max_token_length` and the base model come from the checkpoint's own metadata. Images land in
     `_samples/generated/` next to the run's own samples, so a training-produced sample is never
     overwritten.
+
+    `backend: "comfy"` draws the same sets on a listening ComfyUI instead, on the bundled
+    `beta/Sampling.json`: `comfy_checkpoint` is the base model that graph loads and
+    `comfy_lora_strength` the LoRA strength, while every sampling value stays the run's own. See
+    `_comfy_backend` for what is refused up front.
     """
     cfg, run_id, output_name, generated, checkpoint = _claim_generation(params)
+    backend, comfy_block = _comfy_backend(params)
 
     log_dir = _log_dir(cfg, run_id)
     try:
@@ -1478,6 +1540,8 @@ def handle_generate_checkpoint_samples(params: dict[str, Any]) -> dict[str, Any]
         checkpoint=str(checkpoint),
         mode=genjob.MODE_SETS,
         total_images=sum(sample_set.repeat for sample_set in sets),
+        backend=backend,
+        comfy=comfy_block,
         extra={
             "sample_sets": [asdict(sample_set) for sample_set in sets],
             "config_log_dir": str(log_dir),
@@ -1603,10 +1667,13 @@ def handle_generate_checkpoint_samples_batch(params: dict[str, Any]) -> dict[str
     first by a single detached process, which gives each of them its own `generate_checkpoint_samples`
     job (so the images land beside the run's samples and are shown under that checkpoint's card).
     The prompts are the run's own, recorded on the batch as `config_log_dir` so the runner resolves
-    them once for the whole range.
+    them once for the whole range. A renderer (`backend`, see `_comfy_backend`) is recorded on the
+    batch and copied onto every checkpoint's own job, so a range draws on the local pipeline or on
+    ComfyUI as one decision.
     """
     cfg, run_id, output_name, generated = _claim_generation_run(params)
     from_step, to_step = _range_bounds(params)
+    backend, comfy_block = _comfy_backend(params)
 
     candidates = [
         item
@@ -1643,14 +1710,20 @@ def handle_generate_checkpoint_samples_batch(params: dict[str, Any]) -> dict[str
         # The prompts are resolved here, once for the range, and recorded: the runner renders what
         # this run's own sets say rather than re-reading a config file later.
         sample_sets=[asdict(sample_set) for sample_set in sets],
+        backend=backend,
+        comfy=comfy_block,
     )
     job, log = _spawn_generator(generated, job)
     return {"job": _json_safe(job), "log_path": log}
 
 
 def handle_generate_pinned_checkpoint_samples(params: dict[str, Any]) -> dict[str, Any]:
-    """Render the run's sample sets for every valid pinned checkpoint, in one detached batch."""
+    """Render the run's sample sets for every valid pinned checkpoint, in one detached batch.
+
+    Takes the same renderer choice as the range form (`backend`, `_comfy_backend`).
+    """
     cfg, run_id, output_name, generated = _claim_generation_run(params)
+    backend, comfy_block = _comfy_backend(params)
     log_dir = _log_dir(cfg, run_id)
     matches = {
         str(Path(str(item["path"])).resolve()): item
@@ -1696,6 +1769,8 @@ def handle_generate_pinned_checkpoint_samples(params: dict[str, Any]) -> dict[st
         config_log_dir=str(log_dir),
         sample_sets=[asdict(sample_set) for sample_set in sets],
         selection="pinned",
+        backend=backend,
+        comfy=comfy_block,
     )
     job, log = _spawn_generator(generated, job)
     return {"job": _json_safe(job), "log_path": log}
@@ -1750,8 +1825,13 @@ def handle_evaluate_checkpoint(params: dict[str, Any]) -> dict[str, Any]:
     trained this checkpoint saved beside its logs, falling back to today's `config.toml` for a run
     from before snapshots existed — `config_source` says which one was used. A checkpoint that
     already holds `depth` images renders nothing and goes straight to tagging.
+
+    Only that top-up takes a renderer: `backend: "comfy"` (`_comfy_backend`) draws the missing
+    images on a listening ComfyUI, while the tagging and the scoring that follow are local either
+    way. A pass with nothing to render never reaches ComfyUI at all.
     """
     cfg, _run_id, _output_name, _generated, checkpoint = _claim_generation(params)
+    backend, comfy_block = _comfy_backend(params)
 
     depth = evaluation.normalize_depth(params.get("depth"))
     raw_threshold = params.get("threshold")
@@ -1791,6 +1871,8 @@ def handle_evaluate_checkpoint(params: dict[str, Any]) -> dict[str, Any]:
         images=[image.to_dict() for image in images],
         sample_sets=[asdict(sample_set) for sample_set in sets],
         tags=tags,
+        backend=backend,
+        comfy=comfy_block,
     )
     # The selection is this run's from now on, so its next evaluation opens on it. A run directory
     # that refuses the write is a warning: the pass itself is what was asked for.

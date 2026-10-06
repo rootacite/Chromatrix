@@ -39,6 +39,12 @@ MODE_BATCH = "batch"
 MODE_EVALUATE = "evaluate"
 MODES = (MODE_SINGLE, MODE_SETS, MODE_BATCH, MODE_EVALUATE)
 
+# Who draws a job's images: the local diffusers pipeline, or a listening ComfyUI running the
+# bundled `beta/Sampling.json`. A job from before this field existed reads as `builtin`.
+BACKEND_BUILTIN = "builtin"
+BACKEND_COMFY = "comfy"
+BACKENDS = (BACKEND_BUILTIN, BACKEND_COMFY)
+
 # An evaluation's own progress: which stage it is in. `images_done` / `total_images` are that
 # stage's counters — images rendered while `rendering`, images tagged while `tagging`.
 PHASE_RENDERING = "rendering"
@@ -66,6 +72,34 @@ def generated_dir(samples_dir: Union[str, Path]) -> Path:
     """`{name}_samples/generated`: inside the sample dir, so api.py's non-recursive sample scan and
     `cleanup.py`'s run-scoped reset both keep working unchanged."""
     return Path(samples_dir) / GENERATED_DIRNAME
+
+
+def normalize_backend(value: Any) -> str:
+    """A job's renderer. Absent or blank means the built-in (local diffusers) one."""
+    name = str(value or "").strip() or BACKEND_BUILTIN
+    if name not in BACKENDS:
+        raise ValueError(f"unknown render backend: {name}")
+    return name
+
+
+def comfy_fields(backend: Any, comfy: Any) -> dict[str, Any]:
+    """The two record fields a renderer choice adds: `backend`, and a normalized `comfy` block.
+
+    The block is what the runner needs to reach ComfyUI — its address, the base model the user
+    picked (blank keeps the workflow's own), the LoRA strength, and the bundled workflow it will
+    rewrite. It never carries the staged LoRA's name: that is decided in the runner, per pass.
+    """
+    name = normalize_backend(backend)
+    fields: dict[str, Any] = {"backend": name}
+    if name == BACKEND_COMFY:
+        payload = comfy if isinstance(comfy, Mapping) else {}
+        fields["comfy"] = {
+            "server": str(payload.get("server") or ""),
+            "checkpoint": str(payload.get("checkpoint") or ""),
+            "strength": float(payload.get("strength") or 0.0),
+            "workflow": str(payload.get("workflow") or ""),
+        }
+    return fields
 
 
 def job_stem(checkpoint: Union[str, Path]) -> str:
@@ -166,6 +200,8 @@ def list_jobs(generated: Union[str, Path]) -> list[dict[str, Any]]:
             payload.setdefault("error", "job file has no valid state")
         if payload.get("mode") not in MODES:
             payload["mode"] = MODE_SINGLE
+        if payload.get("backend") not in BACKENDS:
+            payload["backend"] = BACKEND_BUILTIN
         payload.setdefault("cancel_requested", False)
         jobs.append(payload)
     jobs.sort(key=lambda job: (float(job.get("started_at") or 0.0), str(job.get("id"))), reverse=True)
@@ -255,6 +291,8 @@ def new_job(
     mode: str = MODE_SINGLE,
     total_images: int = 1,
     pid: Optional[int] = None,
+    backend: str = BACKEND_BUILTIN,
+    comfy: Optional[Mapping[str, Any]] = None,
     extra: Optional[Mapping[str, Any]] = None,
 ) -> dict[str, Any]:
     """The job record api.py writes before spawning the generator."""
@@ -265,6 +303,7 @@ def new_job(
         "id": new_job_id(job_stem(checkpoint), mode=mode),
         "state": STATE_RUNNING,
         "mode": mode,
+        **comfy_fields(backend, comfy),
         "run_id": run_id,
         "output_name": output_name,
         "checkpoint": checkpoint,
@@ -315,6 +354,8 @@ def new_batch_job(
     config_log_dir: str = "",
     sample_sets: Optional[list[Mapping[str, Any]]] = None,
     selection: str = "range",
+    backend: str = BACKEND_BUILTIN,
+    comfy: Optional[Mapping[str, Any]] = None,
     now: Optional[Union[datetime, float]] = None,
 ) -> dict[str, Any]:
     """The plan api.py writes before spawning a checkpoint-list batch.
@@ -339,6 +380,7 @@ def new_batch_job(
         "id": new_job_id(stem, mode=MODE_BATCH, now=now),
         "state": STATE_RUNNING,
         "mode": MODE_BATCH,
+        **comfy_fields(backend, comfy),
         "selection": selection,
         "run_id": run_id,
         "output_name": output_name,
@@ -387,6 +429,8 @@ def new_evaluation_job(
     images: list[Mapping[str, Any]],
     sample_sets: list[Mapping[str, Any]],
     tags: Optional[list[str]] = None,
+    backend: str = BACKEND_BUILTIN,
+    comfy: Optional[Mapping[str, Any]] = None,
 ) -> dict[str, Any]:
     """The record api.py writes before spawning an evaluation.
 
@@ -412,6 +456,8 @@ def new_evaluation_job(
         # The counters belong to the phase the record starts in; the tagging phase resets them to
         # the size of the whole scored set (the run's own samples included) when it begins.
         total_images=int(plan.get("render_total") or 0) if needed else len(images),
+        backend=backend,
+        comfy=comfy,
         extra={
             "depth": int(depth),
             "threshold": float(threshold),
