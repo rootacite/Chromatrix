@@ -46,9 +46,9 @@ dependencies:
       - aiosignal==1.4.0
       - alembic==1.19.2
       - altair==6.2.2
-      - amd-torch-device-gfx12-0==2.13.0+rocm10.0.0
-      - amd-torch-device-gfx1201==2.13.0+rocm10.0.0
-      - amd-torchvision-device-gfx1201==0.28.0+rocm10.0.0
+      - amd-torch-device-gfx12-0==2.14.0+rocm10.1.0
+      - amd-torch-device-gfx1201==2.14.0+rocm10.1.0
+      - amd-torchvision-device-gfx1201==0.29.0a0+rocm10.1.0
       - annotated-doc==0.0.5
       - annotated-types==0.8.0
       - antlr4-python3-runtime==4.9.3
@@ -178,11 +178,11 @@ dependencies:
       - regex==2026.9.3
       - requests==2.34.2
       - rich==15.0.0
-      - rocm==10.0.0
+      - rocm==10.1.0
       - rocm-bootstrap==0.2.0
-      - rocm-sdk-core==10.0.0
-      - rocm-sdk-device-gfx1201==10.0.0
-      - rocm-sdk-libraries==10.0.0
+      - rocm-sdk-core==10.1.0
+      - rocm-sdk-device-gfx1201==10.1.0
+      - rocm-sdk-libraries==10.1.0
       - rpds-py==2026.6.3
       - safetensors==0.8.0
       - schedulefree==1.4.1
@@ -211,14 +211,14 @@ dependencies:
       - timm==1.0.30
       - tokenizers==0.23.2
       - toml==0.10.2
-      - torch==2.13.0+rocm10.0.0
-      - torchaudio==2.11.0.2+rocm10.0.0
+      - torch==2.14.0+rocm10.1.0
+      - torchaudio==2.11.0.3+rocm10.1.0
       - torchsde==0.2.6
-      - torchvision==0.28.0+rocm10.0.0
+      - torchvision==0.29.0a0+rocm10.1.0
       - tqdm==4.70.0
       - trampoline==0.1.2
       - transformers==5.16.1
-      - triton==3.8.0+git4cff872c.rocm10.0.0
+      - triton==3.8.0+git669b31ac.rocm10.1.0
       - typer==0.27.2
       - typing-extensions==4.16.0
       - typing-inspection==0.4.4
