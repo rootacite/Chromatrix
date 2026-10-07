@@ -238,6 +238,7 @@ class AutomationPanesRenderTest {
                         universalLora = "Yui_s002850.safetensors",
                         universalCheckpoint = "illustriousXLV20_v20Stable.safetensors",
                         universalTrigger = "(yui_character:1.1)",
+                        universalLoraStrength = 0.7f,
                     ),
                     comfy = comfy,
                     loras = listOf("Yui_s002850.safetensors", "chars/Kano.safetensors"),

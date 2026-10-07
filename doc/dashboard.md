@@ -355,12 +355,16 @@ of the app uses, so no new image path exists.
 a checkpoint, a LoRA and a character trigger, the first two chosen from lists of the model files
 under `models/checkpoints` and `models/loras` in the install directory of the ComfyUI process (the
 listen port's process; its cwd, or the directory of `main.py` when that is where `models/loras`
-lives). On each queued prompt the runner sets node `207:266`'s `ckpt_name` when a checkpoint was
-chosen, node `207:219`'s `lora_name`, replaces the first comma-separated segment of node `198:259`
+lives). The LoRA card also carries the **LoRA strength** slider (0–2 in 0.05 steps, default 1, which
+is the bundled workflow's own value), written to both `strength_model` and `strength_clip` of the
+LoRA node. On each queued prompt the runner sets node `207:266`'s `ckpt_name` when a checkpoint was
+chosen, node `207:219`'s `lora_name` and those two strengths, replaces the first comma-separated
+segment of node `198:259`
 (the upscale prompt) with the trigger, and writes the batch line into node `215` whole. Checkpoint,
-LoRA and trigger are stored in `settings.json` as `universal_checkpoint`, `universal_lora` and
-`universal_trigger`; a blank checkpoint keeps the bundled workflow's own, and starting without a
-LoRA or a trigger is refused. Redraws and appends reuse the values stored on that job.
+LoRA, trigger and strength are stored in `settings.json` as `universal_checkpoint`, `universal_lora`,
+`universal_trigger` and `universal_lora_strength`; a blank checkpoint keeps the bundled workflow's
+own, and starting without a LoRA or a trigger is refused. Redraws and appends reuse the values stored
+on that job.
 
 **Gallery** — the jobs and their images:
 

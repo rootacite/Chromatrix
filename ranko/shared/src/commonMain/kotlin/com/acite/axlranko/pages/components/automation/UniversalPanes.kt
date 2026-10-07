@@ -16,6 +16,7 @@ import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -29,11 +30,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.acite.axlranko.model.AutomationUiState
+import com.acite.axlranko.model.UNIVERSAL_LORA_STRENGTH_MAX
+import com.acite.axlranko.model.UNIVERSAL_LORA_STRENGTH_MIN
 import com.acite.axlranko.pages.AutomationScreenViewModel
 import com.acite.axlranko.ui.components.CapsuleButton
 import com.acite.axlranko.ui.components.PorcelainCard
 import com.acite.axlranko.ui.components.rankoFieldColors
 import com.acite.axlranko.ui.theme.rankoColors
+import com.acite.axlranko.util.formatFixed
 import dev.zacsweers.metrox.viewmodel.metroViewModel
 
 /** The bundled-workflow section: same server and batch as ComfyUI, plus a LoRA and a trigger. */
@@ -237,6 +241,22 @@ private fun LoraCard(state: AutomationUiState, viewModel: AutomationScreenViewMo
                 Text(text = state.loraRoot, color = colors.textDim, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             state.lorasError?.let { Text(it, color = colors.qualityRed, fontSize = 11.sp) }
+
+            Text(
+                text = "${uiText(lang, "lora_strength")}  ${formatFixed(state.settings.universalLoraStrength, 2)}",
+                color = colors.textDim,
+                fontSize = 11.sp,
+                maxLines = 1,
+                softWrap = false,
+            )
+            Slider(
+                value = state.settings.universalLoraStrength,
+                onValueChange = viewModel::setUniversalLoraStrength,
+                valueRange = UNIVERSAL_LORA_STRENGTH_MIN..UNIVERSAL_LORA_STRENGTH_MAX,
+                steps = 39,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Text(text = uiText(lang, "lora_strength_hint"), color = colors.textDim, fontSize = 11.sp)
             Text(
                 text = uiText(lang, "trigger"),
                 color = colors.text,

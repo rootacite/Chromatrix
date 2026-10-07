@@ -59,11 +59,14 @@ def universal_workflow_path() -> Path:
 
 
 def require_universal_nodes(workflow: Mapping[str, Any]) -> None:
-    """The three inputs a Universal job rewrites. Raises before a prompt is queued."""
+    """The inputs a Universal job rewrites. Raises before a prompt is queued."""
     lora = workflow.get(UNIVERSAL_LORA_NODE)
     lora_inputs = lora.get("inputs") if isinstance(lora, dict) else None
-    if not isinstance(lora_inputs, dict) or "lora_name" not in lora_inputs:
-        raise comfy.ComfyError(f"LoRA node {UNIVERSAL_LORA_NODE!r} has no lora_name input")
+    if not isinstance(lora_inputs, dict):
+        raise comfy.ComfyError(f"LoRA node {UNIVERSAL_LORA_NODE!r} has no inputs object")
+    for name in ("lora_name", "strength_model", "strength_clip"):
+        if name not in lora_inputs:
+            raise comfy.ComfyError(f"LoRA node {UNIVERSAL_LORA_NODE!r} has no {name!r} input")
     upscale = workflow.get(UNIVERSAL_UPSCALE_NODE)
     upscale_inputs = upscale.get("inputs") if isinstance(upscale, dict) else None
     text = upscale_inputs.get("text") if isinstance(upscale_inputs, dict) else None
@@ -86,8 +89,10 @@ def apply_universal(
     lora_name: str,
     trigger: str,
     checkpoint_name: str = "",
+    strength: Optional[float] = None,
 ) -> None:
-    """Set the LoRA name, the first segment of the upscale prompt, and the checkpoint when one is given."""
+    """Set the LoRA name and strength, the first segment of the upscale prompt, and the checkpoint
+    when one is given. No strength keeps the workflow's own `strength_model` / `strength_clip`."""
     lora = str(lora_name or "").strip()
     word = str(trigger or "").strip()
     if not lora:
@@ -96,6 +101,9 @@ def apply_universal(
         raise comfy.ComfyError("a character trigger is required")
     require_universal_nodes(workflow)
     workflow[UNIVERSAL_LORA_NODE]["inputs"]["lora_name"] = lora
+    if strength is not None:
+        workflow[UNIVERSAL_LORA_NODE]["inputs"]["strength_model"] = float(strength)
+        workflow[UNIVERSAL_LORA_NODE]["inputs"]["strength_clip"] = float(strength)
     checkpoint = str(checkpoint_name or "").strip()
     if checkpoint:
         workflow[UNIVERSAL_CHECKPOINT_NODE]["inputs"]["ckpt_name"] = checkpoint
@@ -404,11 +412,18 @@ def run_job(spec_path: Path, only_failed: bool = False, target: Optional[Mapping
                     workflow = copy.deepcopy(base_workflow)
                     set_positive_prompt(workflow, positive, prompt_text)
                     if str(spec.get("mode") or "") == UNIVERSAL_MODE:
+                        raw_strength = spec.get("lora_strength")
+                        strength = (
+                            float(raw_strength)
+                            if isinstance(raw_strength, (int, float)) and not isinstance(raw_strength, bool)
+                            else None
+                        )
                         apply_universal(
                             workflow,
                             str(spec.get("lora_name") or ""),
                             str(spec.get("trigger") or ""),
                             str(spec.get("checkpoint_name") or ""),
+                            strength,
                         )
                     set_batch_size(workflow, plan["batch"])
                     changed_seeds = set_seed(workflow, seed)

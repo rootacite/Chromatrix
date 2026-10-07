@@ -103,6 +103,11 @@ private val UI_TEXT: Map<String, Pair<String, String>> = mapOf(
             "The .safetensors under models/loras in that ComfyUI process's install directory."
         ),
     "lora_empty" to ("没有找到 .safetensors" to "No .safetensors found"),
+    "lora_strength" to ("LoRA 强度" to "LoRA strength"),
+    "lora_strength_hint" to (
+        "写入该 LoRA 节点的 strength_model 与 strength_clip，范围 0–2，默认 1（工作流自带的值）。" to
+            "Written to that LoRA node's strength_model and strength_clip, 0–2; the default 1 is the workflow's own value."
+        ),
     "trigger" to ("角色触发词" to "Character trigger"),
     "trigger_hint" to (
         "替换超分提示词的第一段，其余保持工作流原文。生图提示词整段使用批量输入。" to

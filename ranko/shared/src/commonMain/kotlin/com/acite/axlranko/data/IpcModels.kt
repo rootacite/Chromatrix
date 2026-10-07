@@ -176,6 +176,7 @@ data class AutomationSettings(
     @SerialName("universal_lora") val universalLora: String = "",
     @SerialName("universal_checkpoint") val universalCheckpoint: String = "",
     @SerialName("universal_trigger") val universalTrigger: String = "",
+    @SerialName("universal_lora_strength") val universalLoraStrength: Double = 1.0,
 )
 
 @Serializable

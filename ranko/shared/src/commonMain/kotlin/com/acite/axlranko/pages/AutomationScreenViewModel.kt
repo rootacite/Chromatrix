@@ -25,6 +25,8 @@ import com.acite.axlranko.model.PromptSource
 import com.acite.axlranko.model.AutomationUiState
 import com.acite.axlranko.model.PromptProfileItem
 import com.acite.axlranko.model.PromptView
+import com.acite.axlranko.model.UNIVERSAL_LORA_STRENGTH_MAX
+import com.acite.axlranko.model.UNIVERSAL_LORA_STRENGTH_MIN
 import com.acite.axlranko.model.promptExportFileName
 import com.acite.axlranko.model.promptExportText
 import com.acite.axlranko.pages.components.automation.uiText
@@ -576,6 +578,15 @@ class AutomationScreenViewModel(
 
     fun setUniversalTrigger(value: String) = updateSettings { it.copy(universalTrigger = value) }
 
+    fun setUniversalLoraStrength(value: Float) = updateSettings {
+        it.copy(
+            universalLoraStrength = value.coerceIn(
+                UNIVERSAL_LORA_STRENGTH_MIN,
+                UNIVERSAL_LORA_STRENGTH_MAX,
+            )
+        )
+    }
+
     /** Lists `.safetensors` under `models/loras` of the ComfyUI process for the current server. */
     fun refreshLoras() {
         val server = _uiState.value.settings.server.trim()
@@ -1016,6 +1027,7 @@ class AutomationScreenViewModel(
         put("lora_name", settings.universalLora)
         if (settings.universalCheckpoint.isNotBlank()) put("checkpoint_name", settings.universalCheckpoint)
         put("trigger", settings.universalTrigger)
+        put("lora_strength", settings.universalLoraStrength)
         put("count", settings.count)
         put("poll", settings.poll)
         if (settings.outputDir.isNotBlank()) put("output_dir", settings.outputDir)

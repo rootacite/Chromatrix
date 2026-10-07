@@ -2503,12 +2503,16 @@ def handle_automation_job_start(params: dict[str, Any]) -> dict[str, Any]:
     lora_name = ""
     trigger = ""
     checkpoint_name = ""
+    lora_strength = automation.UNIVERSAL_DEFAULT_LORA_STRENGTH
     if universal:
         lora_name = str(params.get("lora_name") or settings.get("universal_lora") or "").strip()
         checkpoint_name = str(
             params.get("checkpoint_name") or settings.get("universal_checkpoint") or ""
         ).strip()
         trigger = str(params.get("trigger") or settings.get("universal_trigger") or "").strip()
+        lora_strength = automation.normalize_universal_strength(
+            params.get("lora_strength", settings.get("universal_lora_strength"))
+        )
         if not lora_name:
             raise ValueError("pick a LoRA file first")
         if not trigger:
@@ -2579,6 +2583,7 @@ def handle_automation_job_start(params: dict[str, Any]) -> dict[str, Any]:
         job["lora_name"] = lora_name
         job["checkpoint_name"] = checkpoint_name
         job["trigger"] = trigger
+        job["lora_strength"] = lora_strength
     automation.write_job(job, output_dir)
     pid = _spawn_automation_job(job_id, output_dir)
     job = automation.update_job(job_id, output_dir, pid=pid, started_at=now)

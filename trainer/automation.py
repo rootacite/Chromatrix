@@ -58,6 +58,14 @@ MAX_PROMPT_CHARS = 4000
 MAX_NAME = 64
 NAME_ILLEGAL = set('/\\:*?"<>|')
 
+# The Universal (Beta) LoRA strength, written to node 207:219's `strength_model` and
+# `strength_clip` alike. Same window `comfy_sample.py` enforces on the same two LoraLoader
+# inputs, not imported from there (that module imports `run_automation`, which imports this
+# one); the default is `beta/Chromatrix.json`'s own value.
+UNIVERSAL_MIN_LORA_STRENGTH = 0.0
+UNIVERSAL_MAX_LORA_STRENGTH = 2.0
+UNIVERSAL_DEFAULT_LORA_STRENGTH = 1.0
+
 _STAMP = "%Y%m%d_%H%M%S"
 _UNSAFE_NAME_RE = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
 CLASS_SAVE_IMAGE = "SaveImage"
@@ -107,6 +115,7 @@ def default_settings() -> dict[str, Any]:
         "universal_lora": "",
         "universal_checkpoint": "",
         "universal_trigger": "",
+        "universal_lora_strength": UNIVERSAL_DEFAULT_LORA_STRENGTH,
     }
 
 
@@ -157,6 +166,25 @@ def safe_name(name: str, fallback: str = "item") -> str:
 
 
 # --- settings ---
+
+
+def normalize_universal_strength(value: Any, default: float = UNIVERSAL_DEFAULT_LORA_STRENGTH) -> float:
+    """The LoRA strength a Universal (Beta) job asks for. Absent or blank keeps the default,
+    which is the value `beta/Chromatrix.json` ships."""
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        raise ValueError("lora strength must be a number")
+    try:
+        strength = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("lora strength must be a number") from exc
+    if not UNIVERSAL_MIN_LORA_STRENGTH <= strength <= UNIVERSAL_MAX_LORA_STRENGTH:
+        raise ValueError(
+            "lora strength must be between "
+            f"{UNIVERSAL_MIN_LORA_STRENGTH:g} and {UNIVERSAL_MAX_LORA_STRENGTH:g}"
+        )
+    return strength
 
 
 def load_settings() -> dict[str, Any]:
@@ -211,6 +239,7 @@ def normalize_settings(payload: Mapping[str, Any]) -> dict[str, Any]:
         "universal_lora": str(payload.get("universal_lora") or "").strip(),
         "universal_checkpoint": str(payload.get("universal_checkpoint") or "").strip(),
         "universal_trigger": str(payload.get("universal_trigger") or "").strip(),
+        "universal_lora_strength": normalize_universal_strength(payload.get("universal_lora_strength")),
     }
 
 

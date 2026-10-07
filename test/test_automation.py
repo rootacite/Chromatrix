@@ -399,6 +399,26 @@ class AutomationStoreTest(unittest.TestCase):
         automation.settings_path().write_text('{"count": 999}', encoding="utf-8")
         self.assertEqual(automation.default_settings()["count"], automation.load_settings()["count"])
 
+    def test_the_universal_strength_round_trips_and_is_bounded(self):
+        self.assertEqual(1.0, automation.default_settings()["universal_lora_strength"])
+        self.assertEqual(1.0, automation.normalize_settings({})["universal_lora_strength"])
+        self.assertEqual(1.0, automation.normalize_settings({"universal_lora_strength": ""})["universal_lora_strength"])
+        # A string from a client is a number too, the way `count` and `poll` take one.
+        self.assertEqual(0.85, automation.normalize_universal_strength("0.85"))
+        self.assertEqual(0.0, automation.normalize_universal_strength(0))
+        saved = automation.save_settings({"universal_lora_strength": 0.75})
+        self.assertEqual(0.75, saved["universal_lora_strength"])
+        self.assertEqual(0.75, automation.load_settings()["universal_lora_strength"])
+        with self.assertRaises(ValueError):
+            automation.save_settings({"universal_lora_strength": 2.5})
+        with self.assertRaises(ValueError):
+            automation.save_settings({"universal_lora_strength": -0.1})
+        with self.assertRaises(ValueError):
+            automation.save_settings({"universal_lora_strength": "strong"})
+        # A hand-edited file falls back to the defaults rather than locking the page out.
+        automation.settings_path().write_text('{"universal_lora_strength": 9}', encoding="utf-8")
+        self.assertEqual(1.0, automation.load_settings()["universal_lora_strength"])
+
     def test_a_relative_output_dir_resolves_against_the_repo(self):
         saved = automation.normalize_settings({"output_dir": "automation/jobs"})
         self.assertTrue(Path(saved["output_dir"]).is_absolute())
@@ -654,6 +674,7 @@ class RunnerTest(unittest.TestCase):
                 "lora_name": "Yui_s002850.safetensors",
                 "checkpoint_name": "chars/NewBase.safetensors",
                 "trigger": "(yui_character:1.1)",
+                "lora_strength": 0.75,
                 "count": 1,
                 "poll": 0.1,
                 "output_dir": str(self.output_dir),
@@ -671,6 +692,8 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual("worst quality", queued["216"]["inputs"]["text"])
         self.assertEqual("placeholder", queued["2"]["inputs"]["text"])
         self.assertEqual("Yui_s002850.safetensors", queued["207:219"]["inputs"]["lora_name"])
+        self.assertEqual(0.75, queued["207:219"]["inputs"]["strength_model"])
+        self.assertEqual(0.75, queued["207:219"]["inputs"]["strength_clip"])
         self.assertEqual("chars/NewBase.safetensors", queued["207:266"]["inputs"]["ckpt_name"])
         self.assertEqual(
             "(yui_character:1.1), best quality, anime illustration",
@@ -1121,6 +1144,17 @@ class AutomationApiTest(unittest.TestCase):
                 "automation_job_start",
                 {"prompts": ["x"], "mode": "universal", "lora_name": "Yui.safetensors"},
             )
+        with self.assertRaises(ValueError):
+            api.dispatch(
+                "automation_job_start",
+                {
+                    "prompts": ["x"],
+                    "mode": "universal",
+                    "lora_name": "Yui.safetensors",
+                    "trigger": "kano_character",
+                    "lora_strength": 2.5,
+                },
+            )
         self.assertEqual([], automation.list_jobs(self.output_dir))
         started = api.dispatch(
             "automation_job_start",
@@ -1129,6 +1163,7 @@ class AutomationApiTest(unittest.TestCase):
                 "mode": "universal",
                 "lora_name": "Yui_s002850.safetensors",
                 "trigger": "kano_character",
+                "lora_strength": 0.8,
             },
         )
         detail = self._wait_for(started["job"]["id"])
@@ -1137,12 +1172,15 @@ class AutomationApiTest(unittest.TestCase):
         self.assertTrue(str(detail["workflow_path"]).endswith("beta/Chromatrix.json"))
         self.assertEqual("Yui_s002850.safetensors", detail["lora_name"])
         self.assertEqual("kano_character", detail["trigger"])
+        self.assertEqual(0.8, detail["lora_strength"])
         self.assertTrue(self.stub.queued, detail.get("error"))
         queued = self.stub.queued[0]
         original = json.loads((REPO / "beta" / "Chromatrix.json").read_text(encoding="utf-8"))
         self.assertEqual("one line", queued["215"]["inputs"]["text"])
         self.assertEqual(original["216"]["inputs"]["text"], queued["216"]["inputs"]["text"])
         self.assertEqual("Yui_s002850.safetensors", queued["207:219"]["inputs"]["lora_name"])
+        self.assertEqual(0.8, queued["207:219"]["inputs"]["strength_model"])
+        self.assertEqual(0.8, queued["207:219"]["inputs"]["strength_clip"])
         _head, sep, tail = str(original["198:259"]["inputs"]["text"]).partition(",")
         self.assertTrue(sep)
         self.assertEqual("kano_character" + sep + tail, queued["198:259"]["inputs"]["text"])
@@ -1436,6 +1474,23 @@ class UniversalPatchTest(unittest.TestCase):
         spaced = universal_mini_workflow()
         run_automation.apply_universal(spaced, "a.safetensors", "trigger", "   ")
         self.assertEqual("bundled.safetensors", spaced["207:266"]["inputs"]["ckpt_name"])
+
+    def test_the_strength_is_written_only_when_one_is_given(self):
+        chosen = universal_mini_workflow()
+        run_automation.apply_universal(chosen, "a.safetensors", "trigger", "", 0.6)
+        self.assertEqual(0.6, chosen["207:219"]["inputs"]["strength_model"])
+        self.assertEqual(0.6, chosen["207:219"]["inputs"]["strength_clip"])
+        # No strength (a record from before the key existed) keeps the workflow's own 1 and 1.
+        kept = universal_mini_workflow()
+        run_automation.apply_universal(kept, "a.safetensors", "trigger")
+        self.assertEqual(1, kept["207:219"]["inputs"]["strength_model"])
+        self.assertEqual(1, kept["207:219"]["inputs"]["strength_clip"])
+
+    def test_a_lora_node_without_its_strength_inputs_is_refused(self):
+        stripped = universal_mini_workflow()
+        del stripped["207:219"]["inputs"]["strength_clip"]
+        with self.assertRaises(comfy.ComfyError):
+            run_automation.require_universal_nodes(stripped)
 
     def test_a_missing_comma_or_name_is_refused(self):
         broken = universal_mini_workflow()

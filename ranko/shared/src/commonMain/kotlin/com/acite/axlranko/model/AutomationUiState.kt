@@ -11,6 +11,7 @@ import com.acite.axlranko.prompt.PromptMatrix
 import com.acite.axlranko.prompt.PromptSpec
 import com.acite.axlranko.prompt.WizardModel
 import com.acite.axlranko.prompt.defaultSpec
+import kotlin.math.roundToInt
 
 /** The Automation page's areas, in rail order. */
 enum class AutomationSection(val title: String) {
@@ -35,6 +36,12 @@ enum class JobFilter(val wire: String) {
     Cancelled("cancelled"),
 }
 
+/** The Universal (Beta) LoRA strength bounds and default: what `api.py` enforces on the same two
+ * LoraLoader inputs, and the value `beta/Chromatrix.json` itself ships. */
+const val UNIVERSAL_LORA_STRENGTH_MIN = 0f
+const val UNIVERSAL_LORA_STRENGTH_MAX = 2f
+const val UNIVERSAL_LORA_STRENGTH_DEFAULT = 1f
+
 /** The ComfyUI section's editable copy of `automation/settings.json`. */
 data class AutomationSettingsDraft(
     val server: String = "",
@@ -46,6 +53,7 @@ data class AutomationSettingsDraft(
     val universalLora: String = "",
     val universalCheckpoint: String = "",
     val universalTrigger: String = "",
+    val universalLoraStrength: Float = UNIVERSAL_LORA_STRENGTH_DEFAULT,
 ) {
     companion object {
         fun of(settings: AutomationSettings): AutomationSettingsDraft = AutomationSettingsDraft(
@@ -58,6 +66,7 @@ data class AutomationSettingsDraft(
             universalLora = settings.universalLora,
             universalCheckpoint = settings.universalCheckpoint,
             universalTrigger = settings.universalTrigger,
+            universalLoraStrength = settings.universalLoraStrength.toFloat(),
         )
     }
 
@@ -71,6 +80,12 @@ data class AutomationSettingsDraft(
         universalLora = universalLora.trim(),
         universalCheckpoint = universalCheckpoint.trim(),
         universalTrigger = universalTrigger.trim(),
+        // Two decimals on the wire: a slider value is a Float, and 0.85f would otherwise be
+        // stored as 0.8500000238418579.
+        universalLoraStrength = (universalLoraStrength.coerceIn(
+            UNIVERSAL_LORA_STRENGTH_MIN,
+            UNIVERSAL_LORA_STRENGTH_MAX,
+        ) * 100).roundToInt() / 100.0,
     )
 }
 
