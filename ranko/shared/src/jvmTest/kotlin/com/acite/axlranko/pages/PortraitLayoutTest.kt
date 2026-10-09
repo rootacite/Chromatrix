@@ -23,6 +23,7 @@ import com.acite.axlranko.data.AutomationJobSummary
 import com.acite.axlranko.data.DatasetRefreshHub
 import com.acite.axlranko.data.DatasetSelection
 import com.acite.axlranko.data.TrainerIpcClient
+import com.acite.axlranko.data.showsHelperEndpointSettings
 import com.acite.axlranko.model.AutomationSection
 import com.acite.axlranko.model.AutomationUiState
 import com.acite.axlranko.model.CheckpointItem
@@ -46,6 +47,7 @@ import com.acite.axlranko.util.PathPicker
 import java.awt.GraphicsEnvironment
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -334,9 +336,16 @@ class PortraitLayoutTest {
         }
         try {
             val lines = texts(nodes(scene))
-            val environment = lines.first { it.first == "Environment" }.second
-            val training = lines.first { it.first == "Training" }.second
-            assertEquals(environment, training, 2f)
+            // Every tab the narrow row composes sits on the one line, whichever ones fit: naming
+            // two of them would break as soon as the list grows past the row's width.
+            val tabs = visibleSections(showsHelperEndpointSettings, appWindow = null).map { it.title }
+            val tabLines = lines.filter { it.first in tabs }
+            assertTrue(tabLines.size >= 4, "composed ${tabLines.map { it.first }}")
+            val top = tabLines.first().second
+            assertTrue(
+                tabLines.all { abs(it.second - top) < 2f },
+                "the tabs do not share a row: $tabLines",
+            )
             val title = lines.first { it.first == "Training Config" }.second
             val reload = lines.first { it.first == "Reload" }.second
             assertTrue(reload > title + 8f, "Reload y=$reload title y=$title")

@@ -128,6 +128,26 @@ internal fun sampleSetFormErrors(
     return errors
 }
 
+/** The prompt's first comma-separated tag — what a sample set is led with. */
+internal fun leadingTagOf(prompt: String): String = prompt.substringBefore(',').trim()
+
+/**
+ * [prompt] with its first tag replaced by [word].
+ *
+ * A blank [word] drops that tag, which is what clearing the Quick page's trigger field means. The
+ * one case it does not touch is a prompt that is that tag alone: emptying it would leave a set with
+ * no prompt at all (a validation error), and a one-tag caption is not the field's to delete.
+ */
+internal fun promptWithLeadingTag(prompt: String, word: String): String {
+    val rest = prompt.substringAfter(',', "").trim()
+    val head = word.trim()
+    return when {
+        head.isEmpty() -> rest.ifEmpty { prompt }
+        rest.isEmpty() -> head
+        else -> "$head, $rest"
+    }
+}
+
 /**
  * Whether the validation-set feature is on: `Val split %` above 0 or a custom validation directory.
  *
@@ -236,6 +256,23 @@ data class TrainingConfigForm(
         if (index !in sampleSets.indices) return this
         return copy(sampleSets = sampleSets.toMutableList().also { it[index] = set })
     }
+
+    /**
+     * The first tag every sample set opens with, or null when they disagree.
+     *
+     * The Quick page's character trigger word *is* this tag rather than a setting of its own: the
+     * word lives in the prompts, so the field can only be edited while the sets agree on it.
+     */
+    fun sharedLeadingTag(): String? {
+        val tags = sampleSets.map { leadingTagOf(it.prompt) }
+        val head = tags.firstOrNull() ?: return null
+        return if (tags.all { it == head }) head else null
+    }
+
+    /** Writes [word] into the first tag of every sample set; the rest of each prompt is kept. */
+    fun withSharedLeadingTag(word: String): TrainingConfigForm = copy(
+        sampleSets = sampleSets.map { it.copy(prompt = promptWithLeadingTag(it.prompt, word)) },
+    )
 
     fun withTrainDataDir(index: Int, entry: TrainDataDirForm): TrainingConfigForm {
         if (index !in trainDataDirs.indices) return this

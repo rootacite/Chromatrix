@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Warning
@@ -519,6 +520,7 @@ private fun SectionNavItem(
 }
 
 private fun ConfigSection.icon(): ImageVector = when (this) {
+    ConfigSection.Quick -> Icons.Default.Speed
     ConfigSection.Helper -> Icons.Default.Cloud
     ConfigSection.Environment -> Icons.Default.Folder
     ConfigSection.Rocm -> Icons.Default.Memory
@@ -546,6 +548,7 @@ private fun SectionFields(
     val errors = uiState.fieldErrors
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         when (uiState.selectedSection) {
+            ConfigSection.Quick -> QuickFields(uiState, form, errors, viewModel)
             ConfigSection.Helper -> HelperFields(uiState, viewModel)
             ConfigSection.Environment -> EnvironmentFields(uiState, viewModel)
             ConfigSection.Rocm -> RocmFields(uiState, viewModel)
@@ -622,6 +625,186 @@ private fun WmFields(window: AppWindow) {
 /** `Maximize` fills the screen; the same button puts the remembered size back once it has. */
 internal fun maximizeButtonLabel(maximized: Boolean): String =
     if (maximized) "Restore" else "Maximize"
+
+/**
+ * The settings a run is set up with, gathered from Environment, Training, Network and the two
+ * optimizer sections.
+ *
+ * Every field is the same form field its home section shows: the Utils page has one
+ * `TrainingConfigForm` behind all of them, so a value typed here is already typed there (and the
+ * error keys are the home sections' keys, so the rail's badge and the jump-to-error both work).
+ * The character trigger is the one control this page adds.
+ */
+@Composable
+private fun QuickFields(
+    uiState: UtilsUiState,
+    form: TrainingConfigForm,
+    errors: Map<String, String>,
+    viewModel: UtilsScreenViewModel,
+) {
+    val colors = rankoColors
+    Text("Model and data", style = MaterialTheme.typography.labelLarge, color = colors.text)
+    ConfigPathField(
+        label = "Pretrained model path",
+        value = form.pretrainedModelNameOrPath,
+        error = errors["pretrained_model_name_or_path"],
+        supporting = "Diffusers directory or single-file checkpoint for the selected base",
+        onValueChange = { viewModel.updateForm { copy(pretrainedModelNameOrPath = it) } },
+        onBrowse = {
+            viewModel.browseDirectory(form.pretrainedModelNameOrPath) {
+                copy(pretrainedModelNameOrPath = it)
+            }
+        }
+    )
+    TrainDataDirsField(uiState, viewModel)
+    ConfigTextField(
+        label = "Output name",
+        value = form.outputName,
+        error = errors["output_name"],
+        supporting = "LoRA filename stem written under the output directory; $OUTPUT_NAME_HINT",
+        onValueChange = { viewModel.updateForm { copy(outputName = it) } }
+    )
+
+    Text("Run length", style = MaterialTheme.typography.labelLarge, color = colors.text)
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        ConfigTextField(
+            label = "Epochs",
+            value = form.epoch,
+            error = errors["epoch"],
+            onValueChange = { viewModel.updateForm { copy(epoch = it) } },
+            modifier = Modifier.weight(1f)
+        )
+        ConfigTextField(
+            label = "Batch size",
+            value = form.trainBatchSize,
+            error = errors["train_batch_size"],
+            onValueChange = { viewModel.updateForm { copy(trainBatchSize = it) } },
+            modifier = Modifier.weight(1f)
+        )
+        ConfigTextField(
+            label = "Grad accumulation",
+            value = form.gradientAccumulationSteps,
+            error = errors["gradient_accumulation_steps"],
+            supporting = effectiveBatchHint(form),
+            onValueChange = { viewModel.updateForm { copy(gradientAccumulationSteps = it) } },
+            modifier = Modifier.weight(1f)
+        )
+        ConfigTextField(
+            label = "Save every N steps",
+            value = form.saveEveryNSteps,
+            error = errors["save_every_n_steps"],
+            supporting = "Start value; the Dashboard can retune it for the run in progress",
+            onValueChange = { viewModel.updateForm { copy(saveEveryNSteps = it) } },
+            modifier = Modifier.weight(1f)
+        )
+    }
+    StepEstimateLine(uiState = uiState, form = form, onRetry = { viewModel.refreshStepEstimate() })
+    ConfigSwitch(
+        label = "Sampling",
+        checked = form.samplingEnabled,
+        description = "Render the validation samples at every checkpoint save (off = checkpoints " +
+            "only; the Dashboard can flip it mid-run)",
+        onChecked = { viewModel.updateForm { copy(samplingEnabled = it) } }
+    )
+
+    Text("Network", style = MaterialTheme.typography.labelLarge, color = colors.text)
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        ConfigTextField(
+            label = "UNet learning rate",
+            value = form.unetLearningRate,
+            error = errors["unet_learning_rate"],
+            supporting = "Scientific notation is fine, e.g. 5e-5",
+            onValueChange = { viewModel.updateForm { copy(unetLearningRate = it) } },
+            modifier = Modifier.weight(1f)
+        )
+        ConfigTextField(
+            label = "TE learning rate",
+            value = form.teLearningRate,
+            error = errors["te_learning_rate"],
+            supporting = "Usually 10× lower than the UNet rate",
+            onValueChange = { viewModel.updateForm { copy(teLearningRate = it) } },
+            modifier = Modifier.weight(1f)
+        )
+    }
+    NetworkTypeChoice(form, errors, viewModel)
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        ConfigTextField(
+            label = "Network dim (rank)",
+            value = form.networkDim,
+            error = errors["network_dim"],
+            onValueChange = { viewModel.updateForm { copy(networkDim = it) } },
+            modifier = Modifier.weight(1f)
+        )
+        ConfigTextField(
+            label = "Network alpha",
+            value = form.networkAlpha,
+            error = errors["network_alpha"],
+            supporting = loraScaleHint(form),
+            onValueChange = { viewModel.updateForm { copy(networkAlpha = it) } },
+            modifier = Modifier.weight(1f)
+        )
+        ConfigTextField(
+            label = "Network dropout",
+            value = form.networkDropout,
+            error = errors["network_dropout"],
+            supporting = "0.0 – 1.0",
+            onValueChange = { viewModel.updateForm { copy(networkDropout = it) } },
+            modifier = Modifier.weight(1f)
+        )
+    }
+    if (form.networkType == "locon") {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            ConfigTextField(
+                label = "Conv dim",
+                value = form.convDim,
+                error = errors["conv_dim"],
+                supporting = convScaleHint(form),
+                onValueChange = { viewModel.updateForm { copy(convDim = it) } },
+                modifier = Modifier.weight(1f)
+            )
+            ConfigTextField(
+                label = "Conv alpha",
+                value = form.convAlpha,
+                error = errors["conv_alpha"],
+                supporting = convScaleHint(form),
+                onValueChange = { viewModel.updateForm { copy(convAlpha = it) } },
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+
+    Text("Character", style = MaterialTheme.typography.labelLarge, color = colors.text)
+    CharacterTriggerField(
+        sharedTag = form.sharedLeadingTag(),
+        onChange = viewModel::updateCharacterTrigger,
+    )
+}
+
+/**
+ * The character trigger word: the one tag every validation sample set opens with.
+ *
+ * It is a view of those prompts rather than a setting of its own — [sharedTag] is null exactly when
+ * the sets disagree, and the field is then disabled, because there is no single tag to write.
+ * Editing it rewrites the first tag of every set and keeps the rest of each prompt; clearing it
+ * drops that tag (a set whose prompt is only that tag keeps it, so no prompt is emptied).
+ */
+@Composable
+internal fun CharacterTriggerField(
+    sharedTag: String?,
+    onChange: (String) -> Unit,
+) {
+    ConfigTextField(
+        label = "Character trigger",
+        value = sharedTag.orEmpty(),
+        enabled = sharedTag != null,
+        supporting = if (sharedTag != null) {
+            "The first tag of every Validation sample set · clearing it drops the tag"
+        } else {
+            "Off: the Validation sample sets start with different tags — edit those prompts in Validation"
+        },
+        onValueChange = onChange,
+    )
+}
 
 @Composable
 private fun HelperFields(
@@ -1430,8 +1613,15 @@ private fun CheckpointRow(
     }
 }
 
+/**
+ * The Standard / LoCon choice, shared by the Network section and Quick.
+ *
+ * Switching to LoCon fills an empty conv dim / alpha from the network's own, so the two never read
+ * as contradictory before anything has been typed into the conv fields (and a value already there
+ * is left alone).
+ */
 @Composable
-private fun NetworkFields(
+private fun NetworkTypeChoice(
     form: TrainingConfigForm,
     errors: Map<String, String>,
     viewModel: UtilsScreenViewModel
@@ -1466,6 +1656,15 @@ private fun NetworkFields(
     errors["network_type"]?.let { message ->
         Text(message, style = MaterialTheme.typography.bodySmall, color = rankoColors.qualityRed)
     }
+}
+
+@Composable
+private fun NetworkFields(
+    form: TrainingConfigForm,
+    errors: Map<String, String>,
+    viewModel: UtilsScreenViewModel
+) {
+    NetworkTypeChoice(form, errors, viewModel)
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         ConfigTextField(
             label = "Network dim (rank)",

@@ -241,8 +241,8 @@ class UtilsScreenViewModel(
     fun selectSection(section: ConfigSection) {
         _uiState.update { it.copy(selectedSection = section) }
         if (section == ConfigSection.Profiles) refreshProfiles()
-        // The Training section shows the step estimate, which needs the folders' image counts once.
-        if (section == ConfigSection.Training && _uiState.value.datasetCounts == null) refreshStepEstimate()
+        // The sections with a step estimate need the folders' image counts once.
+        if (section.showsStepEstimate && _uiState.value.datasetCounts == null) refreshStepEstimate()
     }
 
     /**
@@ -251,7 +251,7 @@ class UtilsScreenViewModel(
      */
     private fun invalidateStepEstimate() {
         _uiState.update { it.copy(datasetCounts = null, datasetCountsError = null) }
-        if (_uiState.value.selectedSection == ConfigSection.Training) refreshStepEstimate()
+        if (_uiState.value.selectedSection.showsStepEstimate) refreshStepEstimate()
     }
 
     /**
@@ -311,6 +311,16 @@ class UtilsScreenViewModel(
     fun updateSampleSet(index: Int, transform: (SampleSetForm) -> SampleSetForm) {
         val set = _uiState.value.form.sampleSets.getOrNull(index) ?: return
         updateForm { withSampleSet(index, transform(set)) }
+    }
+
+    /**
+     * The Quick page's character trigger word, written into the first tag of every sample set.
+     *
+     * The word lives in those prompts, so this is the same edit the Validation page makes — there
+     * is no field of its own that could fall out of step with them.
+     */
+    fun updateCharacterTrigger(word: String) {
+        updateForm { withSharedLeadingTag(word) }
     }
 
     /** `+` clones the open tab so a second prompt set is one edit away. */

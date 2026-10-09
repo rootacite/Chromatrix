@@ -9,6 +9,30 @@ enum class ConfigSection(
     /** Prefixes of the per-entry errors this section renders (`samples.1.steps`, `train_data.0.repeat`). */
     val errorPrefixes: Set<String> = emptySet()
 ) {
+    Quick(
+        title = "Quick",
+        description = "The knobs a new run is set up with, in one place",
+        // A subset of the home sections' keys rather than keys of its own: the same form backs
+        // every page, so editing here edits there too.
+        fieldKeys = setOf(
+            "pretrained_model_name_or_path",
+            "output_name",
+            "epoch",
+            "train_batch_size",
+            "gradient_accumulation_steps",
+            "save_every_n_steps",
+            "sampling_enabled",
+            "unet_learning_rate",
+            "te_learning_rate",
+            "network_type",
+            "network_dim",
+            "network_alpha",
+            "conv_dim",
+            "conv_alpha",
+            "network_dropout",
+        ),
+        errorPrefixes = setOf(TRAIN_DATA_ERROR_PREFIX),
+    ),
     Helper(
         title = "Helper",
         description = "Dashboard helper WebSocket host and port",
@@ -178,6 +202,9 @@ enum class ConfigSection(
      */
     fun owns(key: String): Boolean =
         key in fieldKeys || errorPrefixes.any { key.startsWith(it) }
+
+    /** Sections that show the dataset's size and the run's estimated step count. */
+    val showsStepEstimate: Boolean get() = this == Training || this == Quick
 }
 
 data class UtilsUiState(
