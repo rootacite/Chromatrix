@@ -438,6 +438,8 @@ on that job.
 - **Pan**: drag horizontally/vertically.
 - **Zoom X**: `Ctrl` + mouse wheel (anchored at the cursor).
 - **Zoom Y**: `Shift` + mouse wheel.
+- **Cursor control**: the small round handle at the right end of the title row of the three training charts, for a device with no hover (a phone on the browser companion, a touch screen). Drag it over the plot to place the cursor — the readout follows it and stays where you drop it — then tap it to pick the checkpoint at that step, which is the touch form of the `Ctrl`+click panel (Train / Avg Loss only). Dragging it back off the plot, `Reset` or switching runs clears the cursor and returns it to its slot. It is drawn on every platform, so a mouse can drag it too.
+- **Touch**: a one-finger swipe on a chart scrolls the page, as everywhere else on the Dashboard; to move a chart, hold a finger on it first (the phone buzzes) and then drag. Two fingers pinch to zoom, and a pinch changes one axis only — whichever direction your fingers spread in (horizontal for steps, vertical for values) — so `Ctrl`/`Shift` + wheel remain the way to zoom a chosen axis with a mouse.
 - **Default window**: a chart whose x axis counts steps opens on the newest **800 steps** of the run (shorter runs show everything). The Steps slider above the charts changes that window (100–8000). The Y clip slider changes the percentile tail used for Avg Loss and Train/Loss and defaults to **15%**. The Smooth + slider adds that many dp to the smoothed stroke (default **1.2 dp**, range 0–6). The Curve Smoothing slider is the charts' EMA weight (0–0.99) and the Chart Line slider the stroke width in dp (1–8); both sit in the Training charts block and are session-only. Steps, Y clip, Smooth + and the **Checkpoints** section's Sample Size (default **180 dp**, range 80–360) are stored in the run's `chart_view.json` under its log directory. In automatic mode, widening Steps refits the curves into that window as the slider moves; in `Detach` it waits for `Reset`. The y range is fitted to the smoothed points inside the window and then expanded so the newest point stays visible. Hardware charts, whose x axis is time, keep their whole range and are not clipped.
 - **Checkpoint pick**: `Ctrl` + left click on **Train / Avg Loss** (a click, not a drag) resolves the checkpoint nearest to the clicked step and opens a floating panel (see below). A left **double click** does the same and is the trigger without a keyboard: two clicks within 400 ms, *wherever* they land — only the interval counts, not the distance between them — and the panel opens at the **second** click. A `Ctrl`+click picks immediately and never pairs with a following plain click; a third quick click starts a new pair rather than picking again; the click that fires must be inside the plot (the first one may be anywhere on the chart). The chart then marks the clicked step with a dashed line and the step the pick actually matched with a bold accent line, a dot, an axis flag and a `ckpt <step>` label, so the snapping is visible. Both marks disappear when the panel is closed.
 - Series are EMA-smoothed (slider), downsampled with LTTB to ≤500 points, and the initial viewport clips outlier percentiles.
@@ -487,6 +489,10 @@ not sample (or to re-render one after changing the prompts in `config.toml`).
 | Charts | Double click | Same pick without a keyboard; the second click sets the position (Avg Loss only) |
 | Charts | `Ctrl` + wheel | Zoom X axis |
 | Charts | `Shift` + wheel | Zoom Y axis |
+| Charts | Drag the title-row handle over the plot | Place the step cursor (no-hover devices) |
+| Charts | Tap a placed handle | Pick the checkpoint at the cursor (Avg Loss only) |
+| Charts | Hold a finger, then drag | Move the chart (a plain swipe scrolls the page) |
+| Charts | Two-finger pinch | Zoom the axis the fingers spread along |
 
 There are no global app-level shortcuts.
 

@@ -2,8 +2,13 @@ package com.acite.axlranko.pages.components
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,13 +17,19 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.OpenWith
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -31,6 +42,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -38,6 +50,7 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.PointerType
@@ -46,15 +59,23 @@ import androidx.compose.ui.input.pointer.isPrimaryPressed
 import androidx.compose.ui.input.pointer.isShiftPressed
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.layout.boundsInParent
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.acite.axlranko.model.CheckpointPin
@@ -75,6 +96,13 @@ private data class ChartPoint(val step: Float, val value: Float)
 private const val WHEEL_ZOOM_STEP = 1.15f
 private const val WHEEL_ZOOM_INTENSITY = 2.5f
 private const val JUMP_REJECT_FRACTION = 0.5f
+
+/**
+ * Slop a mouse drag crosses before the chart pans. This is foundation's own mouse slop
+ * (`0.125.dp` against `18.dp` for a finger, `pointerSlop` in `DragGestureDetector.kt`), repeated
+ * here because the gesture loop no longer reads the pointer type through `detectDragGestures`.
+ */
+private val MOUSE_DRAG_SLOP = 0.125.dp
 
 /** A chart whose x axis counts steps opens on its newest [DEFAULT_STEP_SPAN] steps. */
 internal const val DEFAULT_STEP_SPAN = 800f
@@ -270,12 +298,6 @@ internal fun chartYBounds(values: List<Float>, normalized: Boolean): ChartWindow
     } else {
         ChartWindow(min, max)
     }
-}
-
-private fun zoomRange(current: Float, factor: Float, minRange: Float, fullRange: Float): Float {
-    if (fullRange <= 1e-9f) return 0f
-    val lo = minOf(minRange, fullRange)
-    return (current * factor).coerceIn(lo, fullRange)
 }
 
 private fun List<Float>.percentile(p: Float): Float {
@@ -527,102 +549,264 @@ internal fun MultiSeriesChartCard(
     }
     val hasVisibleData = series.any { it.label !in hiddenLabels && it.points.isNotEmpty() }
     val colors = rankoColors
+    val cursorProbe = remember { ChartCursorProbe() }
+    // The cursor control follows the hover readout, not the platform: the three step charts are the
+    // ones with a shared cursor, and a mouse can drag the control as well as a finger can.
+    val cursorControl = if (showHoverStep && hasVisibleData) {
+        interaction?.let { store -> chartId?.let { id -> store to id } }
+    } else {
+        null
+    }
+    var headerBounds by remember { mutableStateOf(Rect.Zero) }
+    var contentOriginInRoot by remember { mutableStateOf(Offset.Zero) }
+    var contentSize by remember { mutableStateOf(IntSize.Zero) }
     PorcelainCard(modifier = modifier.height(chartHeight)) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            if (showLegend) {
-                Text(
-                    title,
-                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    series.forEach { item ->
-                        SeriesToggleButton(
-                            label = item.label,
-                            color = item.color,
-                            visible = item.label !in hiddenLabels,
-                            onClick = if (interaction != null && chartId != null) {
-                                { interaction.toggleSeries(chartId, item.label) }
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .onGloballyPositioned {
+                    contentOriginInRoot = it.positionInRoot()
+                    contentSize = it.size
+                },
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                if (showLegend) {
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                        modifier = Modifier.onGloballyPositioned { headerBounds = it.boundsInParent() },
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        series.forEach { item ->
+                            SeriesToggleButton(
+                                label = item.label,
+                                color = item.color,
+                                visible = item.label !in hiddenLabels,
+                                onClick = if (interaction != null && chartId != null) {
+                                    { interaction.toggleSeries(chartId, item.label) }
+                                } else {
+                                    null
+                                },
+                            )
+                        }
+                    }
+                } else {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = (if (interaction != null && chartId != null && series.isNotEmpty()) {
+                            Modifier.clickable {
+                                interaction.toggleSeries(chartId, series.first().label)
+                            }
+                        } else {
+                            Modifier
+                        }).onGloballyPositioned { headerBounds = it.boundsInParent() },
+                    ) {
+                        series.firstOrNull()?.let { item ->
+                            Box(
+                                modifier = Modifier
+                                    .size(10.dp)
+                                    .clip(RoundedCornerShape(5.dp))
+                                    .background(
+                                        item.color.copy(
+                                            alpha = if (item.label in hiddenLabels) 0.35f else 1f,
+                                        ),
+                                    )
+                            )
+                        }
+                        Text(
+                            title,
+                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                            color = if (series.firstOrNull()?.label in hiddenLabels) {
+                                colors.textDim.copy(alpha = 0.55f)
                             } else {
-                                null
+                                Color.Unspecified
                             },
                         )
                     }
                 }
-            } else {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = if (interaction != null && chartId != null && series.isNotEmpty()) {
-                        Modifier.clickable {
-                            interaction.toggleSeries(chartId, series.first().label)
-                        }
-                    } else {
-                        Modifier
-                    },
-                ) {
-                    series.firstOrNull()?.let { item ->
-                        Box(
-                            modifier = Modifier
-                                .size(10.dp)
-                                .clip(RoundedCornerShape(5.dp))
-                                .background(
-                                    item.color.copy(
-                                        alpha = if (item.label in hiddenLabels) 0.35f else 1f,
-                                    ),
-                                )
+                Spacer(modifier = Modifier.height(8.dp))
+                if (hasVisibleData) {
+                    InteractiveLineChart(
+                        series = series,
+                        smoothing = smoothing,
+                        outlierClip = outlierClip,
+                        strokeWidth = strokeWidth,
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        defaultStepSpan = defaultStepSpan,
+                        axisCount = axisCount,
+                        onPickStep = onPickStep,
+                        showHoverStep = showHoverStep,
+                        pickMarkers = pickMarkers,
+                        epochMarks = epochMarks,
+                        pinnedSteps = pinnedSteps,
+                        pickSnapSteps = pickSnapSteps,
+                        smoothExtraDp = smoothExtraDp,
+                        hiddenLabels = hiddenLabels,
+                        chartId = chartId,
+                        interaction = interaction,
+                        cursorProbe = if (cursorControl != null) cursorProbe else null,
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            if (hasData) "No visible series" else "No Data",
+                            color = colors.textDim,
+                            style = MaterialTheme.typography.bodySmall,
                         )
                     }
-                    Text(
-                        title,
-                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                        color = if (series.firstOrNull()?.label in hiddenLabels) {
-                            colors.textDim.copy(alpha = 0.55f)
-                        } else {
-                            Color.Unspecified
-                        },
-                    )
+                }
+                if (onResizeHeight != null) {
+                    ChartHeightGrip(onResizeHeight = onResizeHeight)
                 }
             }
-            Spacer(modifier = Modifier.height(8.dp))
-            if (hasVisibleData) {
-                InteractiveLineChart(
-                    series = series,
-                    smoothing = smoothing,
-                    outlierClip = outlierClip,
-                    strokeWidth = strokeWidth,
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    defaultStepSpan = defaultStepSpan,
-                    axisCount = axisCount,
+            // The control's slot is the card's right edge, which only layout knows: drawing it
+            // before the first measurement would put it over the title for one frame.
+            cursorControl?.takeIf { contentSize.width > 0 }?.let { (store, id) ->
+                ChartCursorControl(
+                    interaction = store,
+                    chartId = id,
+                    probe = cursorProbe,
                     onPickStep = onPickStep,
-                    showHoverStep = showHoverStep,
-                    pickMarkers = pickMarkers,
-                    epochMarks = epochMarks,
-                    pinnedSteps = pinnedSteps,
-                    pickSnapSteps = pickSnapSteps,
-                    smoothExtraDp = smoothExtraDp,
-                    hiddenLabels = hiddenLabels,
-                    chartId = chartId,
-                    interaction = interaction,
+                    home = headerBounds,
+                    contentSize = contentSize,
+                    contentOriginInRoot = contentOriginInRoot,
                 )
-            } else {
-                Box(
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        if (hasData) "No visible series" else "No Data",
-                        color = colors.textDim,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
+            }
+        }
+    }
+}
+
+/** Hit area of the cursor control; the knob drawn inside it is smaller. */
+private val CURSOR_CONTROL_TOUCH_DP = 40.dp
+private val CURSOR_CONTROL_KNOB_DP = 22.dp
+
+/** Spoken name of the cursor control; also how the tests find it. */
+internal const val CURSOR_CONTROL_DESCRIPTION = "Chart cursor"
+
+/**
+ * The draggable cursor of a touch device, where nothing can hover. It sits at the right end of the
+ * card's title row; dragging it over the plot moves the chart's readout cursor to the nearest
+ * logged step, and dropping it there leaves it parked — a tap on a parked control is the
+ * `Ctrl`+click of a mouse, so it opens the checkpoint panel at the step the cursor marks.
+ *
+ * Dropping it anywhere else, including back in the title row, clears the cursor and sends the
+ * control home.
+ */
+@Composable
+private fun ChartCursorControl(
+    interaction: StepChartInteractionStore,
+    chartId: String,
+    probe: ChartCursorProbe,
+    onPickStep: ((step: Float, anchorInRoot: Offset) -> Unit)?,
+    home: Rect,
+    contentSize: IntSize,
+    contentOriginInRoot: Offset,
+) {
+    val colors = rankoColors
+    val density = LocalDensity.current
+    val touchPx = with(density) { CURSOR_CONTROL_TOUCH_DP.toPx() }
+    val homeTopLeft = remember(home, contentSize, touchPx) {
+        Offset(
+            x = (contentSize.width - touchPx).coerceAtLeast(0f),
+            y = (home.top + (home.height - touchPx) / 2f).coerceAtLeast(0f),
+        )
+    }
+    // Offset from the home slot, in pixels. Zero is the title row; a drop over the plot keeps it.
+    var drag by remember(chartId) { mutableStateOf(Offset.Zero) }
+    var dragging by remember(chartId) { mutableStateOf(false) }
+    val placed = interaction.state.hoverOwner == chartId && interaction.state.hoverStep != null
+
+    // Reset view and a run switch clear the hover from outside; the control goes home with it.
+    LaunchedEffect(placed) {
+        if (!placed && !dragging) drag = Offset.Zero
+    }
+
+    val slot = rememberUpdatedState(homeTopLeft)
+    val container = rememberUpdatedState(contentSize)
+    val origin = rememberUpdatedState(contentOriginInRoot)
+    val pickHandler = rememberUpdatedState(onPickStep)
+
+    fun clamped(candidate: Offset): Offset {
+        val size = container.value
+        val maxX = (size.width - touchPx).coerceAtLeast(0f)
+        val maxY = (size.height - touchPx).coerceAtLeast(0f)
+        val at = slot.value + candidate
+        return Offset(at.x.coerceIn(0f, maxX), at.y.coerceIn(0f, maxY)) - slot.value
+    }
+
+    fun centreInRoot(offset: Offset): Offset =
+        origin.value + slot.value + offset + Offset(touchPx / 2f, touchPx / 2f)
+
+    fun stepUnder(offset: Offset): Float? = probe.stepAt(centreInRoot(offset))
+
+    Box(
+        modifier = Modifier
+            .offset {
+                val at = slot.value + drag
+                IntOffset(at.x.roundToInt(), at.y.roundToInt())
+            }
+            .size(CURSOR_CONTROL_TOUCH_DP)
+            .semantics { contentDescription = CURSOR_CONTROL_DESCRIPTION }
+            .pointerInput(chartId) {
+                detectDragGestures(
+                    onDragStart = { dragging = true },
+                    onDragEnd = {
+                        dragging = false
+                        if (stepUnder(drag) == null) {
+                            interaction.clearHover(chartId)
+                            drag = Offset.Zero
+                        }
+                    },
+                    onDragCancel = {
+                        dragging = false
+                        interaction.clearHover(chartId)
+                        drag = Offset.Zero
+                    },
+                    onDrag = { change, amount ->
+                        change.consume()
+                        drag = clamped(drag + amount)
+                        stepUnder(drag)?.let { interaction.setHover(chartId, it) }
+                    },
+                )
+            }
+            .pointerInput(chartId) {
+                detectTapGestures {
+                    // A tap picks at the parked cursor, which is the mobile form of Ctrl+click.
+                    if (interaction.state.hoverOwner != chartId) return@detectTapGestures
+                    val step = stepUnder(drag) ?: return@detectTapGestures
+                    pickHandler.value?.invoke(step, centreInRoot(drag))
                 }
-            }
-            if (onResizeHeight != null) {
-                ChartHeightGrip(onResizeHeight = onResizeHeight)
-            }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(CURSOR_CONTROL_KNOB_DP)
+                .clip(CircleShape)
+                .background(
+                    if (placed) colors.accentPink.copy(alpha = 0.92f) else colors.bgCard.copy(alpha = 0.92f),
+                )
+                .border(
+                    width = 1.5.dp,
+                    color = if (placed) colors.accentPink else colors.textDim.copy(alpha = 0.65f),
+                    shape = CircleShape,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Default.OpenWith,
+                contentDescription = null,
+                tint = if (placed) colors.bgCard else colors.textDim,
+                modifier = Modifier.size(13.dp),
+            )
         }
     }
 }
@@ -734,6 +918,8 @@ private fun InteractiveLineChart(
     hiddenLabels: Set<String> = emptySet(),
     chartId: String? = null,
     interaction: StepChartInteractionStore? = null,
+    /** Publishes this canvas's step hit testing for the card's cursor control. */
+    cursorProbe: ChartCursorProbe? = null,
 ) {
     val rawSeriesAll = remember(series) {
         series.mapNotNull { item ->
@@ -884,8 +1070,32 @@ private fun InteractiveLineChart(
     }
     val viewportState = rememberUpdatedState(viewport)
     val canvasOrigin = remember { mutableStateOf(Offset.Zero) }
+    val canvasSize = remember { mutableStateOf(IntSize.Zero) }
     val pickHandler = rememberUpdatedState(onPickStep)
     val localHoverStep = remember { mutableStateOf<Float?>(null) }
+    val visiblePreparedState = rememberUpdatedState(visiblePrepared)
+
+    /**
+     * The logged step a canvas-local position stands for, snapped to the nearest point of the first
+     * drawn curve, or null outside the plot. The mouse hover and the card's cursor control both go
+     * through this, so they cannot disagree about which step a place on the chart means.
+     *
+     * The plot's top edge counts as outside: the cursor control starts in the title row *above* the
+     * canvas, and a place there must not read as the step under the plot's right edge.
+     */
+    fun stepUnder(canvasPos: Offset, width: Float, height: Float): Float? {
+        val plotW = (width - PLOT_LEFT_PADDING - rightPad).coerceAtLeast(1f)
+        val plotH = (height - PLOT_BOTTOM_PADDING).coerceAtLeast(1f)
+        if (canvasPos.y < 0f || canvasPos.y > plotH || canvasPos.x < PLOT_LEFT_PADDING) return null
+        val raw = stepAtPlotX(
+            canvasPos.x,
+            plotW,
+            viewportState.value.xMin,
+            viewportState.value.xRange,
+        ) ?: return null
+        val anchor = nearestPointByStep(visiblePreparedState.value.firstOrNull()?.raw.orEmpty(), raw)
+        return anchor?.step ?: raw
+    }
 
     fun commitViewport(next: ChartViewport, xChanged: Boolean, yChanged: Boolean) {
         val previous = viewportState.value
@@ -954,36 +1164,89 @@ private fun InteractiveLineChart(
     val gridColor = colors.stroke.copy(alpha = 0.45f)
     val axisColor = colors.stroke
 
+    val haptics = LocalHapticFeedback.current
+    // Read live rather than keyed: a zoom floor that the running chart recomputes as points land
+    // must not restart the pointer input under a finger that is mid-gesture.
+    val minXRangeState = rememberUpdatedState(minXRange)
+    val minYRangeState = rememberUpdatedState(minYRange)
+
     val gestureModifier = modifier
-        .pointerInput(fullBounds, rightPad) {
-            detectDragGestures(
-                onDrag = { change, dragAmount ->
-                    val plotW = (size.width.toFloat() - PLOT_LEFT_PADDING - rightPad).coerceAtLeast(1f)
-                    val plotH = (size.height.toFloat() - PLOT_BOTTOM_PADDING).coerceAtLeast(1f)
-                    val dx = dragAmount.x
-                    val dy = dragAmount.y
-                    if (!dx.isFinite() || !dy.isFinite()) return@detectDragGestures
-                    if (abs(dx) > plotW * JUMP_REJECT_FRACTION ||
-                        abs(dy) > plotH * JUMP_REJECT_FRACTION
-                    ) {
-                        return@detectDragGestures
+        .pointerInput(fullBounds, rightPad, interaction, chartId) {
+            fun plotWidth(): Float =
+                (size.width.toFloat() - PLOT_LEFT_PADDING - rightPad).coerceAtLeast(1f)
+
+            fun plotHeight(): Float =
+                (size.height.toFloat() - PLOT_BOTTOM_PADDING).coerceAtLeast(1f)
+
+            fun panBy(delta: Offset) {
+                val w = plotWidth()
+                val h = plotHeight()
+                val dx = delta.x
+                val dy = delta.y
+                if (!dx.isFinite() || !dy.isFinite()) return
+                if (abs(dx) > w * JUMP_REJECT_FRACTION || abs(dy) > h * JUMP_REJECT_FRACTION) return
+                val vp = viewportState.value
+                val moveX = -(dx / w) * vp.xRange
+                val moveY = (dy / h) * vp.yRange
+                commitViewport(
+                    next = ChartViewport(
+                        xMin = vp.xMin + moveX,
+                        xMax = vp.xMax + moveX,
+                        yMin = vp.yMin + moveY,
+                        yMax = vp.yMax + moveY,
+                    ),
+                    xChanged = dx != 0f,
+                    yChanged = dy != 0f,
+                )
+            }
+
+            fun zoomBy(axis: PinchAxis, factor: Float, centroid: Offset) {
+                val xFrac = ((centroid.x - PLOT_LEFT_PADDING) / plotWidth()).coerceIn(0f, 1f)
+                val yFrac = (centroid.y / plotHeight()).coerceIn(0f, 1f)
+                val vp = viewportState.value
+                val xFullRange = interaction?.globalXBounds()?.range ?: fullBounds.xRange
+                val newXRange = if (axis == PinchAxis.X) {
+                    zoomRange(vp.xRange, factor, minXRangeState.value, xFullRange)
+                } else {
+                    vp.xRange
+                }
+                val newYRange = if (axis == PinchAxis.Y && fullBounds.yRange > 1e-9f) {
+                    zoomRange(vp.yRange, factor, minYRangeState.value, fullBounds.yRange)
+                } else {
+                    vp.yRange
+                }
+                commitViewport(
+                    next = zoomedViewport(vp, newXRange, newYRange, xFrac, yFrac),
+                    xChanged = axis == PinchAxis.X,
+                    yChanged = axis == PinchAxis.Y,
+                )
+            }
+
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                when (down.type) {
+                    // A mouse (or a pen) drags the chart the way it always has: slop is a fraction
+                    // of a dp, so the pan starts on the first pixel of movement.
+                    PointerType.Mouse, PointerType.Stylus, PointerType.Eraser -> {
+                        if (awaitDragSlop(down.id, MOUSE_DRAG_SLOP.toPx())) {
+                            drag(down.id) { change ->
+                                change.consume()
+                                panBy(change.positionChange())
+                            }
+                        }
                     }
-                    change.consume()
-                    val vp = viewportState.value
-                    val moveX = -(dx / plotW) * vp.xRange
-                    val moveY = (dy / plotH) * vp.yRange
-                    commitViewport(
-                        next = ChartViewport(
-                            xMin = vp.xMin + moveX,
-                            xMax = vp.xMax + moveX,
-                            yMin = vp.yMin + moveY,
-                            yMax = vp.yMax + moveY,
-                        ),
-                        xChanged = dx != 0f,
-                        yChanged = dy != 0f,
-                    )
-                },
-            )
+                    // A finger scrolls the page until it has been held still; then it pans, and two
+                    // fingers pinch instead. See `ChartTouch.kt`.
+                    else -> when (awaitTouchDecision(down)) {
+                        TouchDecision.Abort, TouchDecision.Wait -> Unit
+                        TouchDecision.Pan -> {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            dragPan(down.id, ::panBy)
+                        }
+                        TouchDecision.Pinch -> pinchZoom(::zoomBy)
+                    }
+                }
+            }
         }
         .pointerInput(fullBounds, minXRange, minYRange, rightPad) {
             awaitPointerEventScope {
@@ -1027,19 +1290,10 @@ private fun InteractiveLineChart(
 
                     val xFrac = ((change.position.x - PLOT_LEFT_PADDING) / plotW).coerceIn(0f, 1f)
                     val yFrac = (change.position.y / plotH).coerceIn(0f, 1f)
-                    val dataX = vp.xMin + xFrac * vp.xRange
-                    val dataY = vp.yMax - yFrac * vp.yRange
-                    val newXMin = dataX - xFrac * newXRange
-                    val newYMin = dataY - (1f - yFrac) * newYRange
 
                     change.consume()
                     commitViewport(
-                        next = ChartViewport(
-                            xMin = newXMin,
-                            xMax = newXMin + newXRange,
-                            yMin = newYMin,
-                            yMax = newYMin + newYRange,
-                        ),
+                        next = zoomedViewport(vp, newXRange, newYRange, xFrac, yFrac),
                         xChanged = zoomX,
                         yChanged = zoomY,
                     )
@@ -1104,12 +1358,26 @@ private fun InteractiveLineChart(
             }
         }
 
-    val visiblePreparedState = rememberUpdatedState(visiblePrepared)
+    // The cursor control lives in the card's header and can only ask the canvas where the plot is
+    // and where a place over it reads: the probe is that question, answered on every composition.
+    SideEffect {
+        val probe = cursorProbe ?: return@SideEffect
+        probe.stepAtRoot = { root ->
+            val canvas = canvasSize.value
+            if (canvas.width == 0) {
+                null
+            } else {
+                stepUnder(root - canvasOrigin.value, canvas.width.toFloat(), canvas.height.toFloat())
+            }
+        }
+    }
+
     val strokeDensity = LocalDensity.current.density
     Canvas(
         modifier = gestureModifier
             .onGloballyPositioned {
                 canvasOrigin.value = it.boundsInRoot().topLeft
+                canvasSize.value = it.size
             }
             .pointerInput(showHoverStep, rightPad) {
                 if (!showHoverStep) return@pointerInput
@@ -1122,25 +1390,11 @@ private fun InteractiveLineChart(
                             PointerEventType.Enter,
                             PointerEventType.Move,
                             -> {
-                                val plotW = (size.width.toFloat() - PLOT_LEFT_PADDING - rightPad).coerceAtLeast(1f)
-                                val plotH = (size.height.toFloat() - PLOT_BOTTOM_PADDING).coerceAtLeast(1f)
-                                val rawStep = if (change.position.y > plotH || change.position.x < PLOT_LEFT_PADDING) {
-                                    null
-                                } else {
-                                    stepAtPlotX(
-                                        change.position.x,
-                                        plotW,
-                                        viewportState.value.xMin,
-                                        viewportState.value.xRange,
-                                    )
-                                }
-                                val anchor = rawStep?.let {
-                                    nearestPointByStep(
-                                        visiblePreparedState.value.firstOrNull()?.raw.orEmpty(),
-                                        it,
-                                    )
-                                }
-                                val hoverStep = anchor?.step ?: rawStep
+                                val hoverStep = stepUnder(
+                                    change.position,
+                                    size.width.toFloat(),
+                                    size.height.toFloat(),
+                                )
                                 if (hoverStep == null) {
                                     if (interaction != null && chartId != null) {
                                         interaction.clearHover(chartId)
