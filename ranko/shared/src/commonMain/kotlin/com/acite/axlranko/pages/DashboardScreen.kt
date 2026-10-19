@@ -187,8 +187,10 @@ import com.acite.axlranko.pages.components.runningJob
 import com.acite.axlranko.pages.components.runningBatch
 import com.acite.axlranko.pages.components.rollingPopulationVariance
 import com.acite.axlranko.pages.components.sampleColumns
+import com.acite.axlranko.pages.components.sampleGroupLabels
 import com.acite.axlranko.pages.components.sampleSetBadge
 import com.acite.axlranko.pages.components.sampleSlotWidth
+import com.acite.axlranko.pages.components.sampleSlotGroups
 import com.acite.axlranko.pages.components.sampleSlots
 import com.acite.axlranko.pages.components.sampleThumbWidth
 import com.acite.axlranko.pages.components.samplesForStep
@@ -1674,7 +1676,8 @@ internal fun SendToAutomationStatus(inFlight: Boolean, result: CheckpointSendRes
  * One card per LoRA checkpoint of the run being shown, with the images written at its step (the
  * training ones and any generated pass). A checkpoint with no images yet is still listed — that is
  * the point of a retunable cadence and an optional sampling switch — and can be sampled from here
- * whenever nothing else is using the GPU.
+ * whenever nothing else is using the GPU. Images are grouped into one horizontally scrolling column
+ * per prompt; manual single-prompt generations lead the card in their own `Custom` columns.
  *
  * The card also carries the checkpoint's evaluation: the pass still running for it (progress and a
  * Cancel), or the newest finished one — its F1, a details block, or why it failed.
@@ -1737,6 +1740,9 @@ internal fun CheckpointRowCard(
     val colors = rankoColors
     val checkpoint = row.checkpoint
     val slots = sampleSlots(row.samples, row.generated, newJobIds)
+    val groups = sampleSlotGroups(slots)
+    val groupLabels = sampleGroupLabels(groups, showSetBadges)
+    val sampleScroll = rememberScrollState()
     val thumbWidth = thumbSize.dp
     val thumbHeight = thumbWidth * SAMPLE_THUMB_ASPECT
     val saving = exportInFlightPath != null && exportInFlightPath == checkpoint?.path
@@ -1745,7 +1751,7 @@ internal fun CheckpointRowCard(
     val sentResult = sendResult?.takeIf { it.path == checkpoint?.path }
     var confirmClear by remember(checkpoint?.path) { mutableStateOf(false) }
     // A card's images are long when a run rendered many passes; the header row above them folds
-    // the grid away. Expanded is what the card always did before the button existed.
+    // the columns away. Expanded is what the card always did before the button existed.
     var samplesExpanded by remember(checkpoint?.path) { mutableStateOf(true) }
 
     PorcelainCard(emphasized = row.pinned) {
@@ -2030,30 +2036,57 @@ internal fun CheckpointRowCard(
                     )
                 }
                 if (samplesExpanded) {
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
+                    Row(
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(sampleScroll),
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.Top,
                     ) {
-                        slots.forEach { slot ->
-                            val path = slot.item.path
-                            SampleSlotCard(
-                                slot = slot,
-                                width = thumbWidth,
-                                height = thumbHeight,
-                                setBadge = if (showSetBadges) sampleSetBadge(slot.item.setIndex) else null,
-                                rev = sampleRevisions[path].orEmpty(),
-                                regenerating = path in regeneratingPaths,
-                                // A manual single image belongs to no prompt set, so it has no
-                                // "current prompts" to redraw from and carries no button.
-                                onRegenerate = if (checkpoint != null && slot.item.setIndex >= 0) {
-                                    { onRegenerate(slot.item, checkpoint) }
-                                } else {
-                                    null
-                                },
-                                regenerateEnabled = gpuFree && !starting && !busyElsewhere && !clearingSamples,
-                                onOpen = { onOpen(slot.item) },
-                            )
+                        groups.forEachIndexed { groupIndex, group ->
+                            Column(
+                                modifier = Modifier.width(thumbWidth),
+                                verticalArrangement = Arrangement.spacedBy(10.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                            ) {
+                                groupLabels[groupIndex]?.let { label ->
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(rankoTokens.capsule)
+                                            .background(colors.accentLilac.copy(alpha = 0.85f))
+                                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                                    ) {
+                                        Text(
+                                            text = label,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = Color.White,
+                                            maxLines = 1,
+                                            softWrap = false,
+                                        )
+                                    }
+                                }
+                                group.slots.forEach { slot ->
+                                    val path = slot.item.path
+                                    SampleSlotCard(
+                                        slot = slot,
+                                        width = thumbWidth,
+                                        height = thumbHeight,
+                                        // The column heading carries the set; repeating `P1` on
+                                        // every picture in it would only add noise.
+                                        setBadge = null,
+                                        rev = sampleRevisions[path].orEmpty(),
+                                        regenerating = path in regeneratingPaths,
+                                        // A manual single image belongs to no prompt set, so it has no
+                                        // "current prompts" to redraw from and carries no button.
+                                        onRegenerate = if (checkpoint != null && slot.item.setIndex >= 0) {
+                                            { onRegenerate(slot.item, checkpoint) }
+                                        } else {
+                                            null
+                                        },
+                                        regenerateEnabled = gpuFree && !starting && !busyElsewhere && !clearingSamples,
+                                        onOpen = { onOpen(slot.item) },
+                                    )
+                                }
+                            }
                         }
                     }
                 }

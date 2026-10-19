@@ -104,8 +104,12 @@ and refreshes the two model lists. A first visit has no settings yet, so the pay
 the send would otherwise put the saved values back.
 
 A card's thumbnails sit under a header row carrying the image count and a **Hide** / **Show** button
-(`samplesExpanded`, remembered per checkpoint path, expanded by default); folding the grid skips
-composing it, so its `SampleSlotCard`s stop requesting blobs with it.
+(`samplesExpanded`, remembered per checkpoint path, expanded by default). They are laid out as one
+horizontally scrolling column per prompt: `sampleSlotGroups` keys the run's own samples and the
+generated passes by `setIndex`, and a manual single image (`setIndex` -1) is grouped by its job's
+prompt and drawn first as a `Custom` column. `sampleGroupLabels` gives every multi-column card its
+`P1`/`P2` headings, so two prompts never share a column and the per-image set badge is not repeated.
+Folding the columns skips composing them, so their `SampleSlotCard`s stop requesting blobs with it.
 
 Above the cards, `SampleRangeRow` (in `DashboardScreen.kt`, with `checkpointSteps` / `checkpointsInRange` / `batchRangeError` from `CheckpointList.kt`) is the step-range control: it prefills the run's own steps, says how many checkpoints the range covers, and starts `generate_checkpoint_samples_batch`. While a batch runs the row shows `runningBatch`'s progress (`batchProgressLabel`) with a **Stop** button that calls `cancel_generation`, and `runningJob != null` is what switches every per-card button off (a batch holds the card like any other generation). Once anything is pinned, the same block shows **Generate pinned samples** (`PinnedSampleRow`), which starts `generate_pinned_checkpoint_samples`: one detached batch over every valid pin, in pin file order, with the same progress line, Stop and error display as the range batch (`batchHeadline` names the pin list instead of a step range, from the record's `selection`). Its `rounds` field (1–`MAX_PINNED_ROUNDS`, default 1) calls `startPinnedSampleBatch(rounds)`, which repeats that one call that many times: the helper refuses a second generation while one is running, so `awaitGeneratedJob` polls `list_generated_samples` until the previous round's job stops (a failed round, or one carrying `cancel_requested`, ends the sequence) before starting the next, keeping `isStartingPinnedBatch` true throughout and reporting `pinnedRoundIndex` / `pinnedRoundsTotal` as `round n/m`. It is enabled while the GPU is free and no batch is running, and a pin whose file is gone is simply not rendered (the helper drops it; with no valid pin the call refuses and the refusal lands on the section's error line). A checkpoint with no images gets a **Generate samples** button that calls `generate_checkpoint_samples`; it is enabled only while no live trainer is using the GPU (`generationAllowed` = `!alive || status !in GPU_BUSY_STATUSES`, mirrored by `api._gpu_busy`), which is what makes a **paused** run samplable.
 

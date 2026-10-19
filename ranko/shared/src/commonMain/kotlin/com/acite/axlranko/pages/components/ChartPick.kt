@@ -559,3 +559,58 @@ internal fun sampleSlots(
     }
     return trainingSlots + generatedSlots
 }
+
+/**
+ * One prompt's images: a `[[validation.samples]]` set ([setIndex] >= 0), or a manual single image
+ * whose [setIndex] is null. Training samples and every generated pass of the same set share the
+ * column, while a manual image is grouped by the prompt its job recorded.
+ */
+internal data class SampleSlotGroup(val setIndex: Int?, val slots: List<SampleSlot>) {
+    val isCustom: Boolean get() = setIndex == null
+}
+
+/**
+ * The card's columns in display order: manual single-prompt images first (in the order they were
+ * drawn), then the run's prompt sets ascending. Grouping on the prompt is what keeps two prompts
+ * from sharing a column, even when one is the run's own set and the other was generated later.
+ */
+internal fun sampleSlotGroups(slots: List<SampleSlot>): List<SampleSlotGroup> {
+    val custom = linkedMapOf<String, MutableList<SampleSlot>>()
+    val sets = linkedMapOf<Int, MutableList<SampleSlot>>()
+    for (slot in slots) {
+        val setIndex = slot.item.setIndex
+        if (setIndex >= 0) {
+            sets.getOrPut(setIndex) { mutableListOf() } += slot
+        } else {
+            // A manual generation belongs to no set; its job's prompt is its group. A sample that
+            // carries neither (an old/odd file) still gets a column of its own rather than landing
+            // in the run's first prompt.
+            val prompt = slot.job?.prompt?.trim().orEmpty()
+            val key = if (slot.job == null) "\u0000" else prompt
+            custom.getOrPut(key) { mutableListOf() } += slot
+        }
+    }
+    return custom.values.map { group -> SampleSlotGroup(setIndex = null, slots = group) } +
+        sets.entries.sortedBy { it.key }
+            .map { (setIndex, group) -> SampleSlotGroup(setIndex = setIndex, slots = group) }
+}
+
+/**
+ * The heading over each column: `P1` / `P2` for prompt sets when the card identifies them, or
+ * `Custom` for manual single-prompt images. Several manual prompts get `Custom 1`, `Custom 2`, …
+ * so they remain distinguishable without mixing their pictures.
+ */
+internal fun sampleGroupLabels(groups: List<SampleSlotGroup>, showSetBadges: Boolean): List<String?> {
+    val customCount = groups.count { it.isCustom }
+    val setLabels = showSetBadges || groups.size > 1
+    var customSeen = 0
+    return groups.map { group ->
+        val setIndex = group.setIndex
+        if (setIndex != null) {
+            if (setLabels) sampleSetBadge(setIndex) else null
+        } else {
+            customSeen += 1
+            if (customCount == 1) "Custom" else "Custom $customSeen"
+        }
+    }
+}

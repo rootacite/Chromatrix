@@ -107,8 +107,8 @@ internal fun checkpointRows(
 }
 
 /**
- * Every image the Checkpoints section shows, in the order the page shows it: a card's training
- * samples first, then the images of the passes that joined it, then the `samples only` rows.
+ * Every image the Checkpoints section shows, in the order the page shows it: a card's manual
+ * single-prompt images, then each prompt set's column, then the `samples only` rows.
  *
  * The fullscreen preview cycles this list, and a click resolves its index here — so building both
  * from the same rows is what keeps a rendered image openable. A pass whose job records no step (or
@@ -116,7 +116,11 @@ internal fun checkpointRows(
  * lookup and leaving its thumbnail inert.
  */
 internal fun sectionImages(rows: List<CheckpointRow>): List<SampleItem> =
-    rows.flatMap { row -> sampleSlots(row.samples, row.generated, emptySet()).map { it.item } }
+    rows.flatMap { row ->
+        sampleSlotGroups(sampleSlots(row.samples, row.generated, emptySet()))
+            .flatMap { group -> group.slots }
+            .map { it.item }
+    }
 
 /** A job belongs to the card it names; the step is the fallback for a record that names none. */
 private fun belongsTo(job: GeneratedSampleJob, checkpoint: CheckpointItem): Boolean =

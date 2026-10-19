@@ -16,6 +16,7 @@ class GeneratedSampleTest {
         id: String = "lllj_s003050_gen_20260915_161123",
         state: String = JOB_DONE,
         step: Int? = 3050,
+        prompt: String = "",
         imagePath: String? = "/out/run_samples/generated/$id.png",
         currentStep: Int = 20,
         totalSteps: Int = 20,
@@ -29,6 +30,7 @@ class GeneratedSampleTest {
         id = id,
         state = state,
         step = step,
+        prompt = prompt,
         cfg = cfg,
         steps = steps,
         seed = seed,
@@ -159,6 +161,76 @@ class GeneratedSampleTest {
         assertEquals(listOf(null, null, "older", "newest"), slots.map { it.job?.id })
         assertEquals(listOf(false, false, false, true), slots.map { it.isNew })
         assertTrue(slots.take(2).all { it.job == null })
+    }
+
+    @Test
+    fun columnsKeepEachPromptSeparateAndLeadWithCustomImages() {
+        val pass = GeneratedSampleJob(
+            id = "pass",
+            state = JOB_DONE,
+            mode = JOB_MODE_SETS,
+            step = 3050,
+            checkpoint = checkpoint(3050).path,
+            files = listOf(
+                "/out/generated/pass_p0_0.png",
+                "/out/generated/pass_p0_1.png",
+                "/out/generated/pass_p1_0.png",
+            ),
+        )
+        val training0 = sample(3050, 0).copy(setIndex = 0, repeatIdx = 0)
+        val training1 = sample(3050, 1).copy(setIndex = 1, repeatIdx = 0)
+        val slots = sampleSlots(
+            training = listOf(training0, training1),
+            // The view model keeps jobs newest first; the card draws their images oldest first.
+            jobs = listOf(
+                job(id = "custom_new", imagePath = "/out/custom_new.png", prompt = "new prompt"),
+                pass,
+                job(id = "custom_old", imagePath = "/out/custom_old.png", prompt = "old prompt"),
+            ),
+            sessionJobIds = emptySet(),
+        )
+
+        val groups = sampleSlotGroups(slots)
+        assertEquals(listOf(null, null, 0, 1), groups.map { it.setIndex })
+        assertEquals(listOf("/out/custom_old.png"), groups[0].slots.map { it.item.path })
+        assertEquals(listOf("/out/custom_new.png"), groups[1].slots.map { it.item.path })
+        // A generated pass of a set joins the run's own samples for that prompt, in draw order.
+        assertEquals(
+            listOf(training0.path, "/out/generated/pass_p0_0.png", "/out/generated/pass_p0_1.png"),
+            groups[2].slots.map { it.item.path },
+        )
+        assertEquals(
+            listOf(training1.path, "/out/generated/pass_p1_0.png"),
+            groups[3].slots.map { it.item.path },
+        )
+        assertEquals(
+            listOf("Custom 1", "Custom 2", "P1", "P2"),
+            sampleGroupLabels(groups, showSetBadges = false),
+        )
+    }
+
+    @Test
+    fun aSingleColumnNeedsNoSetHeadingButACustomColumnNamesItself() {
+        val solo = sampleSlotGroups(sampleSlots(listOf(sample(3050, 0)), emptyList(), emptySet()))
+        assertEquals(listOf<String?>(null), sampleGroupLabels(solo, showSetBadges = false))
+
+        val custom = sampleSlotGroups(sampleSlots(emptyList(), listOf(job()), emptySet()))
+        assertEquals(listOf("Custom"), sampleGroupLabels(custom, showSetBadges = false))
+    }
+
+    @Test
+    fun manualImagesWithTheSamePromptShareOneColumn() {
+        val slots = sampleSlots(
+            training = emptyList(),
+            jobs = listOf(
+                job(id = "newer", imagePath = "/out/newer.png", prompt = "same prompt"),
+                job(id = "older", imagePath = "/out/older.png", prompt = "same prompt"),
+            ),
+            sessionJobIds = emptySet(),
+        )
+        val groups = sampleSlotGroups(slots)
+        assertEquals(1, groups.size)
+        assertEquals(listOf("/out/older.png", "/out/newer.png"), groups.single().slots.map { it.item.path })
     }
 
     @Test
@@ -311,8 +383,8 @@ class GeneratedSampleTest {
 
     @Test
     fun thePreviewListIsTheSectionOrder() {
-        // The page draws the checkpoints newest first, each card's training samples then the images
-        // of the pass that joined it; the fullscreen preview cycles exactly that list.
+        // The page draws the checkpoints newest first, each card's custom images then one column
+        // per prompt set; the fullscreen preview cycles exactly that list.
         val list = previewList(
             checkpoints = listOf(checkpoint(3050), checkpoint(3000)),
             samples = mapOf(
@@ -322,9 +394,9 @@ class GeneratedSampleTest {
             jobs = listOf(job(id = "gen", step = 3050)),
         )
         assertEquals(4, list.size)
-        assertEquals(sample(3050, 0).path, list[0].path)
-        assertEquals(sample(3050, 1).path, list[1].path)
-        assertTrue(list[2].path.endsWith("gen.png"))
+        assertTrue(list[0].path.endsWith("gen.png"))
+        assertEquals(sample(3050, 0).path, list[1].path)
+        assertEquals(sample(3050, 1).path, list[2].path)
         assertEquals(sample(3000, 0).path, list[3].path)
     }
 
