@@ -55,6 +55,7 @@ Handlers (`_HANDLERS` — add here **and** in `API.md` **and** `TrainerIpcClient
 | `dataset_counts` | read-only: images per `[[environment.train_data]]` folder (recursive, masks excluded) + the per-epoch sample total; optional `val_split_percent` / `seed` apply `validation_split.select_validation` and add the held-out `val_images` / `val_samples`, which the client subtracts; `val_data_dir` switches to a custom validation set instead — `val_images` counts that directory and `val_samples` is `0` (nothing is held out), with `val_data_error` naming why it could not be counted; drives the Utils → Training step estimate (`trainer/estimate.py`, torch-free) |
 | `caption_write` | `{stem}.txt` |
 | `dataset_drop` / `dataset_shuffle` | trash / renumber (Python owns IO) |
+| `dataset_trash_list` / `dataset_trash` / `dataset_restore` | review Trash: list one folder's recoverable records, move one image group (image(s)+txt+mask) into a per-item record, restore it without overwriting |
 | `mask_get` / `_write` / `_delete` | `{stem}.mask.png` PNG |
 | `blob_stat` / `blob_batch` | resized JPEG/WebP/PNG, process pool, `/tmp` cache |
 | `tag_lexicon` | `tagger/selected_tags.csv` text (the legacy tagger's file is the only English → Chinese tag map; it covers 34 % of the new tagger's vocabulary) |

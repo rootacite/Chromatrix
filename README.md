@@ -89,6 +89,7 @@ The primary dataset editing interface. The left panel shows image thumbnails, wh
 - **Mask Painter Canvas**: Features controls for Mask toggle, Mask Only preview, Brush size, Feathering (0-100%, default 20%), Strength (default 100%), Invert, Fill White/Black, Clear, Reset, and Save. Left-click paints white (train region), right-click paints black (ignore region), and `Ctrl`+left erases. Cursor rendering displays brush core and feather radius. **Alt+wheel** resizes brush size. Painting automatically halts at image borders.
 - **Mask Storage**: Edits reside in memory until saved to `{stem}.mask.png`. Transparent PNGs preview using alpha channels as fallback masks when no sidecar exists.
 - **Caption Editor**: Modifies comma-separated tag lists in `{stem}.txt` with explicit Save and Reset controls.
+- **Dataset Review**: Turns the tab into a one-image inspection view with keyboard paging (`←` / `→`), `T` to move the current image, caption and mask into a recoverable Trash record, and `R` to restore it. Trashed items stay visible with a **TRASHED** badge; moving or restoring one notifies Statistics and Utils so their counts refresh before the next run.
 
 ### Statistics — Tag Analytics & Bulk Cleaning
 

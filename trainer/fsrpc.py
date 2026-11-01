@@ -9,7 +9,9 @@ from __future__ import annotations
 import json
 import os
 import random
+import re
 import shutil
+import time
 import tomllib
 import uuid
 from pathlib import Path
@@ -30,6 +32,9 @@ except ImportError:
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 MASK_SIDECAR_SUFFIX = ".mask.png"
 TRASH_DEFAULT = Path("/tmp/axlranko/trash")
+TRASH_MANIFEST_NAME = "trash.json"
+TRASH_MANIFEST_VERSION = 1
+TRASH_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 PROFILE_DIR_NAME = "configs"
 PROFILE_EXT = ".toml"
 PROFILE_MAX_NAME = 64
@@ -130,6 +135,9 @@ def blob_path_allowed(path: Path, cfg: dict[str, Any], extra_roots: Sequence[Pat
         return True
     if _is_under(resolved, output_root(cfg)):
         return True
+    # Review-mode Trash keeps the original image bytes for its "Trashed" previews.
+    if _is_under(resolved, trash_dir()):
+        return True
     # The Automation page's own output (settings.json's output_dir, plus the automation tree).
     return any(_is_under(resolved, root) for root in extra_roots)
 
@@ -178,31 +186,31 @@ def dataset_list(directory: Path) -> dict[str, Any]:
     captions = _caption_files(directory)
     image_stems = {p.stem for p in images}
     orphans = [p.name for p in captions if p.stem not in image_stems]
-    items: list[dict[str, Any]] = []
-    for image in images:
-        txt = directory / f"{image.stem}.txt"
-        mask = mask_path_for(image)
-        tags: list[str] = []
-        if txt.is_file():
-            tags = _parse_tags(txt.read_text(encoding="utf-8"))
-        try:
-            width, height, has_alpha = _probe_image(image)
-        except OSError:
-            width, height, has_alpha = 0, 0, False
-        items.append(
-            {
-                "stem": image.stem,
-                "image": str(image),
-                "txt": str(txt),
-                "mask": str(mask),
-                "width": width,
-                "height": height,
-                "tags": tags,
-                "has_sidecar_mask": mask.is_file(),
-                "has_alpha": has_alpha,
-            }
-        )
+    items = [_active_item(directory, image) for image in images]
     return {"items": items, "orphans": orphans}
+
+
+def _active_item(directory: Path, image: Path) -> dict[str, Any]:
+    txt = directory / f"{image.stem}.txt"
+    mask = mask_path_for(image)
+    tags: list[str] = []
+    if txt.is_file():
+        tags = _parse_tags(txt.read_text(encoding="utf-8"))
+    try:
+        width, height, has_alpha = _probe_image(image)
+    except OSError:
+        width, height, has_alpha = 0, 0, False
+    return {
+        "stem": image.stem,
+        "image": str(image),
+        "txt": str(txt),
+        "mask": str(mask),
+        "width": width,
+        "height": height,
+        "tags": tags,
+        "has_sidecar_mask": mask.is_file(),
+        "has_alpha": has_alpha,
+    }
 
 
 def caption_write(directory: Path, stem: str, text: str) -> dict[str, Any]:
@@ -246,6 +254,277 @@ def dataset_drop(
             shutil.move(str(src), str(dest / src.name))
         moved += 1
     return {"moved": moved}
+
+
+def require_trash_outside_train_data(cfg: dict[str, Any]) -> Path:
+    """The review trash keeps files restorable beside the dataset, never inside it.
+
+    The trainer walks a train-data folder recursively, so a trash root nested under one would put
+    trashed images back into the next run's image list even though they are "removed" from the
+    folder the user sees.
+    """
+    dest = trash_dir().expanduser().resolve()
+    for root in train_data_roots(cfg):
+        if _is_under(dest, root):
+            raise ValueError(
+                f"trash directory {dest} is inside train data {root}; "
+                "set AXL_TRASH_DIR outside every dataset folder"
+            )
+    return dest
+
+
+def _safe_record_file(record: Path, name: Any) -> Path:
+    value = str(name or "")
+    if (
+        not value
+        or value in {".", ".."}
+        or "/" in value
+        or "\\" in value
+    ):
+        raise ValueError(f"invalid trash file name: {name!r}")
+    path = record / value
+    if path.parent.resolve() != record.resolve():
+        raise ValueError(f"trash file escapes its record: {name!r}")
+    return path
+
+
+def _trash_record_dir(trash_id: Any) -> Path:
+    value = str(trash_id or "").strip()
+    if not TRASH_ID_PATTERN.fullmatch(value):
+        raise ValueError(f"invalid trash id: {trash_id!r}")
+    record = trash_dir() / value
+    if not record.is_dir():
+        raise ValueError(f"trash item not found: {value}")
+    return record
+
+
+def _write_trash_manifest(record: Path, manifest: dict[str, Any]) -> None:
+    atomic_write_text(
+        record / TRASH_MANIFEST_NAME,
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+    )
+
+
+def _read_trash_manifest(record: Path) -> dict[str, Any]:
+    path = record / TRASH_MANIFEST_NAME
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"unreadable trash record {record.name}: {exc}") from exc
+    if not isinstance(data, dict) or data.get("version") != TRASH_MANIFEST_VERSION:
+        raise ValueError(f"unsupported trash record {record.name}")
+    source = str(data.get("source_directory") or "")
+    if not source:
+        raise ValueError(f"trash record {record.name} has no source directory")
+    stem = require_stem(data.get("stem"))
+    files = data.get("files")
+    if not isinstance(files, list) or not files:
+        raise ValueError(f"trash record {record.name} has no files")
+    clean_files: list[dict[str, str]] = []
+    image_count = 0
+    for entry in files:
+        if not isinstance(entry, dict):
+            raise ValueError(f"trash record {record.name} has an invalid file entry")
+        name = str(entry.get("name") or "")
+        _safe_record_file(record, name)
+        kind = str(entry.get("kind") or "file")
+        if kind == "image":
+            image_count += 1
+        clean_files.append({"name": name, "kind": kind})
+    if image_count == 0:
+        raise ValueError(f"trash record {record.name} has no image")
+    return {
+        "version": TRASH_MANIFEST_VERSION,
+        "id": str(data.get("id") or record.name),
+        "source_directory": source,
+        "stem": stem,
+        "trashed_at": int(data.get("trashed_at") or 0),
+        "files": clean_files,
+    }
+
+
+def _same_directory(left: Any, right: Path) -> bool:
+    try:
+        return Path(str(left)).expanduser().resolve() == right.expanduser().resolve()
+    except OSError:
+        return False
+
+
+def _trash_item_record(record: Path, directory: Path) -> Optional[dict[str, Any]]:
+    manifest = _read_trash_manifest(record)
+    if not _same_directory(manifest["source_directory"], directory):
+        return None
+    files = [
+        _safe_record_file(record, entry["name"])
+        for entry in manifest["files"]
+        if entry["kind"] == "image"
+    ]
+    images = sorted([path for path in files if path.is_file()], key=lambda path: path.name.lower())
+    if not images:
+        return None
+    image = images[0]
+    stem = manifest["stem"]
+    txt = record / f"{stem}.txt"
+    mask = record / f"{stem}{MASK_SIDECAR_SUFFIX}"
+    tags: list[str] = []
+    if txt.is_file():
+        tags = _parse_tags(txt.read_text(encoding="utf-8"))
+    try:
+        width, height, has_alpha = _probe_image(image)
+    except OSError:
+        width, height, has_alpha = 0, 0, False
+    return {
+        "trash_id": record.name,
+        "stem": stem,
+        "image": str(image),
+        "txt": str(txt),
+        "mask": str(mask),
+        "width": width,
+        "height": height,
+        "tags": tags,
+        "has_sidecar_mask": mask.is_file(),
+        "has_alpha": has_alpha,
+        "trashed_at": manifest["trashed_at"],
+        "file_count": len(manifest["files"]),
+        "source_directory": str(directory),
+    }
+
+
+def dataset_trash_list(directory: Path) -> dict[str, Any]:
+    """Review-mode items moved to Trash from [directory] and not restored yet."""
+    root = trash_dir().expanduser().resolve()
+    items: list[dict[str, Any]] = []
+    if not root.is_dir():
+        return {"items": []}
+    for record in sorted(root.iterdir(), key=lambda path: path.name):
+        if not record.is_dir() or not (record / TRASH_MANIFEST_NAME).is_file():
+            continue
+        try:
+            item = _trash_item_record(record, directory)
+        except (OSError, ValueError):
+            continue
+        if item is not None:
+            items.append(item)
+    items.sort(key=lambda item: (item["trashed_at"], item["stem"].lower(), item["trash_id"]))
+    return {"items": items}
+
+
+def _dataset_group(directory: Path, stem: str) -> tuple[list[Path], Optional[Path], Optional[Path]]:
+    images = sorted(
+        [path for path in _image_files(directory) if path.stem == stem],
+        key=lambda path: path.name.lower(),
+    )
+    if not images:
+        raise ValueError(f"no image with stem {stem!r} in {directory}")
+    txt = directory / f"{stem}.txt"
+    mask = directory / f"{stem}{MASK_SIDECAR_SUFFIX}"
+    return (
+        images,
+        txt if txt.is_file() else None,
+        mask if mask.is_file() else None,
+    )
+
+
+def dataset_trash(directory: Path, stem: str) -> dict[str, Any]:
+    """Move one image group (image(s) + caption + mask) into a recoverable trash record."""
+    stem = require_stem(stem)
+    images, txt, mask = _dataset_group(directory, stem)
+    record = trash_dir() / uuid.uuid4().hex
+    record.mkdir(parents=True, exist_ok=False)
+
+    planned: list[tuple[Path, str]] = []
+    for path, kind in ((txt, "caption"), (mask, "mask")):
+        if path is not None:
+            planned.append((path, kind))
+    planned.extend((path, "image") for path in images)
+    manifest = {
+        "version": TRASH_MANIFEST_VERSION,
+        "id": record.name,
+        "source_directory": str(directory),
+        "stem": stem,
+        "trashed_at": int(time.time() * 1000),
+        "files": [{"name": path.name, "kind": kind} for path, kind in planned],
+    }
+    _write_trash_manifest(record, manifest)
+
+    moved: list[tuple[Path, Path]] = []
+    try:
+        for source, _kind in planned:
+            destination = record / source.name
+            shutil.move(str(source), str(destination))
+            moved.append((source, destination))
+    except Exception as exc:
+        rollback_ok = True
+        for source, destination in reversed(moved):
+            try:
+                if destination.is_file() and not source.exists():
+                    shutil.move(str(destination), str(source))
+            except OSError:
+                rollback_ok = False
+        if rollback_ok:
+            shutil.rmtree(record, ignore_errors=True)
+            raise OSError(f"could not move {stem!r} to trash: {exc}") from exc
+        raise OSError(
+            f"could not move {stem!r} to trash ({exc}); the recoverable record is {record}"
+        ) from exc
+
+    item = _trash_item_record(record, directory)
+    if item is None:
+        raise OSError(f"trash record {record} was written but has no readable image")
+    return {"stem": stem, "item": item}
+
+
+def dataset_restore(directory: Path, trash_id: str) -> dict[str, Any]:
+    """Move a review trash record back to the folder it came from, refusing overwrites."""
+    record = _trash_record_dir(trash_id)
+    manifest = _read_trash_manifest(record)
+    if not _same_directory(manifest["source_directory"], directory):
+        raise ValueError(
+            f"trash item {trash_id} belongs to {manifest['source_directory']}, not {directory}"
+        )
+    stem = manifest["stem"]
+    plan = [
+        (_safe_record_file(record, entry["name"]), entry["kind"])
+        for entry in manifest["files"]
+    ]
+    present = [(source, kind) for source, kind in plan if source.is_file()]
+    if not any(kind == "image" for _source, kind in present):
+        raise ValueError(f"trash item {trash_id} has no image to restore")
+    for source, _kind in present:
+        destination = directory / source.name
+        if destination.exists():
+            raise ValueError(f"cannot restore {source.name}: {destination} already exists")
+
+    # Sidecars first, image last: an interrupted restore never leaves an orphan caption behind.
+    order = sorted(present, key=lambda pair: 0 if pair[1] != "image" else 1)
+    restored: list[tuple[Path, Path]] = []
+    try:
+        for source, _kind in order:
+            destination = directory / source.name
+            shutil.move(str(source), str(destination))
+            restored.append((source, destination))
+    except Exception as exc:
+        for source, destination in reversed(restored):
+            try:
+                if destination.is_file() and not source.exists():
+                    shutil.move(str(destination), str(source))
+            except OSError:
+                pass
+        raise OSError(f"could not restore {stem!r}: {exc}") from exc
+
+    try:
+        (record / TRASH_MANIFEST_NAME).unlink()
+        record.rmdir()
+    except OSError:
+        pass
+
+    images = sorted(
+        [path for path in _image_files(directory) if path.stem == stem],
+        key=lambda path: path.name.lower(),
+    )
+    if not images:
+        raise OSError(f"restored {stem!r} but no image is visible in {directory}")
+    return {"stem": stem, "item": _active_item(directory, images[0])}
 
 
 def _plan_groups(directory: Path) -> list[tuple[str, list[Path]]]:

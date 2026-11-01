@@ -11,6 +11,7 @@ import com.acite.axlranko.data.DatasetRecord
 import com.acite.axlranko.data.DatasetRefreshHub
 import com.acite.axlranko.data.DatasetSelection
 import com.acite.axlranko.data.TrainerIpcClient
+import com.acite.axlranko.data.TrashedDatasetRecord
 import com.acite.axlranko.data.encodeBase64
 import com.acite.axlranko.data.trainDataEntries
 import com.acite.axlranko.data.decodeBase64
@@ -109,8 +110,9 @@ class ImageScreenViewModel(
             }
 
             withContext(IoDispatcher) {
-                val currentItemsMap = _uiState.value.imageItems.associateBy { it.imagePath }
-                val currentSelectedPath = _uiState.value.selectedItem?.imagePath
+                val before = _uiState.value
+                val currentItemsMap = before.imageItems.associateBy { it.imagePath }
+                val currentSelectedPath = before.selectedItem?.imagePath
 
                 val updatedItems = scanImageItems(currentDir).map { fresh ->
                     val existing = currentItemsMap[fresh.imagePath]
@@ -130,13 +132,34 @@ class ImageScreenViewModel(
                         fresh
                     }
                 }
+                val trashedItems = if (before.reviewMode) {
+                    try {
+                        scanTrashItems(currentDir)
+                    } catch (_: Exception) {
+                        before.trashedItems
+                    }
+                } else {
+                    before.trashedItems
+                }
 
                 val newSelected = selectionAfterRescan(updatedItems, pendingTxtPath, currentSelectedPath)
+                val previousReviewImage = reviewItems(
+                    before.imageItems,
+                    before.trashedItems,
+                    before.reviewShowTrashed,
+                ).getOrNull(before.reviewIndex)?.imagePath
+                val newReviewIndex = reviewIndexAfterRescan(
+                    reviewItems(updatedItems, trashedItems, before.reviewShowTrashed),
+                    previousReviewImage,
+                    before.reviewIndex,
+                )
                 _uiState.update { state ->
                     state.copy(
                         imageItems = updatedItems,
+                        trashedItems = trashedItems,
                         selectedItem = newSelected,
                         editorText = newSelected?.currentTags ?: "",
+                        reviewIndex = if (state.reviewMode) newReviewIndex else state.reviewIndex,
                     )
                 }
                 if (newSelected != null) {
@@ -198,7 +221,7 @@ class ImageScreenViewModel(
 
     private fun switchDatasetDir(index: Int) {
         datasetSelection.select(index)
-        _uiState.update { it.copy(datasetDirIndex = index) }
+        _uiState.update { it.copy(datasetDirIndex = index, reviewError = null, reviewStatus = null) }
         reloadFromDisk(resetDrafts = true)
     }
 
@@ -213,6 +236,203 @@ class ImageScreenViewModel(
             )
         }
         viewModelScope.launch(IoDispatcher) { loadMaskBuffers(item) }
+    }
+
+    /** Opens the one-image review, starting at the image the editor currently has open. */
+    fun enterReview() {
+        if (_uiState.value.reviewMode || _uiState.value.reviewBusy) return
+        _uiState.update { it.copy(reviewBusy = true, reviewError = null, reviewStatus = null) }
+        viewModelScope.launch(IoDispatcher) {
+            val state = _uiState.value
+            var trashError: String? = null
+            val trashed = if (state.dataDir.isEmpty()) {
+                emptyList()
+            } else {
+                try {
+                    scanTrashItems(state.dataDir)
+                } catch (e: Exception) {
+                    trashError = e.message ?: "Could not read Trash"
+                    state.trashedItems
+                }
+            }
+            _uiState.update { current ->
+                val items = reviewItems(current.imageItems, trashed, current.reviewShowTrashed)
+                val index = reviewIndexOf(items, current.selectedItem?.imagePath, 0)
+                current.copy(
+                    reviewMode = true,
+                    trashedItems = trashed,
+                    reviewIndex = index,
+                    reviewBusy = false,
+                    reviewError = trashError,
+                    reviewStatus = null,
+                )
+            }
+        }
+    }
+
+    /** Leaves review mode; an active image stays selected so the editor can carry on with it. */
+    fun exitReview() {
+        val current = currentReviewItem()
+        _uiState.update {
+            it.copy(reviewMode = false, reviewBusy = false, reviewError = null, reviewStatus = null)
+        }
+        if (current != null && !current.isTrashed) selectItem(current)
+    }
+
+    fun reviewStep(delta: Int) {
+        _uiState.update { state ->
+            val items = reviewItems(state.imageItems, state.trashedItems, state.reviewShowTrashed)
+            if (items.isEmpty()) return@update state
+            state.copy(
+                reviewIndex = reviewStep(state.reviewIndex, delta, items.size),
+                reviewError = null,
+                reviewStatus = null,
+            )
+        }
+    }
+
+    fun toggleReviewShowTrashed() {
+        _uiState.update { state ->
+            val current = reviewItems(state.imageItems, state.trashedItems, state.reviewShowTrashed)
+                .getOrNull(state.reviewIndex)
+            val show = !state.reviewShowTrashed
+            val items = reviewItems(state.imageItems, state.trashedItems, show)
+            val remembered = items.indexOfFirst { it.imagePath == current?.imagePath }
+            state.copy(
+                reviewShowTrashed = show,
+                reviewIndex = if (remembered >= 0) remembered else reviewIndexOf(items, null, items.lastIndex),
+                reviewError = null,
+                reviewStatus = null,
+            )
+        }
+    }
+
+    /**
+     * Moves the current active image group into the recoverable Trash record. The image, caption
+     * and mask travel together, so the folder never exposes an orphan caption to Statistics and
+     * the next run's `list_images` walk no longer sees the image.
+     */
+    fun trashCurrentReviewItem() {
+        val state = _uiState.value
+        if (state.reviewBusy) return
+        val target = currentReviewItem() ?: return
+        if (target.isTrashed) return
+        val hasDraft = target.isDirty || drafts.containsKey(target.imagePath) ||
+            (state.selectedItem?.imagePath == target.imagePath && state.maskDirty)
+        if (hasDraft) {
+            _uiState.update {
+                it.copy(reviewError = "Save or reset the draft before moving ${target.stem} to Trash")
+            }
+            return
+        }
+        val directory = state.dataDir
+        if (directory.isEmpty()) return
+        _uiState.update {
+            it.copy(reviewBusy = true, reviewError = null, reviewStatus = null)
+        }
+        viewModelScope.launch(IoDispatcher) {
+            try {
+                val report = ipc.datasetTrash(directory, target.stem)
+                val trashed = report.item?.toImageItem()
+                var selectedRemoved = false
+                _uiState.update { current ->
+                    val remaining = current.imageItems.filterNot { it.stem == target.stem }
+                    val selected = current.selectedItem?.takeIf { item ->
+                        remaining.any { it.imagePath == item.imagePath }
+                    }
+                    selectedRemoved = selected == null && current.selectedItem != null
+                    val trashedItems = if (trashed == null) {
+                        current.trashedItems
+                    } else {
+                        (current.trashedItems.filterNot { it.trashId == trashed.trashId } + trashed)
+                            .sortedWith(
+                                compareBy({ it.trashedAt }, { it.stem.lowercase() }, { it.trashId }),
+                            )
+                    }
+                    val items = reviewItems(remaining, trashedItems, current.reviewShowTrashed)
+                    current.copy(
+                        imageItems = remaining,
+                        trashedItems = trashedItems,
+                        selectedItem = selected,
+                        editorText = selected?.currentTags ?: "",
+                        reviewIndex = reviewIndexAfterRescan(
+                            items,
+                            reviewItems(
+                                current.imageItems,
+                                current.trashedItems,
+                                current.reviewShowTrashed,
+                            ).getOrNull(current.reviewIndex)?.imagePath,
+                            current.reviewIndex,
+                        ),
+                        reviewBusy = false,
+                        reviewStatus = "Moved ${target.stem} to Trash",
+                    )
+                }
+                if (selectedRemoved) clearMaskBuffers()
+                refreshHub.notifyDatasetChanged()
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        reviewBusy = false,
+                        reviewError = e.message ?: "Could not move ${target.stem} to Trash",
+                    )
+                }
+                // A failed group move is rolled back, but a partial failure keeps its recoverable
+                // record: rescan so the review list shows what actually remains on disk.
+                refreshHub.notifyDatasetChanged()
+            }
+        }
+    }
+
+    /** Puts a Trash record back and selects it in the review list so the badge disappears. */
+    fun restoreCurrentReviewItem() {
+        val state = _uiState.value
+        if (state.reviewBusy) return
+        val target = currentReviewItem() ?: return
+        val trashId = target.trashId ?: return
+        val directory = state.dataDir
+        if (directory.isEmpty()) return
+        _uiState.update {
+            it.copy(reviewBusy = true, reviewError = null, reviewStatus = null)
+        }
+        viewModelScope.launch(IoDispatcher) {
+            try {
+                val report = ipc.datasetRestore(directory, trashId)
+                val restored = report.item?.toImageItem()
+                _uiState.update { current ->
+                    val active = if (restored == null) {
+                        current.imageItems
+                    } else {
+                        (current.imageItems.filterNot { it.imagePath == restored.imagePath } + restored)
+                            .sortedBy { it.imagePath.lowercase() }
+                    }
+                    val trashedItems = current.trashedItems.filterNot { it.trashId == trashId }
+                    val items = reviewItems(active, trashedItems, current.reviewShowTrashed)
+                    current.copy(
+                        imageItems = active,
+                        trashedItems = trashedItems,
+                        reviewIndex = reviewIndexOf(items, restored?.imagePath, current.reviewIndex),
+                        reviewBusy = false,
+                        reviewStatus = "Restored ${target.stem}",
+                    )
+                }
+                refreshHub.notifyDatasetChanged()
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        reviewBusy = false,
+                        reviewError = e.message ?: "Could not restore ${target.stem}",
+                    )
+                }
+                refreshHub.notifyDatasetChanged()
+            }
+        }
+    }
+
+    private fun currentReviewItem(): ImageItem? {
+        val state = _uiState.value
+        return reviewItems(state.imageItems, state.trashedItems, state.reviewShowTrashed)
+            .getOrNull(state.reviewIndex)
     }
 
     private fun stashCurrentMask() {
@@ -449,6 +669,11 @@ class ImageScreenViewModel(
         return ipc.datasetList(directory).items.map { it.toImageItem() }
     }
 
+    private suspend fun scanTrashItems(directory: String): List<ImageItem> {
+        if (directory.isEmpty()) return emptyList()
+        return ipc.datasetTrashList(directory).items.map { it.toImageItem() }
+    }
+
     private fun DatasetRecord.toImageItem(): ImageItem {
         val parent = image.substringBeforeLast('/', missingDelimiterValue = ".")
         return ImageItem(
@@ -463,6 +688,26 @@ class ImageScreenViewModel(
             hasAlpha = hasAlpha,
             width = width,
             height = height,
+        )
+    }
+
+    private fun TrashedDatasetRecord.toImageItem(): ImageItem {
+        val parent = image.substringBeforeLast('/', missingDelimiterValue = ".")
+        return ImageItem(
+            directory = parent,
+            stem = stem,
+            imagePath = image,
+            txtPath = txt,
+            tags = tags.joinToString(", "),
+            draftTags = null,
+            maskPath = mask,
+            hasSidecarMask = hasSidecarMask,
+            hasAlpha = hasAlpha,
+            width = width,
+            height = height,
+            trashId = trashId,
+            trashedAt = trashedAt,
+            trashFileCount = fileCount,
         )
     }
 

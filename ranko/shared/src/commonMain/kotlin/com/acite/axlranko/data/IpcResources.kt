@@ -251,6 +251,8 @@ internal object IpcResources {
         // --- one dataset folder: a tag holds it for minutes, so the next writer is refused ---
         "caption_write" to { params -> listOf(dataset(params.text("directory"))) },
         "dataset_drop" to { params -> listOf(dataset(params.text("directory"))) },
+        "dataset_trash" to { params -> listOf(dataset(params.text("directory"))) },
+        "dataset_restore" to { params -> listOf(dataset(params.text("directory"))) },
         "dataset_shuffle" to { params -> listOf(dataset(params.text("directory"))) },
         "mask_write" to { params ->
             listOf(dataset(params.text("directory")), mask(params.text("directory"), params.text("stem")))
@@ -325,6 +327,7 @@ internal object IpcResources {
         "automation_job_list" to { _ -> emptyList() },
         "automation_job_get" to { _ -> emptyList() },
         "dataset_list" to { _ -> emptyList() },
+        "dataset_trash_list" to { _ -> emptyList() },
         // A directory walk for the Training section's step estimate: read-only, and it must not
         // queue behind a ten-minute tag on the same folder.
         "dataset_counts" to { _ -> emptyList() },
@@ -380,6 +383,8 @@ internal object IpcResources {
         "checkpoint_export" to 30 * 60_000L,
         "dataset_shuffle" to 5 * 60_000L,
         "dataset_drop" to 5 * 60_000L,
+        "dataset_trash" to 60_000L,
+        "dataset_restore" to 60_000L,
         "automation_job_delete" to 2 * 60_000L,
         "train_start" to 30_000L,
         "generate_sample" to 60_000L,

@@ -1005,6 +1005,36 @@ class TrainerIpcClient {
         return json.decodeFromJsonElement(result)
     }
 
+    /** Review-mode Trash: recoverable items moved out of [directory]. */
+    suspend fun datasetTrashList(directory: String): DatasetTrashListResult {
+        val result = call("dataset_trash_list", buildJsonObject { put("directory", directory) })
+        return json.decodeFromJsonElement(result)
+    }
+
+    /** Moves one image group (image(s) + caption + mask) into a recoverable Trash record. */
+    suspend fun datasetTrash(directory: String, stem: String): DatasetTrashResult {
+        val result = call(
+            "dataset_trash",
+            buildJsonObject {
+                put("directory", directory)
+                put("stem", stem)
+            },
+        )
+        return json.decodeFromJsonElement(result)
+    }
+
+    /** Restores a review Trash record to the dataset folder that produced it. */
+    suspend fun datasetRestore(directory: String, trashId: String): DatasetRestoreResult {
+        val result = call(
+            "dataset_restore",
+            buildJsonObject {
+                put("directory", directory)
+                put("trash_id", trashId)
+            },
+        )
+        return json.decodeFromJsonElement(result)
+    }
+
     suspend fun datasetShuffle(directory: String, seed: Long? = null): DatasetShuffleResult {
         val result = call(
             "dataset_shuffle",

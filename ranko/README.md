@@ -11,6 +11,7 @@ It focuses on the day-to-day maintenance of Stable Diffusion / LoRA training dat
 - Large preview plus a caption (tag) editor; unsaved edits are highlighted with a red border
 - Save or reset the .txt caption file of the current image with one click
 - Left/right and top/bottom pane ratios are adjustable by dragging the dividers
+- Dataset review: one image at a time with keyboard paging, `T` to move the image + caption + mask into a recoverable Trash record, and `R` to restore it; Trashed items stay visible with a badge
 
 ### Dataset statistics (Statistics)
 - Scans the dataset and reports the occurrence count and percentage of every tag as a color-coded bar chart (higher frequency renders redder)

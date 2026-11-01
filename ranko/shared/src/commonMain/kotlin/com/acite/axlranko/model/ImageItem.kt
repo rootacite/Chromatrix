@@ -12,6 +12,10 @@ data class ImageItem(
     val hasAlpha: Boolean = false,
     val width: Int = 0,
     val height: Int = 0,
+    /** Set only for review-mode Trash items; the id `dataset_restore` takes. */
+    val trashId: String? = null,
+    val trashedAt: Long = 0,
+    val trashFileCount: Int = 0,
 ) {
     val hasMask: Boolean
         get() = hasSidecarMask || hasAlpha
@@ -20,4 +24,7 @@ data class ImageItem(
 
     val currentTags: String
         get() = draftTags ?: tags
+
+    val isTrashed: Boolean
+        get() = trashId != null
 }

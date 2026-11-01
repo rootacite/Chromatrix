@@ -23,4 +23,12 @@ data class ImageScreenState(
     val maskPreviewRevision: Int = 0,
     val sourceWidth: Int = 0,
     val sourceHeight: Int = 0,
+    /** Dataset review mode: one image at a time, with recoverable Trash on the same page. */
+    val reviewMode: Boolean = false,
+    val reviewShowTrashed: Boolean = true,
+    val reviewIndex: Int = 0,
+    val trashedItems: List<ImageItem> = emptyList(),
+    val reviewBusy: Boolean = false,
+    val reviewError: String? = null,
+    val reviewStatus: String? = null,
 )

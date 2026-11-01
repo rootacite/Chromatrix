@@ -2155,6 +2155,26 @@ def handle_dataset_drop(params: dict[str, Any]) -> dict[str, Any]:
     return fsrpc.dataset_drop(directory, rate, seed, stems)
 
 
+def handle_dataset_trash_list(params: dict[str, Any]) -> dict[str, Any]:
+    cfg = _train_config_dict()
+    directory = fsrpc.require_dataset_dir(params.get("directory"), cfg)
+    return fsrpc.dataset_trash_list(directory)
+
+
+def handle_dataset_trash(params: dict[str, Any]) -> dict[str, Any]:
+    cfg = _train_config_dict()
+    directory = fsrpc.require_dataset_dir(params.get("directory"), cfg)
+    fsrpc.require_trash_outside_train_data(cfg)
+    stem = fsrpc.require_stem(params.get("stem"))
+    return fsrpc.dataset_trash(directory, stem)
+
+
+def handle_dataset_restore(params: dict[str, Any]) -> dict[str, Any]:
+    cfg = _train_config_dict()
+    directory = fsrpc.require_dataset_dir(params.get("directory"), cfg)
+    return fsrpc.dataset_restore(directory, str(params.get("trash_id") or ""))
+
+
 def handle_dataset_shuffle(params: dict[str, Any]) -> dict[str, Any]:
     cfg = _train_config_dict()
     directory = fsrpc.require_dataset_dir(params.get("directory"), cfg)
@@ -2940,6 +2960,9 @@ _HANDLERS = {
     "dataset_list": handle_dataset_list,
     "caption_write": handle_caption_write,
     "dataset_drop": handle_dataset_drop,
+    "dataset_trash_list": handle_dataset_trash_list,
+    "dataset_trash": handle_dataset_trash,
+    "dataset_restore": handle_dataset_restore,
     "dataset_shuffle": handle_dataset_shuffle,
     "mask_get": handle_mask_get,
     "mask_write": handle_mask_write,

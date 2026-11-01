@@ -39,6 +39,7 @@ Wide windows put a brand card at the top left (logo, Chromatrix, version, commit
 - Right, bottom: caption/tag editor with **Reset** and **Save** — both enabled only while there are unsaved caption edits.
 - The vertical divider (thumbnails ↔ preview) and horizontal divider (preview ↔ editor) are draggable.
 - Saving tags writes the caption text to the image's `.txt` file. Re-entering the tab re-scans the disk without discarding in-progress caption drafts.
+- **Review** turns the tab into a one-image dataset inspection view. **Previous / Next** (or `←` / `→`, `PageUp` / `PageDown`) page through the active images, then the recoverable Trash items; `Trashed shown` controls whether that second section is included. The current Trash item carries a red **TRASHED** badge and **Restore (R)**; an active image offers **Move to Trash (T)**. Either action moves the image (all images sharing its stem), `{stem}.txt` and `{stem}.mask.png` as one group into a per-item record under `AXL_TRASH_DIR`, so no orphan caption is left for Statistics and the next run's recursive image walk no longer sees it. Restore puts the same files back, refuses to overwrite a newly appeared file, and leaves the record recoverable. Both actions signal `DatasetRefreshHub`, so Statistics rescans and Utils re-reads its image counts; the Trash item remains visible in review until it is restored. Trash is refused while the item has an unsaved caption or mask draft or while its image is the one open in the mask editor with unsaved strokes.
 
 ### Statistics — tag analysis & bulk cleanup
 

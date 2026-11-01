@@ -25,7 +25,7 @@ Environment:
 | `AXL_BLOB_WORKERS` | Encode process-pool size. Default `nproc`. `0` encodes in-process. |
 | `AXL_BLOB_CACHE_DIR` | Processed-image cache (default `/tmp/axlranko/blob-cache`). |
 | `AXL_BLOB_CACHE_BYTES` | Cache cap in bytes (default 1/4 of `MemTotal`). |
-| `AXL_TRASH_DIR` | Drop destination (default `/tmp/axlranko/trash`). |
+| `AXL_TRASH_DIR` | Drop and review-Trash destination (default `/tmp/axlranko/trash`). Review Trash records live in one subdirectory per item there; it must stay outside every `[[environment.train_data]]` folder so a trashed image can never re-enter a run. |
 
 Working directory must be the repo root so `config.toml` resolves. Desktop Chromatrix locates `api.py` by walking up from the executable / `user.dir`, then connects to `ws://127.0.0.1:18765` (spawning the helper if nothing is listening). The Java client disables HTTP proxies so `http_proxy` cannot intercept localhost. The wasm UI does not spawn the helper; host/port live in Utils → Helper (`localStorage` + `?host=` / `?port=`).
 
@@ -1151,7 +1151,7 @@ Result:
 
 ### Config, dataset, masks, blobs
 
-After connect Chromatrix does not open trainer files. Paths in these methods are allowlisted (`config.toml`, `<repo>/configs/`, `[[environment.train_data]]` folders, `output_dir`, and — for images only — the `automation/` tree plus the automation `output_dir`).
+After connect Chromatrix does not open trainer files. Paths in these methods are allowlisted (`config.toml`, `<repo>/configs/`, `[[environment.train_data]]` folders, `output_dir`, and — for images only — the `automation/` tree, the automation `output_dir`, and review Trash's item directories).
 
 - `config_get` `{}` → `{path, text}`. `config_save` `{text}` parse-checks then atomic-writes; a text whose `[environment].output_name` is not filename-safe (letters and digits, `-`, `_`, `.`) is refused, because the trainer would refuse to start with it.
 - `profile_list` / `profile_get` `{name}` / `profile_save` `{name, text, overwrite}` / `profile_delete` `{name}`.
@@ -1160,6 +1160,9 @@ After connect Chromatrix does not open trainer files. Paths in these methods are
 - `dataset_counts` `{dirs?, val_split_percent?, seed?, val_data_dir?}` → `{entries: [{path, repeat, images, error}], images, samples, val_images, val_samples}` (plus `val_data_error` when a custom `val_data_dir` could not be counted). Read-only, no GPU; the Utils → Training step estimate's image counts (see the method above).
 - `caption_write` `{directory, stem, text}`.
 - `dataset_drop` `{directory, rate, seed?, stems?}`. Moves image+txt+mask to `/tmp/axlranko/trash`. `stems` limits the pool (the GUI passes the filtered set).
+- `dataset_trash_list` `{directory}` → `{items: [{trash_id, stem, image, txt, mask, width, height, tags, has_sidecar_mask, has_alpha, trashed_at, file_count, source_directory}]}`. Read-only: the recoverable records created from this exact train-data folder, oldest first. The image path is inside Trash and stays servable through `blob_*` for the Images review preview.
+- `dataset_trash` `{directory, stem}` → `{stem, item}`. Moves that stem's image(s), `{stem}.txt` and `{stem}.mask.png` into one Trash record (a per-item directory with a `trash.json` manifest). The group is moved as a unit and rolled back if any move fails, so the folder never keeps an orphan caption and the next run's recursive image walk no longer sees the image. Refused when `AXL_TRASH_DIR` is inside a train-data folder.
+- `dataset_restore` `{directory, trash_id}` → `{stem, item}`. Moves every file of that Trash record back to the folder it came from, sidecars first and the image last. It refuses to overwrite a file that has appeared in the dataset since the move, and the record stays in Trash when it does.
 - `dataset_shuffle` `{directory, seed?}` → `{groups, renamed_files, first_stem, last_stem}`.
 - `mask_get` / `mask_write` / `mask_delete` `{directory, stem, png_base64?}`. Lossless PNG only.
 - `blob_stat` / `blob_batch` `{paths, max_edge, quality?, format?}`. `max_edge` is required (32–4096, contain, never upscale). Default `quality=80`, `format=jpeg`. JPEG/WebP flatten transparency onto black before encoding (dropping the alpha channel would leak leftover RGB in transparent pixels). Result items carry `hash` (SHA-256 of the processed bytes), `width`/`height`, `cache` (`hit`/`miss`), and for `blob_batch` `base64`. A bad path is a per-item `error`, not a failed RPC. Encode fans out across `AXL_BLOB_WORKERS` spawn processes (`trainer/blobcodec.py`, torch-free). Hits live under `/tmp/axlranko/blob-cache/` capped at 1/4 of host RAM. The cache key includes a codec version, so a flatten/resize change does not reuse bytes from an older encoder.

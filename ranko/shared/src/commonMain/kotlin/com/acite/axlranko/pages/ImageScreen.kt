@@ -4,6 +4,7 @@ package com.acite.axlranko.pages
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.horizontalScroll
@@ -14,17 +15,27 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.acite.axlranko.model.ImageItem
@@ -61,14 +72,39 @@ public fun ImagesScreen(
         val portrait = isPortrait(maxWidth, maxHeight)
 
         Column(modifier = Modifier.fillMaxSize()) {
-            DatasetDirBar(
-                labels = uiState.datasetDirs.map { datasetDirLabel(it.path, it.repeat) },
-                selected = uiState.datasetDirIndex,
-                onSelect = viewModel::selectDatasetDir,
-                modifier = Modifier.padding(start = 8.dp, end = 8.dp, top = 6.dp)
-            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 8.dp, end = 8.dp, top = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Box(modifier = Modifier.weight(1f)) {
+                    DatasetDirBar(
+                        labels = uiState.datasetDirs.map { datasetDirLabel(it.path, it.repeat) },
+                        selected = uiState.datasetDirIndex,
+                        onSelect = viewModel::selectDatasetDir,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                CapsuleButton(
+                    text = if (uiState.reviewMode) "Exit review" else "Review",
+                    onClick = {
+                        if (uiState.reviewMode) viewModel.exitReview() else viewModel.enterReview()
+                    },
+                    enabled = uiState.dataDir.isNotEmpty(),
+                    compact = true,
+                    emphasized = uiState.reviewMode,
+                )
+            }
 
-            if (portrait) {
+            if (uiState.reviewMode) {
+                DatasetReviewPane(
+                    uiState = uiState,
+                    viewModel = viewModel,
+                    modifier = Modifier.weight(1f),
+                )
+            } else if (portrait) {
                 BoxWithConstraints(modifier = Modifier.fillMaxWidth().weight(1f)) {
                     val totalHeightPx = constraints.maxHeight.toFloat()
                     Column(modifier = Modifier.fillMaxSize()) {
@@ -139,6 +175,360 @@ public fun ImagesScreen(
                 modifier = Modifier.fillMaxHeight().weight(1f - uiState.leftWeight),
             )
         }
+        }
+    }
+}
+
+@Composable
+private fun DatasetReviewPane(
+    uiState: ImageScreenState,
+    viewModel: ImageScreenViewModel,
+    modifier: Modifier = Modifier,
+) {
+    val colors = rankoColors
+    val items = reviewItems(uiState.imageItems, uiState.trashedItems, uiState.reviewShowTrashed)
+    val index = uiState.reviewIndex.coerceIn(0, items.lastIndex.coerceAtLeast(0))
+    val current = items.getOrNull(index)
+    val focusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+
+    BoxWithConstraints(modifier.fillMaxSize()) {
+        val portrait = isPortrait(maxWidth, maxHeight)
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .focusRequester(focusRequester)
+                .focusable()
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    when (event.key) {
+                        Key.DirectionLeft, Key.PageUp -> {
+                            viewModel.reviewStep(-1)
+                            true
+                        }
+                        Key.DirectionRight, Key.PageDown -> {
+                            viewModel.reviewStep(1)
+                            true
+                        }
+                        Key.T -> {
+                            if (!uiState.reviewBusy) viewModel.trashCurrentReviewItem()
+                            true
+                        }
+                        Key.R -> {
+                            if (!uiState.reviewBusy) viewModel.restoreCurrentReviewItem()
+                            true
+                        }
+                        Key.Escape -> {
+                            viewModel.exitReview()
+                            true
+                        }
+                        else -> false
+                    }
+                },
+        ) {
+            DatasetReviewHeader(
+                uiState = uiState,
+                index = index,
+                itemCount = items.size,
+                viewModel = viewModel,
+            )
+            HorizontalDivider(color = colors.stroke.copy(alpha = 0.55f))
+            if (portrait) {
+                Column(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                    DatasetReviewImage(
+                        item = current,
+                        modifier = Modifier.fillMaxWidth().weight(0.66f),
+                    )
+                    DatasetReviewDetails(
+                        item = current,
+                        busy = uiState.reviewBusy,
+                        viewModel = viewModel,
+                        modifier = Modifier.fillMaxWidth().weight(0.34f),
+                    )
+                }
+            } else {
+                Row(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                    DatasetReviewImage(
+                        item = current,
+                        modifier = Modifier.fillMaxHeight().weight(1f),
+                    )
+                    VerticalDivider(color = colors.stroke.copy(alpha = 0.55f))
+                    DatasetReviewDetails(
+                        item = current,
+                        busy = uiState.reviewBusy,
+                        viewModel = viewModel,
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .widthIn(min = 260.dp, max = 360.dp),
+                    )
+                }
+            }
+            DatasetReviewFooter(uiState = uiState, item = current)
+        }
+    }
+}
+
+@Composable
+private fun DatasetReviewHeader(
+    uiState: ImageScreenState,
+    index: Int,
+    itemCount: Int,
+    viewModel: ImageScreenViewModel,
+) {
+    val colors = rankoColors
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = "Dataset review",
+                color = colors.text,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                text = "${uiState.imageItems.size} active · ${uiState.trashedItems.size} trashed",
+                color = colors.textDim,
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            CapsuleButton(
+                text = "Close",
+                onClick = viewModel::exitReview,
+                compact = true,
+            )
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            CapsuleButton(
+                text = "Previous (←)",
+                onClick = { viewModel.reviewStep(-1) },
+                enabled = itemCount > 0,
+                compact = true,
+            )
+            Text(
+                text = if (itemCount == 0) "0 / 0" else "${index + 1} / $itemCount",
+                color = colors.text,
+                style = MaterialTheme.typography.labelLarge,
+            )
+            CapsuleButton(
+                text = "Next (→)",
+                onClick = { viewModel.reviewStep(1) },
+                enabled = itemCount > 0,
+                compact = true,
+            )
+            CapsuleButton(
+                text = if (uiState.reviewShowTrashed) {
+                    "Trashed shown"
+                } else {
+                    "Trashed hidden"
+                },
+                onClick = viewModel::toggleReviewShowTrashed,
+                compact = true,
+                emphasized = uiState.reviewShowTrashed,
+            )
+        }
+    }
+}
+
+@Composable
+private fun DatasetReviewImage(
+    item: ImageItem?,
+    modifier: Modifier = Modifier,
+) {
+    val colors = rankoColors
+    Box(
+        modifier = modifier
+            .background(Color.Black.copy(alpha = 0.72f))
+            .padding(8.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (item == null) {
+            Text(
+                text = "No images to review",
+                color = colors.textDim,
+                style = MaterialTheme.typography.titleMedium,
+            )
+        } else {
+            AsyncImage(
+                model = BlobRef(
+                    item.imagePath,
+                    maxEdge = maxOf(item.width, item.height, 512).coerceIn(256, 2048),
+                    quality = LocalThumbnailQuality.current,
+                ),
+                contentDescription = item.stem,
+                contentScale = ContentScale.Fit,
+                filterQuality = FilterQuality.High,
+                modifier = Modifier.fillMaxSize(),
+            )
+            if (item.isTrashed) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .clip(rankoTokens.capsule)
+                        .background(colors.qualityRed)
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                ) {
+                    Text(
+                        text = "TRASHED",
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DatasetReviewDetails(
+    item: ImageItem?,
+    busy: Boolean,
+    viewModel: ImageScreenViewModel,
+    modifier: Modifier = Modifier,
+) {
+    val colors = rankoColors
+    Column(
+        modifier = modifier
+            .verticalScroll(rememberScrollState())
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(
+            text = item?.stem ?: "—",
+            color = colors.text,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (item?.isTrashed == true) ReviewBadge("Trashed", colors.qualityRed)
+            if (item?.hasMask == true) ReviewBadge("Mask", colors.accentPink)
+            if (item != null) {
+                Text(
+                    text = "${item.width} × ${item.height}",
+                    color = colors.textDim,
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
+        }
+        if (item?.isTrashed == true) {
+            Text(
+                text = "${item.trashFileCount} files are kept together in Trash. " +
+                    "Restore puts the whole group back.",
+                color = colors.textDim,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        HorizontalDivider(color = colors.stroke.copy(alpha = 0.35f))
+        Text(
+            text = "Tags",
+            color = colors.textDim,
+            style = MaterialTheme.typography.labelSmall,
+        )
+        Text(
+            text = item?.currentTags?.ifBlank { "(no caption)" } ?: "—",
+            color = colors.text,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        if (item != null) {
+            if (item.isTrashed) {
+                CapsuleButton(
+                    text = "Restore (R)",
+                    onClick = viewModel::restoreCurrentReviewItem,
+                    enabled = !busy && item.trashId != null,
+                    compact = true,
+                    emphasized = true,
+                )
+            } else {
+                CapsuleButton(
+                    text = "Move to Trash (T)",
+                    onClick = viewModel::trashCurrentReviewItem,
+                    enabled = !busy,
+                    compact = true,
+                    danger = true,
+                )
+                Text(
+                    text = "The next run will not use this image while it is in Trash.",
+                    color = colors.textDim,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReviewBadge(text: String, color: Color) {
+    Box(
+        modifier = Modifier
+            .clip(rankoTokens.capsule)
+            .background(color.copy(alpha = 0.22f))
+            .border(1.dp, color.copy(alpha = 0.55f), rankoTokens.capsule)
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+    ) {
+        Text(
+            text = text,
+            color = color,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
+}
+
+@Composable
+private fun DatasetReviewFooter(uiState: ImageScreenState, item: ImageItem?) {
+    val colors = rankoColors
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            text = uiState.reviewError
+                ?: uiState.reviewStatus
+                ?: "← / → page · T move to Trash · R restore · Esc close",
+            color = if (uiState.reviewError != null) colors.qualityRed else colors.textDim,
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        if (uiState.reviewBusy) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(16.dp),
+                strokeWidth = 2.dp,
+                color = colors.accentPink,
+            )
+        } else {
+            Text(
+                text = when {
+                    item == null -> "No selection"
+                    item.isTrashed -> "Trashed"
+                    else -> "Active"
+                },
+                color = if (item?.isTrashed == true) colors.qualityRed else colors.textDim,
+                style = MaterialTheme.typography.labelSmall,
+            )
         }
     }
 }

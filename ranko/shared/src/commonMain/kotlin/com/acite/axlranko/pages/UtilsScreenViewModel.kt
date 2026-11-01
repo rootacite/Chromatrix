@@ -86,6 +86,11 @@ class UtilsScreenViewModel(
                 _uiState.update { it.copy(datasetDirIndex = index) }
             }
         }
+        viewModelScope.launch {
+            // Images' review Trash and every other dataset edit change the folders the step
+            // estimate counts, so the count is dropped and re-read while the estimate is on screen.
+            refreshHub.events.collect { invalidateStepEstimate() }
+        }
     }
 
     fun updateHelperHost(value: String) {

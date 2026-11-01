@@ -67,6 +67,40 @@ data class DatasetDropResult(
 )
 
 @Serializable
+data class TrashedDatasetRecord(
+    @SerialName("trash_id") val trashId: String,
+    val stem: String,
+    val image: String,
+    val txt: String = "",
+    val mask: String = "",
+    val width: Int = 0,
+    val height: Int = 0,
+    val tags: List<String> = emptyList(),
+    @SerialName("has_sidecar_mask") val hasSidecarMask: Boolean = false,
+    @SerialName("has_alpha") val hasAlpha: Boolean = false,
+    @SerialName("trashed_at") val trashedAt: Long = 0,
+    @SerialName("file_count") val fileCount: Int = 0,
+    @SerialName("source_directory") val sourceDirectory: String = "",
+)
+
+@Serializable
+data class DatasetTrashListResult(
+    val items: List<TrashedDatasetRecord> = emptyList(),
+)
+
+@Serializable
+data class DatasetTrashResult(
+    val stem: String = "",
+    val item: TrashedDatasetRecord? = null,
+)
+
+@Serializable
+data class DatasetRestoreResult(
+    val stem: String = "",
+    val item: DatasetRecord? = null,
+)
+
+@Serializable
 data class DatasetShuffleResult(
     val groups: Int = 0,
     @SerialName("renamed_files") val renamedFiles: Int = 0,
