@@ -33,6 +33,7 @@ class RealMatrixPromptTest {
         assertTrue(matrix.clothing.size >= 20)
         assertTrue(matrix.scenes.size >= 10)
         assertTrue(matrix.suffixes.isNotEmpty())
+        assertTrue(matrix.suffixes.none { it.blob.contains("neon") }, "neon suffix still in the matrix")
         assertTrue(matrix.sfwPoses.size >= 10)
         assertTrue(matrix.questionablePoses.size >= 100, "questionable: ${matrix.questionablePoses.size}")
         assertTrue(matrix.figure.size >= 5, "figure: ${matrix.figure.size}")
@@ -346,6 +347,38 @@ class RealMatrixPromptTest {
             }
         }
     }
+    @Test
+    fun leaningBackCowgirlKeepsTheVulvaOnAnalFingering() {
+        val rows = matrix.poses.filter { it.blob.contains("leaning back") }
+        assertEquals(2, rows.size, rows.map { it.blob }.toString())
+        rows.forEach { pose ->
+            assertEquals(PromptChannel.Anal, pose.channel, pose.blob)
+            assertTrue(PromptGenerator.showsVulva(pose), pose.blob)
+        }
+        val lines = PromptGenerator.generate(
+            PromptSpec(
+                mode = PromptMode.Sex,
+                exposure = listOf("open"),
+                poseAny = false,
+                poseKeys = setOf(rows.first().key),
+                stageWeights = defaultStageWeights() + mapOf(
+                    SexStage.During to 0.0,
+                    SexStage.Fingering to 1.0,
+                ),
+                count = 6,
+            ),
+            matrix,
+            21,
+        )
+        lines.forEach { line ->
+            val tags = splitTags(line).toSet()
+            assertTrue(tags.contains("leaning back"), line)
+            assertTrue(tags.contains("anal fingering"), line)
+            assertTrue(tags.contains("pussy"), line)
+            assertTrue(tags.contains(ANUS_TAG), line)
+        }
+    }
+
     @Test
     fun onlyTheFoldedPosesCountAsHoldingTheirLegs() {
         // What a `fingering` stage has no arm for: the poses that fold or pin the legs. The check is

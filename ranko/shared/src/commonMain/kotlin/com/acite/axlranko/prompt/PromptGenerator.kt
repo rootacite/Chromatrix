@@ -329,20 +329,35 @@ object PromptGenerator {
     fun poseAllowsHole(pose: MatrixEntry): Boolean =
         pose.channel == PromptChannel.Both || (pose.channel != null && pose.channel in HOLE_CHANNELS)
 
+    /**
+     * The vulva is in the frame, whatever hole the act uses. The channel names the act; this names
+     * the organ the pose leaves on camera.
+     *
+     * Spread or lifted legs open it toward the lens. Supine (`on back`) puts the front of the
+     * pelvis up, so a front or overhead missionary shows it during anal too. A girl-on-top pose
+     * does the same unless the shot is `from behind` or `from side`: leaning-back cowgirl is anal
+     * only, and the open hip still puts the vulva in front of the anus.
+     */
+    fun showsVulva(pose: MatrixEntry): Boolean {
+        val blob = pose.blob
+        if (containsMarker(blob, SPREAD_MARKERS)) return true
+        if (containsMarker(blob, listOf("on back"))) return true
+        return containsMarker(blob, TOP_MARKERS) &&
+            !containsMarker(blob, listOf("from behind", "from side"))
+    }
+
     fun anatomyTags(pose: MatrixEntry, channel: PromptChannel, includePenis: Boolean = true): List<String> {
         val blob = pose.blob
         val out = mutableListOf<String>()
         if (includePenis) out.add(PENIS_TAG)
         if (channel == PromptChannel.Vaginal) out.add("pussy")
         else if (channel == PromptChannel.Anal) out.add(ANUS_TAG)
+        if (showsVulva(pose) && "pussy" !in out) out.add("pussy")
         if (containsMarker(blob, ASS_MARKERS) && "ass" !in out) out.add("ass")
-        if (containsMarker(blob, SPREAD_MARKERS)) {
-            if ("pussy" !in out) out.add("pussy")
-            if (channel == PromptChannel.Anal && "ass" !in out) out.add("ass")
-        }
-        if (containsMarker(blob, TOP_MARKERS)) {
-            if (channel == PromptChannel.Vaginal && "pussy" !in out) out.add("pussy")
-            if (channel == PromptChannel.Anal && "ass" !in out) out.add("ass")
+        if (channel == PromptChannel.Anal && "ass" !in out &&
+            (containsMarker(blob, SPREAD_MARKERS) || containsMarker(blob, TOP_MARKERS))
+        ) {
+            out.add("ass")
         }
         return out
     }
@@ -639,8 +654,9 @@ object PromptGenerator {
             }
             extra.addAll(anatomyTags(pose, hole, includePenis = resolvedStage in STAGES_WITH_PARTNER))
             // The pussy shape and hair words describe an organ the line has to be showing, so they
-            // ride a draw that already says `pussy` — the vaginal channel, or a spread pose. An anal
-            // draw names `anus` instead and gets none of them. SEX only, like their wizard pages.
+            // ride a draw that already says `pussy`: the vaginal channel, or a pose [showsVulva]
+            // (spread, supine, front-facing girl on top — an anal act included). A from-behind anal
+            // draw names `anus` and gets none of them. SEX only, like their wizard pages.
             if (spec.mode == PromptMode.Sex && extra.contains("pussy")) {
                 extra.addAll(spec.pussyShape)
                 extra.addAll(spec.pussyHair)

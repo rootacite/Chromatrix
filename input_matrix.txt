@@ -400,8 +400,6 @@ depth of field, bokeh
 # 背景虚化，特写时把杂乱场景藏掉
 blue sky, sunlight
 # 晴天硬光，室外用
-neon lights, night
-# 夜晚霓虹，街道向
 overcast, soft lighting
 # 阴天漫射光，对比度低、比较柔
 

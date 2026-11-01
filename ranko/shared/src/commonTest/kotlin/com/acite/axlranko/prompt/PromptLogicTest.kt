@@ -617,6 +617,80 @@ class ChannelAndAnatomyTest {
     }
 
     @Test
+    fun anAnalActOnAFrontFacingPoseStillNamesTheVulva() {
+        // Leaning-back cowgirl is anal only. The hip opens toward the camera, so the vulva sits in
+        // front of the anus and `anal fingering` does not cover it.
+        val lean = MatrixEntry(
+            listOf("cowgirl position", "girl on top", "sitting", "straddling", "leaning back"),
+            channel = PromptChannel.Anal,
+        )
+        assertTrue(PromptGenerator.showsVulva(lean))
+        val anatomy = PromptGenerator.anatomyTags(lean, PromptChannel.Anal, includePenis = false)
+        assertTrue(anatomy.contains("pussy"), anatomy.toString())
+        assertTrue(anatomy.contains(ANUS_TAG), anatomy.toString())
+        assertTrue(anatomy.contains("ass"), anatomy.toString())
+        assertFalse(anatomy.contains("penis"), anatomy.toString())
+
+        val supine = MatrixEntry(
+            listOf("missionary", "on back", "from above"),
+            channel = PromptChannel.Both,
+        )
+        assertTrue(PromptGenerator.showsVulva(supine))
+        val supineTags = PromptGenerator.anatomyTags(supine, PromptChannel.Anal, includePenis = false)
+        assertTrue(supineTags.contains("pussy"), supineTags.toString())
+        assertTrue(supineTags.contains(ANUS_TAG), supineTags.toString())
+        assertFalse(supineTags.contains("ass"), supineTags.toString())
+
+        val spec = testSpec(
+            mode = PromptMode.Sex,
+            exposure = listOf("open"),
+            pussyShape = listOf("labia", "long labia"),
+            pussyHair = listOf("shaved pussy"),
+        )
+        val line = PromptGenerator.assemble(
+            spec,
+            lean,
+            MatrixEntry(listOf("sweater", "miniskirt", "black thighhighs"), openClothes = true),
+            true,
+            MatrixEntry(listOf("living room", "indoors", "sofa")),
+            MatrixEntry(listOf("morning", "sunlight")),
+            PromptChannel.Anal,
+            stage = SexStage.Fingering,
+        )
+        val tags = tagsOf(line)
+        assertTrue(tags.contains("anal fingering"), line)
+        assertTrue(tags.contains("pussy"), line)
+        assertTrue(tags.contains("labia"), line)
+        assertTrue(tags.contains("shaved pussy"), line)
+        assertTrue(tags.contains(ANUS_TAG), line)
+        assertTrue(tags.contains("solo"), line)
+        assertFalse(tags.contains("penis"), line)
+    }
+
+    @Test
+    fun aFromBehindAnalPoseDoesNotAddTheVulva() {
+        val dog = MatrixEntry(
+            listOf("doggystyle", "all fours", "from behind"),
+            channel = PromptChannel.Both,
+        )
+        val nelson = MatrixEntry(
+            listOf("full nelson", "looking at viewer"),
+            channel = PromptChannel.Anal,
+        )
+        val side = MatrixEntry(
+            listOf("upright straddle", "sitting on lap", "girl on top", "from side"),
+            channel = PromptChannel.Both,
+        )
+        listOf(dog, nelson, side).forEach { pose ->
+            assertFalse(PromptGenerator.showsVulva(pose), pose.blob)
+            assertFalse(
+                PromptGenerator.anatomyTags(pose, PromptChannel.Anal, includePenis = false).contains("pussy"),
+                pose.blob,
+            )
+        }
+    }
+
+    @Test
     fun anActWordDropsTheBodyPart() {
         // A line that says what is *in* the anus does not also point at it.
         val during = tagsOf(assembleLine(SexStage.During, PromptChannel.Anal))
@@ -722,8 +796,9 @@ class SinglePickGroupTest {
 
     @Test
     fun aShapeWordRidesOnlyAPussyDraw() {
-        // The vaginal channel writes `pussy`; an anal draw writes `anus` instead (unless the pose
-        // spreads, which puts `pussy` back). The word follows that, nothing else.
+        // The vaginal channel writes `pussy`. An anal draw writes it too when the pose leaves the
+        // vulva in frame (spread, supine, front-facing girl on top) and writes `anus` alone when
+        // it does not. The shape word follows `pussy`, nothing else.
         val spec = testSpec(
             mode = PromptMode.Sex,
             exposure = listOf("open"),
