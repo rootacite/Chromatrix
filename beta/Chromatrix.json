@@ -5,10 +5,10 @@
         "224",
         0
       ],
-      "steps": 45,
-      "cfg": 6,
+      "steps": 50,
+      "cfg": 5.2,
       "sampler_name": "dpmpp_2s_ancestral",
-      "scheduler": "sgm_uniform",
+      "scheduler": "normal",
       "denoise": 1,
       "model": [
         "207:208",
@@ -62,7 +62,7 @@
   },
   "215": {
     "inputs": {
-      "text": "yui_character, 1girl, large breasts, hair ornament, solo, bottomless, shy, open eyes, blush, from above, sitting, cleavage, looking at viewer, bedroom, indoors, bed, night, warm light, best quality, newest, highres",
+      "text": "aki_character, 1girl, large breasts, hair ornament, solo, shy, open eyes, blush, from above, sitting, cleavage, looking at viewer, bedroom, indoors, bed, night, warm light, best quality, newest, highres",
       "clip": [
         "207:219",
         1
@@ -115,7 +115,7 @@
   },
   "224": {
     "inputs": {
-      "seed": 530575833171005
+      "seed": 1059822493852672
     },
     "class_type": "SeedNode",
     "_meta": {
@@ -124,7 +124,7 @@
   },
   "227": {
     "inputs": {
-      "string_a": "Kano_",
+      "string_a": "CM_",
       "string_b": [
         "228",
         0
@@ -151,9 +151,9 @@
   },
   "207:219": {
     "inputs": {
-      "lora_name": "Yui_s002850.safetensors",
-      "strength_model": 1,
-      "strength_clip": 1,
+      "lora_name": "Aki.safetensors",
+      "strength_model": 0.95,
+      "strength_clip": 0.95,
       "model": [
         "207:266",
         0
@@ -183,7 +183,7 @@
   },
   "207:266": {
     "inputs": {
-      "ckpt_name": "illustriousXLV20_v20Stable.safetensors"
+      "ckpt_name": "waiIllustriousSDXL_v170.safetensors"
     },
     "class_type": "CheckpointLoaderSimple",
     "_meta": {
@@ -202,11 +202,11 @@
   "198:196": {
     "inputs": {
       "upscale_by": 2,
-      "seed": 365028658736753,
+      "seed": 583852015191314,
       "steps": 18,
-      "cfg": 6,
+      "cfg": 5.2,
       "sampler_name": "euler_ancestral",
-      "scheduler": "karras",
+      "scheduler": "normal",
       "denoise": 0.32,
       "mode_type": "Chess",
       "tile_width": 768,
@@ -310,11 +310,11 @@
       "guide_size": 384,
       "guide_size_for": true,
       "max_size": 512,
-      "seed": 159791613905363,
+      "seed": 724850542374675,
       "steps": 28,
-      "cfg": 6,
+      "cfg": 5.2,
       "sampler_name": "euler_ancestral",
-      "scheduler": "karras",
+      "scheduler": "normal",
       "denoise": 0.4,
       "feather": 10,
       "noise_mask": true,
@@ -371,7 +371,7 @@
   },
   "198:259": {
     "inputs": {
-      "text": "(yui_character:1.1), best quality, anime illustration, detailed skin, detailed fabric, newest, highres",
+      "text": "best quality, anime illustration, detailed skin, detailed fabric, newest, highres",
       "clip": [
         "207:219",
         1

@@ -1,12 +1,12 @@
 [environment]
-pretrained_model_name_or_path = "/opt/models/checkpoints/illustriousXLV20_v20Stable.safetensors"
+pretrained_model_name_or_path = "/opt/models/checkpoints/waiIllustriousSDXL_v170.safetensors"
 
 output_dir = "/home/acite/LLM/axltrainer/outputs"
 logging_dir = "/home/acite/LLM/axltrainer/logs"
 
 # Alternatives:
-train_data_dir = "/home/acite/LLM/Character/Alice/cg"
-output_name = "Alice"
+train_data_dir = "/home/acite/LLM/Character/Aki/"
+output_name = "Aki"
 # Datasets trained together: one `[[environment.train_data]]` block per folder, `repeat` = how often
 # that folder's images are drawn inside a single epoch (1..512; 3 against 1 trains it three times as
 # often per epoch). With no block at all the list is empty and the `train_data_dir` line above is
@@ -54,11 +54,7 @@ amdfq_pool_mib = 0
 # output_name = "miyako"
 
 [[environment.train_data]]
-path = "/home/acite/LLM/Character/Alice/cg"
-repeat = 2
-
-[[environment.train_data]]
-path = "/home/acite/LLM/Character/Alice/st"
+path = "/home/acite/LLM/Character/Aki/"
 repeat = 1
 
 [model_spec]
@@ -74,9 +70,9 @@ mixed_precision = "bf16"
 train_batch_size = 3
 gradient_accumulation_steps = 1
 learning_rate = 1.0
-epoch = 20
+epoch = 72
 save_every_n_epochs = 1
-save_every_n_steps = 50
+save_every_n_steps = 25
 # Render the `[[validation.samples]]` images every time a checkpoint is written. false = save
 # checkpoints only, no samples (much cheaper per save point; a checkpoint can be sampled later
 # from the Dashboard, one shot per checkpoint). Both this switch and the cadence above can be
@@ -92,7 +88,7 @@ sampling_enabled = false
 # three. A pass is extra forward-only work, so the interval and the count are the cost knobs: 8
 # samples every 5 steps costs about +16 % per step, and putting the interval at 1 multiplies the
 # pass cost by five (the measured numbers are in doc/configuration.md).
-val_split_percent = 0.0
+val_split_percent = 8.0
 val_sample_count = 8
 val_interval = 5
 # Optional separate validation directory. Empty = off, and `val_split_percent` above decides. A
@@ -100,7 +96,7 @@ val_interval = 5
 # both validation passes are drawn from this directory instead (recursively, with the same caption
 # and mask rules). `val_sample_count` and `val_interval` still apply. Ranko Utils → Training has
 # the switch and the picker.
-val_data_dir = "/home/acite/LLM/Character/Ren/val"
+val_data_dir = ""
 # Optional: kohya LoRA .safetensors (or its checkpoint directory) to load before
 # training starts. Weights only: step/epoch counting still starts at 0, and this
 # run writes into its own timestamped run directory.
@@ -108,11 +104,11 @@ resume_lora_path = ""
 
 [network]
 network_type = "locon"
-network_dim = 48
-network_alpha = 24
-network_dropout = 0.18
-conv_dim = 24
-conv_alpha = 12
+network_dim = 36
+network_alpha = 18
+network_dropout = 0.1
+conv_dim = 18
+conv_alpha = 9
 clip_skip = 1
 max_token_length = 225
 
@@ -141,7 +137,7 @@ noise_offset = 0.05
 flush_memory_every_step = false
 
 [unet_optimizer]
-unet_learning_rate = 1.0E-4
+unet_learning_rate = 0.00005
 unet_weight_decay = 0.01
 unet_betas_1 = 0.9
 unet_betas_2 = 0.99
@@ -149,7 +145,7 @@ unet_warmup_steps = 150
 unet_max_grad_norm = 1.0
 
 [te_optimizer]
-te_learning_rate = 1.0E-5
+te_learning_rate = 0.000005
 te_weight_decay = 0.01
 te_betas_1 = 0.9
 te_betas_2 = 0.99
@@ -164,8 +160,8 @@ max_data_loader_n_workers = 20
 persistent_workers = true
 
 [validation]
-sample_prompts = "ren_character, 1girl, hair ribbon, 1boy, hetero, white sundress, black thighhighs, open clothes, large breasts, breasts out, nipples, cowgirl position, girl on top, sitting, leaning back, (anal:1.2), pussy, penis, anus, open eyes, blush, orgasm, bedroom, indoors, on bed, sheets, newest, best quality, highres"
-sample_negative = "worst quality, low quality, normal quality, deformed, bad anatomy, out of frame, logo, watermark, censorship, internal, gore, guro, horror, non-human, monster, alien, zombie, fused fingers, distorted anatomy, bad composition, lowres, bad quality, dead eyes, jpeg artifacts, old, early"
+sample_prompts = "aki_character, 1girl, hair ornament, large breasts, solo, serafuku, black thighhighs, cleavage, shy, open eyes, blush, standing, holding umbrella, looking at viewer, lighthouse, outdoors, ocean, soft lighting, warm light, best quality, newest, highres"
+sample_negative = "worst quality, low quality, normal quality, deformed, bad anatomy, out of frame, logo, watermark, censorship, internal, gore, guro, horror, non-human, monster, alien, zombie, fused fingers, distorted anatomy, bad composition, lowres, bad quality, dead eyes, jpeg artifacts, old, early,"
 sample_width = 1152
 sample_height = 768
 sample_steps = 35
@@ -175,9 +171,9 @@ guidance_scale = 6.0
 guidance_rescale = 0.6
 
 [[validation.samples]]
-name = "cowgirl_anal"
-prompt = "ren_character, 1girl, hair ribbon, 1boy, hetero, white sundress, black thighhighs, open clothes, large breasts, breasts out, nipples, cowgirl position, girl on top, sitting, leaning back, (anal:1.2), pussy, penis, anus, open eyes, blush, orgasm, bedroom, indoors, on bed, sheets, newest, best quality, highres"
-negative = "worst quality, low quality, normal quality, deformed, bad anatomy, out of frame, logo, watermark, censorship, internal, gore, guro, horror, non-human, monster, alien, zombie, fused fingers, distorted anatomy, bad composition, lowres, bad quality, dead eyes, jpeg artifacts, old, early"
+name = "us"
+prompt = "aki_character, 1girl, hair ornament, large breasts, solo, serafuku, black thighhighs, cleavage, shy, open eyes, blush, standing, holding umbrella, looking at viewer, lighthouse, outdoors, ocean, soft lighting, warm light, best quality, newest, highres"
+negative = "worst quality, low quality, normal quality, deformed, bad anatomy, out of frame, logo, watermark, censorship, internal, gore, guro, horror, non-human, monster, alien, zombie, fused fingers, distorted anatomy, bad composition, lowres, bad quality, dead eyes, jpeg artifacts, old, early,"
 width = 1152
 height = 768
 steps = 35
@@ -188,7 +184,7 @@ repeat = 1
 
 [[validation.samples]]
 name = "doggystyle_anal"
-prompt = "ren_character, 1girl, hair ribbon, 1boy, hetero, nightgown, hair ornament, bare legs, open clothes, large breasts, breasts out, nipples, doggystyle, sex from behind, top-down bottom-up, (anal:1.2), pussy, penis, anus, ass, looking back, looking at viewer, open eyes, living room, indoors, sofa, newest, best quality, highres"
+prompt = "aki_character, 1girl, hair ornament, 1boy, hetero, nightgown, hair ornament, bare legs, open clothes, large breasts, breasts out, nipples, doggystyle, sex from behind, top-down bottom-up, (anal:1.2), pussy, penis, anus, ass, looking back, looking at viewer, open eyes, living room, indoors, sofa, newest, best quality, highres"
 negative = "worst quality, low quality, normal quality, deformed, bad anatomy, out of frame, logo, watermark, censorship, internal, gore, guro, horror, non-human, monster, alien, zombie, fused fingers, distorted anatomy, bad composition, lowres, bad quality, dead eyes, jpeg artifacts, old, early"
 width = 1152
 height = 768
@@ -200,7 +196,7 @@ repeat = 1
 
 [[validation.samples]]
 name = "mating_press_anal"
-prompt = "ren_character, 1girl, hair ribbon, 1boy, hetero, white sundress, open clothes, white thighhighs, large breasts, breasts out, nipple, mating press, legs up, folded, knees to chest, looking at viewer, (from above:1.2), shy, blush, open eyes, penis, (anal:1.2), pussy, indoors, bedroom, bed, newest, best quality, highres"
+prompt = "aki_character, 1girl, hair ornament, 1boy, hetero, white sundress, open clothes, white thighhighs, large breasts, breasts out, nipple, mating press, legs up, folded, knees to chest, looking at viewer, (from above:1.2), shy, blush, open eyes, penis, (anal:1.2), pussy, indoors, bedroom, bed, newest, best quality, highres"
 negative = "worst quality, low quality, normal quality, deformed, bad anatomy, out of frame, logo, watermark, censorship, internal, gore, guro, horror, non-human, monster, alien, zombie, fused fingers, distorted anatomy, bad composition, lowres, bad quality, dead eyes, jpeg artifacts, old, early"
 width = 1152
 height = 768
@@ -212,7 +208,7 @@ repeat = 1
 
 [[validation.samples]]
 name = "nursing_handjob"
-prompt = "ren_character, 1girl, hair ribbon, 1boy, hetero, large breasts, school uniform, white shirt, pleated skirt, white thighhighs, open clothes, breasts out, shy, looking at viewer, open eyes, closed mouth, blush, nursing handjob, penis, classroom, indoors, desk, newest, best quality, highres"
+prompt = "aki_character, 1girl, hair ornament, 1boy, hetero, large breasts, school uniform, white shirt, pleated skirt, white thighhighs, open clothes, breasts out, shy, looking at viewer, open eyes, closed mouth, blush, nursing handjob, penis, classroom, indoors, desk, newest, best quality, highres"
 negative = "worst quality, low quality, normal quality, deformed, bad anatomy, out of frame, logo, watermark, censorship, internal, gore, guro, horror, non-human, monster, alien, zombie, fused fingers, distorted anatomy, bad composition, lowres, bad quality, dead eyes, jpeg artifacts, old, early"
 width = 1152
 height = 768
@@ -223,9 +219,21 @@ seed = 0
 repeat = 1
 
 [[validation.samples]]
-name = "anal_fingering"
-prompt = "ren_character, 1girl, large breasts, hair ribbon, solo, white sundress, white thighhighs, open clothes, breasts, breasts out, nipples, shy, open eyes, heavy breathing, blush, spooning, lying, on side, looking at viewer, anus, ass, anal fingering, pussy, living room, indoors, sofa, sunlight through window, best quality, newest, highres"
+name = "gr"
+prompt = "aki_character, 1girl, hair ornament, large breasts, solo, hoodie, pleated skirt, white thighhighs, cleavage, shy, open eyes, blush, reaching out, sitting, looking at viewer, garden, outdoors, flowers, sunlight, morning, best quality, newest, highres"
 negative = "worst quality, low quality, normal quality, deformed, bad anatomy, out of frame, logo, watermark, censorship, internal, gore, guro, horror, non-human, monster, alien, zombie, fused fingers, distorted anatomy, bad composition, lowres, bad quality, dead eyes, jpeg artifacts, old, early"
+width = 1152
+height = 768
+steps = 35
+guidance_scale = 6.0
+guidance_rescale = 0.6
+seed = 0
+repeat = 1
+
+[[validation.samples]]
+name = "cowgirl"
+prompt = "aki_character, 1girl, 1boy, hetero, serafuku, black thighhighs, open clothes, large breasts, breasts, breasts out, nipples, navel, cowgirl position, girl on top, sitting, straddling, leaning back, (anal:1.2), pussy, penis, open eyes, bedroom, indoors, on bed, sheets, newest, best quality, highres"
+negative = "worst quality, low quality, normal quality, deformed, bad anatomy, out of frame, logo, watermark, censorship, internal, gore, guro, horror, non-human, monster, alien, zombie, fused fingers, distorted anatomy, bad composition, lowres, bad quality, dead eyes, jpeg artifacts, old, early,"
 width = 1152
 height = 768
 steps = 35
