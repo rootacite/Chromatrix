@@ -587,6 +587,14 @@ class AutomationScreenViewModel(
         )
     }
 
+    fun setUniversalCfg(value: String) = updateSettings { it.copy(universalCfg = value) }
+
+    fun setUniversalWidth(value: String) = updateSettings { it.copy(universalWidth = value) }
+
+    fun setUniversalHeight(value: String) = updateSettings { it.copy(universalHeight = value) }
+
+    fun setUniversalStep(value: String) = updateSettings { it.copy(universalStep = value) }
+
     /** Lists `.safetensors` under `models/loras` of the ComfyUI process for the current server. */
     fun refreshLoras() {
         val server = _uiState.value.settings.server.trim()
@@ -1028,6 +1036,10 @@ class AutomationScreenViewModel(
         if (settings.universalCheckpoint.isNotBlank()) put("checkpoint_name", settings.universalCheckpoint)
         put("trigger", settings.universalTrigger)
         put("lora_strength", settings.universalLoraStrength)
+        settings.universalCfg?.let { put("cfg", it) }
+        settings.universalWidth?.let { put("width", it) }
+        settings.universalHeight?.let { put("height", it) }
+        settings.universalStep?.let { put("step", it) }
         put("count", settings.count)
         put("poll", settings.poll)
         if (settings.outputDir.isNotBlank()) put("output_dir", settings.outputDir)

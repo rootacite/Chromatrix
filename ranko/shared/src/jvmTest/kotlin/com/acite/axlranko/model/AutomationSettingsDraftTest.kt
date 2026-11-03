@@ -34,4 +34,40 @@ class AutomationSettingsDraftTest {
         assertEquals(2.0, AutomationSettingsDraft(universalLoraStrength = 5f).toSettings().universalLoraStrength)
         assertEquals(0.0, AutomationSettingsDraft(universalLoraStrength = -1f).toSettings().universalLoraStrength)
     }
+
+    @Test
+    fun universalGenerationParametersRoundTrip() {
+        val saved = AutomationSettings(
+            universalCfg = 6.0,
+            universalWidth = 1152,
+            universalHeight = 768,
+            universalStep = 58,
+        )
+        val draft = AutomationSettingsDraft.of(saved)
+        assertEquals("6", draft.universalCfg)
+        assertEquals("1152", draft.universalWidth)
+        assertEquals("768", draft.universalHeight)
+        assertEquals("58", draft.universalStep)
+
+        val converted = draft.toSettings()
+        assertEquals(6.0, converted.universalCfg)
+        assertEquals(1152, converted.universalWidth)
+        assertEquals(768, converted.universalHeight)
+        assertEquals(58, converted.universalStep)
+    }
+
+    @Test
+    fun universalGenerationParametersEmptyByDefault() {
+        val draft = AutomationSettingsDraft()
+        assertEquals("", draft.universalCfg)
+        assertEquals("", draft.universalWidth)
+        assertEquals("", draft.universalHeight)
+        assertEquals("", draft.universalStep)
+
+        val converted = draft.toSettings()
+        assertEquals(null, converted.universalCfg)
+        assertEquals(null, converted.universalWidth)
+        assertEquals(null, converted.universalHeight)
+        assertEquals(null, converted.universalStep)
+    }
 }

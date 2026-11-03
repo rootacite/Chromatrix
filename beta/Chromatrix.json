@@ -5,8 +5,8 @@
         "224",
         0
       ],
-      "steps": 50,
-      "cfg": 5.2,
+      "steps": 58,
+      "cfg": 6,
       "sampler_name": "dpmpp_2s_ancestral",
       "scheduler": "normal",
       "denoise": 1,
@@ -104,7 +104,7 @@
         0
       ],
       "images": [
-        "198:197:86",
+        "198:196",
         0
       ]
     },
@@ -204,7 +204,7 @@
       "upscale_by": 2,
       "seed": 583852015191314,
       "steps": 18,
-      "cfg": 5.2,
+      "cfg": 6,
       "sampler_name": "euler_ancestral",
       "scheduler": "normal",
       "denoise": 0.32,
@@ -312,7 +312,7 @@
       "max_size": 512,
       "seed": 724850542374675,
       "steps": 28,
-      "cfg": 5.2,
+      "cfg": 6,
       "sampler_name": "euler_ancestral",
       "scheduler": "normal",
       "denoise": 0.4,
@@ -371,7 +371,7 @@
   },
   "198:259": {
     "inputs": {
-      "text": "best quality, anime illustration, detailed skin, detailed fabric, newest, highres",
+      "text": "aki_character, best quality, anime illustration, detailed skin, detailed fabric, newest, highres",
       "clip": [
         "207:219",
         1

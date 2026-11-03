@@ -247,6 +247,17 @@ private val UI_TEXT: Map<String, Pair<String, String>> = mapOf(
         "只改任务记录里的文本：已经出图的 .txt 边车保持当时真正发出去的原文，下次重新生成用新文本。" to
             "Only the job record changes: the .txt beside an existing image keeps what was actually sent, and the next regeneration uses the new text."
         ),
+    "task_params" to ("任务参数" to "Task parameters"),
+    "step" to ("步数" to "Step"),
+    "cfg" to ("CFG" to "CFG"),
+    "width" to ("宽度" to "Width"),
+    "height" to ("高度" to "Height"),
+    "resolution" to ("分辨率" to "Resolution"),
+    "universal_params_title" to ("生成参数覆写" to "Parameter overrides"),
+    "universal_params_hint" to (
+        "覆写 Chromatrix.json 模板中的 cfg、width、height、step；留空则使用模板默认值。" to
+            "Override cfg, width, height, step in Chromatrix.json; leave blank to use template defaults."
+        ),
 )
 
 

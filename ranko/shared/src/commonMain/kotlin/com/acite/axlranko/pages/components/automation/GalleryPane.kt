@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -75,6 +76,7 @@ import com.acite.axlranko.model.jobImagePathFor
 import com.acite.axlranko.model.jobProgress
 import com.acite.axlranko.model.jobTitle
 import com.acite.axlranko.pages.AutomationScreenViewModel
+import com.acite.axlranko.pages.components.CompactMetric
 import com.acite.axlranko.pages.components.ImagePreviewOverlay
 import com.acite.axlranko.pages.components.PreviewImage
 import com.acite.axlranko.prompt.PromptLang
@@ -262,6 +264,7 @@ fun GalleryPane(
                         }
                     }
                     detail.error?.let { Text(it, color = colors.qualityRed, fontSize = 11.sp) }
+                    JobParametersBar(detail, lang)
 
                     ThumbSizeLine(
                         label = uiText(lang, "thumb_size"),
@@ -598,6 +601,56 @@ private fun previewImages(state: AutomationUiState): List<PreviewImage> {
                 },
                 maxEdge = 2048,
             )
+        }
+    }
+}
+
+@Composable
+private fun JobParametersBar(detail: AutomationJobDetail, lang: PromptLang) {
+    val colors = rankoColors
+    val stepVal = detail.step ?: detail.steps
+    val resText = if (detail.width != null && detail.height != null) "${detail.width} × ${detail.height}" else null
+    val modeText = if (detail.mode == "universal") {
+        "Universal (Beta)"
+    } else if (detail.workflow.isNotBlank()) {
+        detail.workflow.substringAfterLast('/').substringAfterLast('\\').removeSuffix(".json")
+    } else null
+    val loraText = if (detail.loraName.isNotBlank()) {
+        if (detail.loraStrength != null) "${detail.loraName} (${detail.loraStrength})" else detail.loraName
+    } else null
+    val cfgText = detail.cfg?.let { if (it % 1.0 == 0.0) it.toInt().toString() else it.toString() }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(rankoTokens.panel)
+            .background(Color.White.copy(alpha = 0.03f))
+            .padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            text = uiText(lang, "task_params"),
+            color = colors.textDim,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            modeText?.let { CompactMetric(uiText(lang, "workflow"), it) }
+            if (detail.checkpointName.isNotBlank()) {
+                CompactMetric(uiText(lang, "checkpoint"), detail.checkpointName)
+            }
+            loraText?.let { CompactMetric(uiText(lang, "lora"), it) }
+            if (detail.trigger.isNotBlank()) {
+                CompactMetric(uiText(lang, "trigger"), detail.trigger)
+            }
+            stepVal?.let { CompactMetric(uiText(lang, "step"), it.toString()) }
+            cfgText?.let { CompactMetric(uiText(lang, "cfg"), it) }
+            resText?.let { CompactMetric(uiText(lang, "resolution"), it) }
+            CompactMetric(uiText(lang, "images_per_prompt"), detail.count.toString())
         }
     }
 }

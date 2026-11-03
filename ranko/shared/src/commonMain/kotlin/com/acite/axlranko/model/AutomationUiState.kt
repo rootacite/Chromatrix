@@ -54,6 +54,10 @@ data class AutomationSettingsDraft(
     val universalCheckpoint: String = "",
     val universalTrigger: String = "",
     val universalLoraStrength: Float = UNIVERSAL_LORA_STRENGTH_DEFAULT,
+    val universalCfg: String = "",
+    val universalWidth: String = "",
+    val universalHeight: String = "",
+    val universalStep: String = "",
 ) {
     companion object {
         fun of(settings: AutomationSettings): AutomationSettingsDraft = AutomationSettingsDraft(
@@ -67,6 +71,10 @@ data class AutomationSettingsDraft(
             universalCheckpoint = settings.universalCheckpoint,
             universalTrigger = settings.universalTrigger,
             universalLoraStrength = settings.universalLoraStrength.toFloat(),
+            universalCfg = settings.universalCfg?.let { if (it % 1.0 == 0.0) it.toInt().toString() else it.toString() } ?: "",
+            universalWidth = settings.universalWidth?.toString() ?: "",
+            universalHeight = settings.universalHeight?.toString() ?: "",
+            universalStep = settings.universalStep?.toString() ?: "",
         )
     }
 
@@ -86,6 +94,10 @@ data class AutomationSettingsDraft(
             UNIVERSAL_LORA_STRENGTH_MIN,
             UNIVERSAL_LORA_STRENGTH_MAX,
         ) * 100).roundToInt() / 100.0,
+        universalCfg = universalCfg.trim().toDoubleOrNull(),
+        universalWidth = universalWidth.filter { it.isDigit() }.toIntOrNull(),
+        universalHeight = universalHeight.filter { it.isDigit() }.toIntOrNull(),
+        universalStep = universalStep.filter { it.isDigit() }.toIntOrNull(),
     )
 }
 

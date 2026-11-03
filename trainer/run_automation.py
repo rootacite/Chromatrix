@@ -52,6 +52,10 @@ UNIVERSAL_POSITIVE_NODE = "215"
 UNIVERSAL_LORA_NODE = "207:219"
 UNIVERSAL_CHECKPOINT_NODE = "207:266"
 UNIVERSAL_UPSCALE_NODE = "198:259"
+UNIVERSAL_SAMPLER_NODE = "19"
+UNIVERSAL_LATENT_NODE = "217"
+UNIVERSAL_UPSCALE_SAMPLER_NODE = "198:196"
+UNIVERSAL_FACE_DETAILER_NODE = "198:197:86"
 
 
 def universal_workflow_path() -> Path:
@@ -90,9 +94,16 @@ def apply_universal(
     trigger: str,
     checkpoint_name: str = "",
     strength: Optional[float] = None,
+    *,
+    cfg: Optional[float] = None,
+    width: Optional[int] = None,
+    height: Optional[int] = None,
+    step: Optional[int] = None,
+    steps: Optional[int] = None,
 ) -> None:
     """Set the LoRA name and strength, the first segment of the upscale prompt, and the checkpoint
-    when one is given. No strength keeps the workflow's own `strength_model` / `strength_clip`."""
+    when one is given. Optional cfg, width, height and step override the workflow's own values.
+    No override keeps the workflow's own values."""
     lora = str(lora_name or "").strip()
     word = str(trigger or "").strip()
     if not lora:
@@ -110,6 +121,45 @@ def apply_universal(
     text = str(workflow[UNIVERSAL_UPSCALE_NODE]["inputs"]["text"])
     _head, sep, tail = text.partition(",")
     workflow[UNIVERSAL_UPSCALE_NODE]["inputs"]["text"] = word + sep + tail
+
+    step_val = step if step is not None else steps
+    if step_val is not None:
+        if UNIVERSAL_SAMPLER_NODE in workflow and isinstance(workflow[UNIVERSAL_SAMPLER_NODE].get("inputs"), dict):
+            workflow[UNIVERSAL_SAMPLER_NODE]["inputs"]["steps"] = int(step_val)
+        else:
+            for node in workflow.values():
+                if isinstance(node, dict) and node.get("class_type") in automation.SAMPLER_CLASSES and "steps" in node.get("inputs", {}):
+                    node["inputs"]["steps"] = int(step_val)
+
+    if cfg is not None:
+        cfg_val = float(cfg)
+        if UNIVERSAL_SAMPLER_NODE in workflow and isinstance(workflow[UNIVERSAL_SAMPLER_NODE].get("inputs"), dict):
+            workflow[UNIVERSAL_SAMPLER_NODE]["inputs"]["cfg"] = cfg_val
+        else:
+            for node in workflow.values():
+                if isinstance(node, dict) and node.get("class_type") in automation.SAMPLER_CLASSES and "cfg" in node.get("inputs", {}):
+                    node["inputs"]["cfg"] = cfg_val
+        if UNIVERSAL_UPSCALE_SAMPLER_NODE in workflow and isinstance(workflow[UNIVERSAL_UPSCALE_SAMPLER_NODE].get("inputs"), dict):
+            if "cfg" in workflow[UNIVERSAL_UPSCALE_SAMPLER_NODE]["inputs"]:
+                workflow[UNIVERSAL_UPSCALE_SAMPLER_NODE]["inputs"]["cfg"] = cfg_val
+        if UNIVERSAL_FACE_DETAILER_NODE in workflow and isinstance(workflow[UNIVERSAL_FACE_DETAILER_NODE].get("inputs"), dict):
+            if "cfg" in workflow[UNIVERSAL_FACE_DETAILER_NODE]["inputs"]:
+                workflow[UNIVERSAL_FACE_DETAILER_NODE]["inputs"]["cfg"] = cfg_val
+
+    if width is not None or height is not None:
+        if UNIVERSAL_LATENT_NODE in workflow and isinstance(workflow[UNIVERSAL_LATENT_NODE].get("inputs"), dict):
+            latent_inputs = workflow[UNIVERSAL_LATENT_NODE]["inputs"]
+            if width is not None:
+                latent_inputs["width"] = int(width)
+            if height is not None:
+                latent_inputs["height"] = int(height)
+        else:
+            for node in workflow.values():
+                if isinstance(node, dict) and node.get("class_type") == "EmptyLatentImage" and isinstance(node.get("inputs"), dict):
+                    if width is not None:
+                        node["inputs"]["width"] = int(width)
+                    if height is not None:
+                        node["inputs"]["height"] = int(height)
 
 
 class Stop:
@@ -418,12 +468,24 @@ def run_job(spec_path: Path, only_failed: bool = False, target: Optional[Mapping
                             if isinstance(raw_strength, (int, float)) and not isinstance(raw_strength, bool)
                             else None
                         )
+                        raw_cfg = spec.get("cfg")
+                        cfg = float(raw_cfg) if isinstance(raw_cfg, (int, float)) and not isinstance(raw_cfg, bool) else None
+                        raw_step = spec.get("step") if spec.get("step") is not None else spec.get("steps")
+                        step = int(raw_step) if isinstance(raw_step, (int, float)) and not isinstance(raw_step, bool) else None
+                        raw_width = spec.get("width")
+                        width = int(raw_width) if isinstance(raw_width, (int, float)) and not isinstance(raw_width, bool) else None
+                        raw_height = spec.get("height")
+                        height = int(raw_height) if isinstance(raw_height, (int, float)) and not isinstance(raw_height, bool) else None
                         apply_universal(
                             workflow,
                             str(spec.get("lora_name") or ""),
                             str(spec.get("trigger") or ""),
                             str(spec.get("checkpoint_name") or ""),
                             strength,
+                            cfg=cfg,
+                            width=width,
+                            height=height,
+                            step=step,
                         )
                     set_batch_size(workflow, plan["batch"])
                     changed_seeds = set_seed(workflow, seed)

@@ -54,6 +54,7 @@ fun UniversalPane(
         ServerCard(state, viewModel)
         CheckpointCard(state, viewModel)
         LoraCard(state, viewModel)
+        UniversalParamsCard(state, viewModel, portrait)
         BatchCard(
             state = state,
             viewModel = viewModel,
@@ -272,6 +273,82 @@ private fun LoraCard(state: AutomationUiState, viewModel: AutomationScreenViewMo
                 modifier = Modifier.fillMaxWidth(),
             )
             Text(text = uiText(lang, "trigger_hint"), color = colors.textDim, fontSize = 11.sp)
+        }
+    }
+}
+
+@Composable
+private fun UniversalParamsCard(
+    state: AutomationUiState,
+    viewModel: AutomationScreenViewModel,
+    portrait: Boolean = false,
+) {
+    val colors = rankoColors
+    val lang = state.language
+    PorcelainCard {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = uiText(lang, "universal_params_title"),
+                color = colors.text,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 13.sp,
+            )
+            Text(
+                text = uiText(lang, "universal_params_hint"),
+                color = colors.textDim,
+                fontSize = 11.sp,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                OutlinedTextField(
+                    value = state.settings.universalStep,
+                    onValueChange = viewModel::setUniversalStep,
+                    singleLine = true,
+                    label = { Text(uiText(lang, "step"), fontSize = 11.sp) },
+                    placeholder = { Text("58", fontSize = 12.sp) },
+                    colors = rankoFieldColors(),
+                    modifier = Modifier.weight(1f),
+                )
+                OutlinedTextField(
+                    value = state.settings.universalCfg,
+                    onValueChange = viewModel::setUniversalCfg,
+                    singleLine = true,
+                    label = { Text(uiText(lang, "cfg"), fontSize = 11.sp) },
+                    placeholder = { Text("6.0", fontSize = 12.sp) },
+                    colors = rankoFieldColors(),
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                OutlinedTextField(
+                    value = state.settings.universalWidth,
+                    onValueChange = viewModel::setUniversalWidth,
+                    singleLine = true,
+                    label = { Text(uiText(lang, "width"), fontSize = 11.sp) },
+                    placeholder = { Text("1152", fontSize = 12.sp) },
+                    colors = rankoFieldColors(),
+                    modifier = Modifier.weight(1f),
+                )
+                OutlinedTextField(
+                    value = state.settings.universalHeight,
+                    onValueChange = viewModel::setUniversalHeight,
+                    singleLine = true,
+                    label = { Text(uiText(lang, "height"), fontSize = 11.sp) },
+                    placeholder = { Text("768", fontSize = 12.sp) },
+                    colors = rankoFieldColors(),
+                    modifier = Modifier.weight(1f),
+                )
+            }
         }
     }
 }

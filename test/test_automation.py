@@ -1184,6 +1184,46 @@ class AutomationApiTest(unittest.TestCase):
         _head, sep, tail = str(original["198:259"]["inputs"]["text"]).partition(",")
         self.assertTrue(sep)
         self.assertEqual("kano_character" + sep + tail, queued["198:259"]["inputs"]["text"])
+        # Parameters extracted from the template when not overridden:
+        self.assertEqual(original["19"]["inputs"]["cfg"], detail["cfg"])
+        self.assertEqual(original["19"]["inputs"]["steps"], detail["step"])
+        self.assertEqual(original["217"]["inputs"]["width"], detail["width"])
+        self.assertEqual(original["217"]["inputs"]["height"], detail["height"])
+        api.dispatch("automation_job_delete", {"id": started["job"]["id"]})
+
+    def test_universal_start_overrides_cfg_step_width_height(self):
+        self._settings(workflow="")
+        started = api.dispatch(
+            "automation_job_start",
+            {
+                "prompts": ["override prompt"],
+                "mode": "universal",
+                "lora_name": "Yui_s002850.safetensors",
+                "trigger": "kano_character",
+                "lora_strength": 0.9,
+                "cfg": 7.5,
+                "step": 42,
+                "width": 832,
+                "height": 1216,
+            },
+        )
+        detail = self._wait_for(started["job"]["id"])
+        self.assertEqual("universal", detail["mode"])
+        self.assertEqual(7.5, detail["cfg"])
+        self.assertEqual(42, detail["step"])
+        self.assertEqual(832, detail["width"])
+        self.assertEqual(1216, detail["height"])
+        self.assertTrue(self.stub.queued)
+        queued = self.stub.queued[0]
+        self.assertEqual(7.5, queued["19"]["inputs"]["cfg"])
+        self.assertEqual(42, queued["19"]["inputs"]["steps"])
+        self.assertEqual(832, queued["217"]["inputs"]["width"])
+        self.assertEqual(1216, queued["217"]["inputs"]["height"])
+        # Check upscale sampler and face detailer cfg override
+        if "198:196" in queued and "cfg" in queued["198:196"]["inputs"]:
+            self.assertEqual(7.5, queued["198:196"]["inputs"]["cfg"])
+        if "198:197:86" in queued and "cfg" in queued["198:197:86"]["inputs"]:
+            self.assertEqual(7.5, queued["198:197:86"]["inputs"]["cfg"])
         api.dispatch("automation_job_delete", {"id": started["job"]["id"]})
 
     def test_start_refuses_without_prompts_or_a_workflow(self):

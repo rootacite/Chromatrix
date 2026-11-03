@@ -2524,6 +2524,10 @@ def handle_automation_job_start(params: dict[str, Any]) -> dict[str, Any]:
     trigger = ""
     checkpoint_name = ""
     lora_strength = automation.UNIVERSAL_DEFAULT_LORA_STRENGTH
+    cfg = None
+    step = None
+    width = None
+    height = None
     if universal:
         lora_name = str(params.get("lora_name") or settings.get("universal_lora") or "").strip()
         checkpoint_name = str(
@@ -2532,6 +2536,17 @@ def handle_automation_job_start(params: dict[str, Any]) -> dict[str, Any]:
         trigger = str(params.get("trigger") or settings.get("universal_trigger") or "").strip()
         lora_strength = automation.normalize_universal_strength(
             params.get("lora_strength", settings.get("universal_lora_strength"))
+        )
+        cfg = automation.normalize_universal_cfg(
+            params.get("cfg", settings.get("universal_cfg"))
+        )
+        raw_step = params.get("step") if params.get("step") is not None else params.get("steps", settings.get("universal_step"))
+        step = automation.normalize_universal_step(raw_step)
+        width = automation.normalize_universal_width(
+            params.get("width", settings.get("universal_width"))
+        )
+        height = automation.normalize_universal_height(
+            params.get("height", settings.get("universal_height"))
         )
         if not lora_name:
             raise ValueError("pick a LoRA file first")
@@ -2549,6 +2564,11 @@ def handle_automation_job_start(params: dict[str, Any]) -> dict[str, Any]:
         if not workflow_path.is_file():
             workflow_path = automation.workflow_path(Path(workflow_raw).stem)
         positive_node = settings["positive_node"]
+        cfg = automation.normalize_universal_cfg(params.get("cfg"))
+        raw_step = params.get("step") if params.get("step") is not None else params.get("steps")
+        step = automation.normalize_universal_step(raw_step)
+        width = automation.normalize_universal_width(params.get("width"))
+        height = automation.normalize_universal_height(params.get("height"))
 
     report = _automation_workflow_report(workflow_path, positive_node=positive_node)
     if not report["valid"]:
@@ -2604,6 +2624,15 @@ def handle_automation_job_start(params: dict[str, Any]) -> dict[str, Any]:
         job["checkpoint_name"] = checkpoint_name
         job["trigger"] = trigger
         job["lora_strength"] = lora_strength
+    if cfg is not None:
+        job["cfg"] = cfg
+    if step is not None:
+        job["step"] = step
+        job["steps"] = step
+    if width is not None:
+        job["width"] = width
+    if height is not None:
+        job["height"] = height
     automation.write_job(job, output_dir)
     pid = _spawn_automation_job(job_id, output_dir)
     job = automation.update_job(job_id, output_dir, pid=pid, started_at=now)
@@ -2699,8 +2728,35 @@ def _automation_job(job_id: str, settings: dict[str, Any]) -> dict[str, Any]:
     raise ValueError(f"no job named {job_id}")
 
 
+def _enrich_job_params(job: dict[str, Any]) -> dict[str, Any]:
+    enriched = dict(job)
+    wf_path = enriched.get("workflow_path") or enriched.get("workflow") or ""
+    if not wf_path and enriched.get("mode") == run_automation.UNIVERSAL_MODE:
+        wf_path = str(run_automation.universal_workflow_path())
+    if wf_path:
+        try:
+            wf = automation.load_workflow(wf_path)
+            sampler = wf.get(run_automation.UNIVERSAL_SAMPLER_NODE) or {}
+            sampler_inputs = sampler.get("inputs", {}) if isinstance(sampler, dict) else {}
+            latent = wf.get(run_automation.UNIVERSAL_LATENT_NODE) or {}
+            latent_inputs = latent.get("inputs", {}) if isinstance(latent, dict) else {}
+            if enriched.get("cfg") is None and "cfg" in sampler_inputs:
+                enriched["cfg"] = sampler_inputs["cfg"]
+            if enriched.get("step") is None and enriched.get("steps") is None and "steps" in sampler_inputs:
+                enriched["step"] = sampler_inputs["steps"]
+                enriched["steps"] = sampler_inputs["steps"]
+            if enriched.get("width") is None and "width" in latent_inputs:
+                enriched["width"] = latent_inputs["width"]
+            if enriched.get("height") is None and "height" in latent_inputs:
+                enriched["height"] = latent_inputs["height"]
+        except Exception:
+            pass
+    return enriched
+
+
 def _automation_job_detail(job: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
     """The payload `automation_job_get` answers with, so a Gallery action needs one round trip."""
+    job = _enrich_job_params(job)
     job_id = str(job.get("id") or "")
     payload = dict(job)
     payload["summary"] = automation.job_summary(job)

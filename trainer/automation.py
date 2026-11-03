@@ -66,6 +66,13 @@ UNIVERSAL_MIN_LORA_STRENGTH = 0.0
 UNIVERSAL_MAX_LORA_STRENGTH = 2.0
 UNIVERSAL_DEFAULT_LORA_STRENGTH = 1.0
 
+UNIVERSAL_MIN_CFG = 0.5
+UNIVERSAL_MAX_CFG = 30.0
+UNIVERSAL_MIN_STEP = 1
+UNIVERSAL_MAX_STEP = 200
+UNIVERSAL_MIN_RESO = 64
+UNIVERSAL_MAX_RESO = 4096
+
 _STAMP = "%Y%m%d_%H%M%S"
 _UNSAFE_NAME_RE = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
 CLASS_SAVE_IMAGE = "SaveImage"
@@ -116,6 +123,10 @@ def default_settings() -> dict[str, Any]:
         "universal_checkpoint": "",
         "universal_trigger": "",
         "universal_lora_strength": UNIVERSAL_DEFAULT_LORA_STRENGTH,
+        "universal_cfg": None,
+        "universal_width": None,
+        "universal_height": None,
+        "universal_step": None,
     }
 
 
@@ -187,6 +198,66 @@ def normalize_universal_strength(value: Any, default: float = UNIVERSAL_DEFAULT_
     return strength
 
 
+def normalize_universal_cfg(value: Any) -> Optional[float]:
+    """The CFG scale a Universal (Beta) job asks for. Absent or blank keeps the template's default."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        raise ValueError("cfg must be a number")
+    try:
+        cfg = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("cfg must be a number") from exc
+    if not UNIVERSAL_MIN_CFG <= cfg <= UNIVERSAL_MAX_CFG:
+        raise ValueError(f"cfg must be between {UNIVERSAL_MIN_CFG:g} and {UNIVERSAL_MAX_CFG:g}")
+    return cfg
+
+
+def normalize_universal_step(value: Any) -> Optional[int]:
+    """The sampling steps a Universal (Beta) job asks for. Absent or blank keeps the template's default."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        raise ValueError("step must be an integer")
+    try:
+        step = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("step must be an integer") from exc
+    if not UNIVERSAL_MIN_STEP <= step <= UNIVERSAL_MAX_STEP:
+        raise ValueError(f"step must be between {UNIVERSAL_MIN_STEP} and {UNIVERSAL_MAX_STEP}")
+    return step
+
+
+def normalize_universal_width(value: Any) -> Optional[int]:
+    """The width a Universal (Beta) job asks for. Absent or blank keeps the template's default."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        raise ValueError("width must be an integer")
+    try:
+        width = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("width must be an integer") from exc
+    if not UNIVERSAL_MIN_RESO <= width <= UNIVERSAL_MAX_RESO:
+        raise ValueError(f"width must be between {UNIVERSAL_MIN_RESO} and {UNIVERSAL_MAX_RESO}")
+    return width
+
+
+def normalize_universal_height(value: Any) -> Optional[int]:
+    """The height a Universal (Beta) job asks for. Absent or blank keeps the template's default."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        raise ValueError("height must be an integer")
+    try:
+        height = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("height must be an integer") from exc
+    if not UNIVERSAL_MIN_RESO <= height <= UNIVERSAL_MAX_RESO:
+        raise ValueError(f"height must be between {UNIVERSAL_MIN_RESO} and {UNIVERSAL_MAX_RESO}")
+    return height
+
+
 def load_settings() -> dict[str, Any]:
     payload = _read_json(settings_path())
     merged = default_settings()
@@ -240,6 +311,10 @@ def normalize_settings(payload: Mapping[str, Any]) -> dict[str, Any]:
         "universal_checkpoint": str(payload.get("universal_checkpoint") or "").strip(),
         "universal_trigger": str(payload.get("universal_trigger") or "").strip(),
         "universal_lora_strength": normalize_universal_strength(payload.get("universal_lora_strength")),
+        "universal_cfg": normalize_universal_cfg(payload.get("universal_cfg")),
+        "universal_width": normalize_universal_width(payload.get("universal_width")),
+        "universal_height": normalize_universal_height(payload.get("universal_height")),
+        "universal_step": normalize_universal_step(payload.get("universal_step")),
     }
 
 
@@ -756,6 +831,16 @@ def job_summary(job: Mapping[str, Any]) -> dict[str, Any]:
         # redraw, so the list would otherwise have nothing to show while it runs.
         "pass": job.get("pass"),
         "error": job.get("error"),
+        "mode": job.get("mode") or "",
+        "checkpoint_name": job.get("checkpoint_name") or "",
+        "lora_name": job.get("lora_name") or "",
+        "lora_strength": job.get("lora_strength"),
+        "trigger": job.get("trigger") or "",
+        "cfg": job.get("cfg"),
+        "step": job.get("step") if job.get("step") is not None else job.get("steps"),
+        "steps": job.get("steps") if job.get("steps") is not None else job.get("step"),
+        "width": job.get("width"),
+        "height": job.get("height"),
     }
 
 
