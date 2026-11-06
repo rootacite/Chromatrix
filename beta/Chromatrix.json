@@ -62,7 +62,7 @@
   },
   "215": {
     "inputs": {
-      "text": "aki_character, 1girl, large breasts, hair ornament, solo, shy, open eyes, blush, from above, sitting, cleavage, looking at viewer, bedroom, indoors, bed, night, warm light, best quality, newest, highres",
+      "text": "aki_character, 1girl, large breasts, (hair ornament:1.1), solo, nightgown, hair ornament, bare legs, open clothes, breasts, breasts out, nipples, embarrassed, looking at viewer, open eyes, open mouth, blush, doggystyle, sex from behind, top-down bottom-up, pussy, ass, cleft of venus, presenting, living room, indoors, sofa, morning, sunlight, best quality, newest, highres",
       "clip": [
         "207:219",
         1
@@ -88,8 +88,8 @@
   },
   "217": {
     "inputs": {
-      "width": 1152,
-      "height": 768,
+      "width": 1216,
+      "height": 832,
       "batch_size": 1
     },
     "class_type": "EmptyLatentImage",
@@ -115,7 +115,7 @@
   },
   "224": {
     "inputs": {
-      "seed": 1059822493852672
+      "seed": 103202294628470
     },
     "class_type": "SeedNode",
     "_meta": {
@@ -152,8 +152,8 @@
   "207:219": {
     "inputs": {
       "lora_name": "Aki.safetensors",
-      "strength_model": 0.95,
-      "strength_clip": 0.95,
+      "strength_model": 0.9,
+      "strength_clip": 0.9,
       "model": [
         "207:266",
         0
@@ -202,15 +202,15 @@
   "198:196": {
     "inputs": {
       "upscale_by": 2,
-      "seed": 583852015191314,
-      "steps": 18,
+      "seed": 611409560196573,
+      "steps": 12,
       "cfg": 6,
       "sampler_name": "euler_ancestral",
       "scheduler": "normal",
-      "denoise": 0.32,
+      "denoise": 0.18,
       "mode_type": "Chess",
-      "tile_width": 768,
-      "tile_height": 768,
+      "tile_width": 512,
+      "tile_height": 512,
       "mask_blur": 64,
       "tile_padding": 64,
       "seam_fix_mode": "None",
@@ -220,7 +220,7 @@
       "seam_fix_padding": 16,
       "force_uniform_tiles": true,
       "tiled_decode": true,
-      "batch_size": 1,
+      "batch_size": 5,
       "image": [
         "21",
         0
@@ -230,7 +230,7 @@
         0
       ],
       "positive": [
-        "198:259",
+        "215",
         0
       ],
       "negative": [
@@ -310,7 +310,7 @@
       "guide_size": 384,
       "guide_size_for": true,
       "max_size": 512,
-      "seed": 724850542374675,
+      "seed": 770686265895086,
       "steps": 28,
       "cfg": 6,
       "sampler_name": "euler_ancestral",
@@ -351,10 +351,6 @@
         "207:266",
         2
       ],
-      "positive": [
-        "198:259",
-        0
-      ],
       "negative": [
         "216",
         0
@@ -367,19 +363,6 @@
     "class_type": "FaceDetailer",
     "_meta": {
       "title": "FaceDetailer"
-    }
-  },
-  "198:259": {
-    "inputs": {
-      "text": "aki_character, best quality, anime illustration, detailed skin, detailed fabric, newest, highres",
-      "clip": [
-        "207:219",
-        1
-      ]
-    },
-    "class_type": "CLIPTextEncode",
-    "_meta": {
-      "title": "CLIP Text Encode (Prompt)"
     }
   }
 }

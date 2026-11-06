@@ -105,13 +105,13 @@ private val UI_TEXT: Map<String, Pair<String, String>> = mapOf(
     "lora_empty" to ("没有找到 .safetensors" to "No .safetensors found"),
     "lora_strength" to ("LoRA 强度" to "LoRA strength"),
     "lora_strength_hint" to (
-        "写入该 LoRA 节点的 strength_model 与 strength_clip，范围 0–2，默认 1（工作流自带的值）。" to
-            "Written to that LoRA node's strength_model and strength_clip, 0–2; the default 1 is the workflow's own value."
+        "写入该 LoRA 节点的 strength_model 与 strength_clip，范围 0–2，默认 0.9（工作流自带的值）。" to
+            "Written to that LoRA node's strength_model and strength_clip, 0–2; the default 0.9 is the workflow's own value."
         ),
     "trigger" to ("角色触发词" to "Character trigger"),
     "trigger_hint" to (
-        "替换超分提示词的第一段，其余保持工作流原文。生图提示词整段使用批量输入。" to
-            "Replaces the first segment of the upscale prompt. The rest stays as the workflow wrote it. The generation prompt is the batch line, whole."
+        "作为首个标签加到生图提示词（节点 215）前；提示词已经以该标签开头时保持原样。" to
+            "Prepended as the first tag of the generation prompt (node 215); a prompt that already opens with it is left alone."
         ),
     "need_lora" to ("请先选择 LoRA" to "Pick a LoRA first"),
     "need_trigger" to ("请填写角色触发词" to "Enter a character trigger"),

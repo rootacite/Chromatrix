@@ -25,7 +25,7 @@ class AutomationSettingsDraftTest {
     fun theDefaultIsTheWorkflowsOwnValue() {
         val draft = AutomationSettingsDraft()
         assertEquals(UNIVERSAL_LORA_STRENGTH_DEFAULT, draft.universalLoraStrength)
-        assertEquals(1.0, draft.toSettings().universalLoraStrength)
+        assertEquals(0.9, draft.toSettings().universalLoraStrength)
     }
 
     @Test

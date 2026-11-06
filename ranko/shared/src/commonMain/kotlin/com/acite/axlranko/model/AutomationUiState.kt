@@ -40,7 +40,7 @@ enum class JobFilter(val wire: String) {
  * LoraLoader inputs, and the value `beta/Chromatrix.json` itself ships. */
 const val UNIVERSAL_LORA_STRENGTH_MIN = 0f
 const val UNIVERSAL_LORA_STRENGTH_MAX = 2f
-const val UNIVERSAL_LORA_STRENGTH_DEFAULT = 1f
+const val UNIVERSAL_LORA_STRENGTH_DEFAULT = 0.9f
 
 /** The ComfyUI section's editable copy of `automation/settings.json`. */
 data class AutomationSettingsDraft(

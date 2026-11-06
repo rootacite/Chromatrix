@@ -45,13 +45,13 @@ except ImportError:
 
 MAX_CONSECUTIVE_FAILURES = 3
 
-# The bundled `beta/Chromatrix.json` graph. Generation text is node 215; the upscale
-# prompt is node 198:259; the LoRA name is node 207:219; the checkpoint is node 207:266.
+# The bundled `beta/Chromatrix.json` graph. Node 215 is the generation prompt and the
+# positive prompt shared by the upscale/detailer passes; the LoRA name is node 207:219;
+# the checkpoint is node 207:266.
 UNIVERSAL_MODE = "universal"
 UNIVERSAL_POSITIVE_NODE = "215"
 UNIVERSAL_LORA_NODE = "207:219"
 UNIVERSAL_CHECKPOINT_NODE = "207:266"
-UNIVERSAL_UPSCALE_NODE = "198:259"
 UNIVERSAL_SAMPLER_NODE = "19"
 UNIVERSAL_LATENT_NODE = "217"
 UNIVERSAL_UPSCALE_SAMPLER_NODE = "198:196"
@@ -71,13 +71,6 @@ def require_universal_nodes(workflow: Mapping[str, Any]) -> None:
     for name in ("lora_name", "strength_model", "strength_clip"):
         if name not in lora_inputs:
             raise comfy.ComfyError(f"LoRA node {UNIVERSAL_LORA_NODE!r} has no {name!r} input")
-    upscale = workflow.get(UNIVERSAL_UPSCALE_NODE)
-    upscale_inputs = upscale.get("inputs") if isinstance(upscale, dict) else None
-    text = upscale_inputs.get("text") if isinstance(upscale_inputs, dict) else None
-    if not isinstance(text, str) or "," not in text:
-        raise comfy.ComfyError(
-            f"upscale prompt {UNIVERSAL_UPSCALE_NODE!r} has no first segment to replace"
-        )
     checkpoint = workflow.get(UNIVERSAL_CHECKPOINT_NODE)
     checkpoint_inputs = checkpoint.get("inputs") if isinstance(checkpoint, dict) else None
     if not isinstance(checkpoint_inputs, dict) or "ckpt_name" not in checkpoint_inputs:
@@ -86,6 +79,30 @@ def require_universal_nodes(workflow: Mapping[str, Any]) -> None:
     positive_inputs = positive.get("inputs") if isinstance(positive, dict) else None
     if not isinstance(positive_inputs, dict) or "text" not in positive_inputs:
         raise comfy.ComfyError(f"generation prompt {UNIVERSAL_POSITIVE_NODE!r} has no text input")
+
+
+def _tag_key(tag: str) -> str:
+    """A tag's name without its weight syntax, for comparing a trigger with a prompt's first tag."""
+    text = str(tag or "").strip()
+    while len(text) >= 2 and text.startswith("(") and text.endswith(")"):
+        text = text[1:-1].strip()
+    name, sep, weight = text.rpartition(":")
+    if sep and weight.lstrip("-").replace(".", "", 1).isdigit():
+        text = name.strip()
+    return " ".join(text.lower().split())
+
+
+def merge_trigger(text: str, trigger: str) -> str:
+    """Put the character trigger first, unless the line already opens with that tag."""
+    body = str(text or "").strip()
+    word = str(trigger or "").strip()
+    if not word:
+        return body
+    if not body:
+        return word
+    if _tag_key(body.split(",", 1)[0]) == _tag_key(word):
+        return body
+    return f"{word}, {body}"
 
 
 def apply_universal(
@@ -101,9 +118,9 @@ def apply_universal(
     step: Optional[int] = None,
     steps: Optional[int] = None,
 ) -> None:
-    """Set the LoRA name and strength, the first segment of the upscale prompt, and the checkpoint
-    when one is given. Optional cfg, width, height and step override the workflow's own values.
-    No override keeps the workflow's own values."""
+    """Set the LoRA name and strength, prepend the trigger to the generation prompt, and set the
+    checkpoint when one is given. Optional cfg, width, height and step override the workflow's own
+    values. No override keeps the workflow's own values."""
     lora = str(lora_name or "").strip()
     word = str(trigger or "").strip()
     if not lora:
@@ -118,9 +135,8 @@ def apply_universal(
     checkpoint = str(checkpoint_name or "").strip()
     if checkpoint:
         workflow[UNIVERSAL_CHECKPOINT_NODE]["inputs"]["ckpt_name"] = checkpoint
-    text = str(workflow[UNIVERSAL_UPSCALE_NODE]["inputs"]["text"])
-    _head, sep, tail = text.partition(",")
-    workflow[UNIVERSAL_UPSCALE_NODE]["inputs"]["text"] = word + sep + tail
+    prompt_inputs = workflow[UNIVERSAL_POSITIVE_NODE]["inputs"]
+    prompt_inputs["text"] = merge_trigger(str(prompt_inputs.get("text") or ""), word)
 
     step_val = step if step is not None else steps
     if step_val is not None:

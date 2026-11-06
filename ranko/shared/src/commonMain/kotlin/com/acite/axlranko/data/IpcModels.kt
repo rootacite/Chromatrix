@@ -210,7 +210,7 @@ data class AutomationSettings(
     @SerialName("universal_lora") val universalLora: String = "",
     @SerialName("universal_checkpoint") val universalCheckpoint: String = "",
     @SerialName("universal_trigger") val universalTrigger: String = "",
-    @SerialName("universal_lora_strength") val universalLoraStrength: Double = 1.0,
+    @SerialName("universal_lora_strength") val universalLoraStrength: Double = 0.9,
     @SerialName("universal_cfg") val universalCfg: Double? = null,
     @SerialName("universal_width") val universalWidth: Int? = null,
     @SerialName("universal_height") val universalHeight: Int? = null,

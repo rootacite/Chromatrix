@@ -61,7 +61,7 @@ def stub_workflow() -> dict:
 
 
 def universal_mini_workflow() -> dict:
-    """The stub graph plus the four nodes a Universal job rewrites. SaveImage stays node 5."""
+    """The stub graph plus the nodes a Universal job rewrites. SaveImage stays node 5."""
     workflow = stub_workflow()
     workflow["215"] = {"class_type": "CLIPTextEncode", "inputs": {"text": "old prompt", "clip": ["1", 1]}}
     workflow["216"] = {"class_type": "CLIPTextEncode", "inputs": {"text": "worst quality", "clip": ["1", 1]}}
@@ -72,10 +72,6 @@ def universal_mini_workflow() -> dict:
     workflow["207:219"] = {
         "class_type": "LoraLoader",
         "inputs": {"lora_name": "old.safetensors", "strength_model": 1, "strength_clip": 1},
-    }
-    workflow["198:259"] = {
-        "class_type": "CLIPTextEncode",
-        "inputs": {"text": "(yui_character:1.1), best quality, anime illustration", "clip": ["1", 1]},
     }
     return workflow
 
@@ -400,9 +396,9 @@ class AutomationStoreTest(unittest.TestCase):
         self.assertEqual(automation.default_settings()["count"], automation.load_settings()["count"])
 
     def test_the_universal_strength_round_trips_and_is_bounded(self):
-        self.assertEqual(1.0, automation.default_settings()["universal_lora_strength"])
-        self.assertEqual(1.0, automation.normalize_settings({})["universal_lora_strength"])
-        self.assertEqual(1.0, automation.normalize_settings({"universal_lora_strength": ""})["universal_lora_strength"])
+        self.assertEqual(0.9, automation.default_settings()["universal_lora_strength"])
+        self.assertEqual(0.9, automation.normalize_settings({})["universal_lora_strength"])
+        self.assertEqual(0.9, automation.normalize_settings({"universal_lora_strength": ""})["universal_lora_strength"])
         # A string from a client is a number too, the way `count` and `poll` take one.
         self.assertEqual(0.85, automation.normalize_universal_strength("0.85"))
         self.assertEqual(0.0, automation.normalize_universal_strength(0))
@@ -417,7 +413,7 @@ class AutomationStoreTest(unittest.TestCase):
             automation.save_settings({"universal_lora_strength": "strong"})
         # A hand-edited file falls back to the defaults rather than locking the page out.
         automation.settings_path().write_text('{"universal_lora_strength": 9}', encoding="utf-8")
-        self.assertEqual(1.0, automation.load_settings()["universal_lora_strength"])
+        self.assertEqual(0.9, automation.load_settings()["universal_lora_strength"])
 
     def test_a_relative_output_dir_resolves_against_the_repo(self):
         saved = automation.normalize_settings({"output_dir": "automation/jobs"})
@@ -658,7 +654,7 @@ class RunnerTest(unittest.TestCase):
         seeds = {p["seed"] for p in job["prompts"]}
         self.assertEqual(2, len(seeds))
 
-    def test_universal_mode_patches_lora_and_the_upscale_prompt(self):
+    def test_universal_mode_patches_lora_and_the_generation_prompt(self):
         path = self.root / "universal.json"
         path.write_text(json.dumps(universal_mini_workflow()), encoding="utf-8")
         job_id = automation.new_job_id("Chromatrix")
@@ -688,17 +684,14 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual(0, proc.returncode, proc.stderr)
         self.assertEqual(automation.STATE_DONE, job["state"], job.get("error"))
         queued = self.stub.queued[0]
-        self.assertEqual("one line", queued["215"]["inputs"]["text"])
+        self.assertEqual("(yui_character:1.1), one line", queued["215"]["inputs"]["text"])
         self.assertEqual("worst quality", queued["216"]["inputs"]["text"])
         self.assertEqual("placeholder", queued["2"]["inputs"]["text"])
         self.assertEqual("Yui_s002850.safetensors", queued["207:219"]["inputs"]["lora_name"])
         self.assertEqual(0.75, queued["207:219"]["inputs"]["strength_model"])
         self.assertEqual(0.75, queued["207:219"]["inputs"]["strength_clip"])
         self.assertEqual("chars/NewBase.safetensors", queued["207:266"]["inputs"]["ckpt_name"])
-        self.assertEqual(
-            "(yui_character:1.1), best quality, anime illustration",
-            queued["198:259"]["inputs"]["text"],
-        )
+        self.assertNotIn("198:259", queued)
 
     def test_a_job_without_universal_mode_leaves_those_nodes_alone(self):
         path = self.root / "universal.json"
@@ -728,7 +721,7 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual("plain line", queued["2"]["inputs"]["text"])
         self.assertEqual("old.safetensors", queued["207:219"]["inputs"]["lora_name"])
         self.assertEqual("bundled.safetensors", queued["207:266"]["inputs"]["ckpt_name"])
-        self.assertTrue(queued["198:259"]["inputs"]["text"].startswith("(yui_character:1.1),"))
+        self.assertEqual("old prompt", queued["215"]["inputs"]["text"])
 
     def test_a_single_seed_drives_every_seed_input(self):
         workflow = stub_workflow()
@@ -1176,14 +1169,12 @@ class AutomationApiTest(unittest.TestCase):
         self.assertTrue(self.stub.queued, detail.get("error"))
         queued = self.stub.queued[0]
         original = json.loads((REPO / "beta" / "Chromatrix.json").read_text(encoding="utf-8"))
-        self.assertEqual("one line", queued["215"]["inputs"]["text"])
         self.assertEqual(original["216"]["inputs"]["text"], queued["216"]["inputs"]["text"])
         self.assertEqual("Yui_s002850.safetensors", queued["207:219"]["inputs"]["lora_name"])
         self.assertEqual(0.8, queued["207:219"]["inputs"]["strength_model"])
         self.assertEqual(0.8, queued["207:219"]["inputs"]["strength_clip"])
-        _head, sep, tail = str(original["198:259"]["inputs"]["text"]).partition(",")
-        self.assertTrue(sep)
-        self.assertEqual("kano_character" + sep + tail, queued["198:259"]["inputs"]["text"])
+        self.assertEqual("kano_character, one line", queued["215"]["inputs"]["text"])
+        self.assertNotIn("198:259", original)
         # Parameters extracted from the template when not overridden:
         self.assertEqual(original["19"]["inputs"]["cfg"], detail["cfg"])
         self.assertEqual(original["19"]["inputs"]["steps"], detail["step"])
@@ -1492,15 +1483,17 @@ class AutomationApiTest(unittest.TestCase):
 
 
 class UniversalPatchTest(unittest.TestCase):
-    def test_the_trigger_replaces_only_the_first_segment(self):
+    def test_the_trigger_is_prepended_to_the_generation_prompt(self):
         workflow = universal_mini_workflow()
-        run_automation.apply_universal(workflow, "subdir/Yui.safetensors", "yui_character, 1girl")
+        run_automation.apply_universal(workflow, "subdir/Yui.safetensors", "yui_character")
         self.assertEqual("subdir/Yui.safetensors", workflow["207:219"]["inputs"]["lora_name"])
-        self.assertEqual(
-            "yui_character, 1girl, best quality, anime illustration",
-            workflow["198:259"]["inputs"]["text"],
-        )
-        self.assertEqual("old prompt", workflow["215"]["inputs"]["text"])
+        self.assertEqual("yui_character, old prompt", workflow["215"]["inputs"]["text"])
+
+    def test_a_prompt_that_already_opens_with_the_trigger_is_left_alone(self):
+        workflow = universal_mini_workflow()
+        workflow["215"]["inputs"]["text"] = "(yui_character:1.1), 1girl, solo"
+        run_automation.apply_universal(workflow, "Yui.safetensors", "yui_character")
+        self.assertEqual("(yui_character:1.1), 1girl, solo", workflow["215"]["inputs"]["text"])
 
     def test_the_checkpoint_is_written_only_when_one_is_given(self):
         chosen = universal_mini_workflow()
@@ -1532,23 +1525,20 @@ class UniversalPatchTest(unittest.TestCase):
         with self.assertRaises(comfy.ComfyError):
             run_automation.require_universal_nodes(stripped)
 
-    def test_a_missing_comma_or_name_is_refused(self):
-        broken = universal_mini_workflow()
-        broken["198:259"]["inputs"]["text"] = "no comma here"
-        with self.assertRaises(comfy.ComfyError):
-            run_automation.apply_universal(broken, "a.safetensors", "trigger")
+    def test_a_missing_name_is_refused(self):
         with self.assertRaises(comfy.ComfyError):
             run_automation.apply_universal(universal_mini_workflow(), "", "trigger")
         with self.assertRaises(comfy.ComfyError):
             run_automation.apply_universal(universal_mini_workflow(), "a.safetensors", "  ")
 
-    def test_the_shipped_workflow_has_the_four_nodes(self):
+    def test_the_shipped_workflow_has_the_required_nodes(self):
         workflow = json.loads((REPO / "beta" / "Chromatrix.json").read_text(encoding="utf-8"))
         run_automation.require_universal_nodes(workflow)
         self.assertEqual("LoraLoader", workflow["207:219"]["class_type"])
         self.assertEqual("CheckpointLoaderSimple", workflow["207:266"]["class_type"])
-        self.assertIn(",", workflow["198:259"]["inputs"]["text"])
         self.assertEqual("CLIPTextEncode", workflow["215"]["class_type"])
+        self.assertEqual(["215", 0], workflow["198:196"]["inputs"]["positive"])
+        self.assertNotIn("198:259", workflow)
 
 
 class LoraDiscoveryTest(unittest.TestCase):
