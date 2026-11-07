@@ -554,8 +554,6 @@ fun GalleryPane(
             val images = previewImages(state)
             if (images.isNotEmpty()) {
                 val current = images[index.coerceIn(images.indices)]
-                // The overlay is a viewer: every action lives on the page itself (the thumbnail
-                // discs, the prompt-row buttons), so this stays save/copy-free.
                 ImagePreviewOverlay(
                     images = images,
                     index = index.coerceIn(images.indices),
@@ -563,6 +561,15 @@ fun GalleryPane(
                     onPrev = viewModel::previewPrev,
                     onNext = viewModel::previewNext,
                     portrait = portrait,
+                    actions = {
+                        GalleryAction(
+                            text = uiText(lang, "save"),
+                            icon = Icons.Default.Save,
+                            iconOnly = portrait,
+                            onClick = { viewModel.downloadImage(current.title) },
+                        )
+                        Spacer(Modifier.width(12.dp))
+                    },
                 )
             }
         }

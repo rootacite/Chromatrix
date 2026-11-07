@@ -1359,7 +1359,9 @@ class AutomationScreenViewModel(
 
     /** Saves one gallery image to the user's machine (desktop dialog or browser download). */
     fun downloadImage(name: String) {
-        val path = _uiState.value.galleryImagePaths.firstOrNull { it.endsWith("/$name") } ?: return
+        val path = _uiState.value.galleryImagePaths.firstOrNull {
+            it.endsWith("/$name") || it.endsWith("\\$name") || it == name
+        } ?: return
         viewModelScope.launch {
             val bytes = try {
                 ipc.blobBatch(listOf(path), maxEdge = 4096, quality = 100, format = "png").items.firstOrNull()?.base64

@@ -19,9 +19,11 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import com.acite.axlranko.data.AutomationJobDetail
 import com.acite.axlranko.data.AutomationJobSummary
 import com.acite.axlranko.data.DatasetRefreshHub
 import com.acite.axlranko.data.DatasetSelection
+import com.acite.axlranko.data.JobPromptState
 import com.acite.axlranko.data.TrainerIpcClient
 import com.acite.axlranko.data.showsHelperEndpointSettings
 import com.acite.axlranko.model.AutomationSection
@@ -535,6 +537,55 @@ class PortraitLayoutTest {
             val wideCounts = wide.first { it.first == counts }.second
             val wideName = wide.first { it.first == job.id }.second
             assertEquals(wideCounts, wideName, 8f)
+        } finally {
+            portrait.close()
+            landscape.close()
+        }
+    }
+
+    @Test
+    fun galleryPreviewShowsSaveButtonInBothOrientations() {
+        if (GraphicsEnvironment.isHeadless()) return
+        val viewModel = AutomationScreenViewModel(
+            ipc = TrainerIpcClient(),
+            refreshHub = DatasetRefreshHub(),
+            datasetSelection = DatasetSelection(),
+            pathPicker = NoopPathPicker(),
+        )
+        val detail = AutomationJobDetail(
+            id = "Kirika_20260928_042536",
+            state = "done",
+            outputDir = "/repo/automation/jobs",
+            prompts = listOf(
+                JobPromptState(
+                    index = 0,
+                    text = "prompt text",
+                    state = "done",
+                    images = listOf("p0001_01.png"),
+                ),
+            ),
+        )
+        val state = AutomationUiState(
+            section = AutomationSection.Gallery,
+            selectedJobId = detail.id,
+            jobDetail = detail,
+            galleryPreviewIndex = 0,
+        )
+        val portrait = scene(420, 640) {
+            Box(Modifier.width(420.dp).height(640.dp)) {
+                GalleryPane(state, viewModel, portrait = true)
+            }
+        }
+        val landscape = scene(1100, 640) {
+            Box(Modifier.width(1100.dp).height(640.dp)) {
+                GalleryPane(state, viewModel, portrait = false)
+            }
+        }
+        try {
+            // In landscape, the save button has the "Save" text visible.
+            assertTrue(texts(nodes(landscape)).any { it.first == "Save" }, "landscape preview lacked Save button text")
+            // In portrait, the save button is icon-only and exposes "Save" as content description.
+            assertTrue(descriptions(nodes(portrait)).any { it == "Save" }, "portrait preview lacked Save button description")
         } finally {
             portrait.close()
             landscape.close()
