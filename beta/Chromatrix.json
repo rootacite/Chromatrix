@@ -7,7 +7,7 @@
       ],
       "steps": 58,
       "cfg": 6,
-      "sampler_name": "dpmpp_2s_ancestral",
+      "sampler_name": "euler_ancestral",
       "scheduler": "normal",
       "denoise": 1,
       "model": [
@@ -115,7 +115,7 @@
   },
   "224": {
     "inputs": {
-      "seed": 103202294628470
+      "seed": 211108694858756
     },
     "class_type": "SeedNode",
     "_meta": {
@@ -202,15 +202,15 @@
   "198:196": {
     "inputs": {
       "upscale_by": 2,
-      "seed": 611409560196573,
+      "seed": 376776699661237,
       "steps": 12,
       "cfg": 6,
       "sampler_name": "euler_ancestral",
       "scheduler": "normal",
       "denoise": 0.18,
       "mode_type": "Chess",
-      "tile_width": 512,
-      "tile_height": 512,
+      "tile_width": 768,
+      "tile_height": 768,
       "mask_blur": 64,
       "tile_padding": 64,
       "seam_fix_mode": "None",
@@ -220,7 +220,7 @@
       "seam_fix_padding": 16,
       "force_uniform_tiles": true,
       "tiled_decode": true,
-      "batch_size": 5,
+      "batch_size": 6,
       "image": [
         "21",
         0
@@ -310,7 +310,7 @@
       "guide_size": 384,
       "guide_size_for": true,
       "max_size": 512,
-      "seed": 770686265895086,
+      "seed": 843942355344951,
       "steps": 28,
       "cfg": 6,
       "sampler_name": "euler_ancestral",

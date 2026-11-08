@@ -1175,6 +1175,9 @@ class AutomationApiTest(unittest.TestCase):
         self.assertEqual(0.8, queued["207:219"]["inputs"]["strength_clip"])
         self.assertEqual("kano_character, one line", queued["215"]["inputs"]["text"])
         self.assertNotIn("198:259", original)
+        # Super-resolution upscale tile batch_size must remain untampered by set_batch_size:
+        self.assertEqual(original["198:196"]["inputs"]["batch_size"], queued["198:196"]["inputs"]["batch_size"])
+        self.assertEqual(6, queued["198:196"]["inputs"]["batch_size"])
         # Parameters extracted from the template when not overridden:
         self.assertEqual(original["19"]["inputs"]["cfg"], detail["cfg"])
         self.assertEqual(original["19"]["inputs"]["steps"], detail["step"])
@@ -1539,6 +1542,8 @@ class UniversalPatchTest(unittest.TestCase):
         self.assertEqual("CLIPTextEncode", workflow["215"]["class_type"])
         self.assertEqual(["215", 0], workflow["198:196"]["inputs"]["positive"])
         self.assertNotIn("198:259", workflow)
+        report = automation.validate_workflow(workflow)
+        self.assertEqual(["217"], report["batch_size_nodes"])
 
 
 class LoraDiscoveryTest(unittest.TestCase):

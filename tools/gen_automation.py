@@ -187,6 +187,25 @@ def set_positive_prompt(
     inputs["text"] = prompt
 
 
+NON_GENERATION_BATCH_CLASSES = {
+    "UltimateSDUpscale",
+    "UltimateSDUpscaleNoUpscale",
+    "IterativeImageUpscale",
+}
+
+
+def is_non_generation_batch_node(node: dict[str, Any]) -> bool:
+    if not isinstance(node, dict):
+        return False
+    class_type = str(node.get("class_type") or "")
+    if class_type in NON_GENERATION_BATCH_CLASSES:
+        return True
+    inputs = node.get("inputs")
+    if isinstance(inputs, dict) and ("tile_width" in inputs or "tile_height" in inputs):
+        return True
+    return False
+
+
 def set_batch_size(
     workflow: dict[str, Any],
     batch_size: int,
@@ -195,6 +214,8 @@ def set_batch_size(
 
     for node_id, node in workflow.items():
         if not isinstance(node, dict):
+            continue
+        if is_non_generation_batch_node(node):
             continue
 
         inputs = node.get("inputs")

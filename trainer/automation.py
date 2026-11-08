@@ -391,11 +391,32 @@ def load_workflow(path: Union[str, Path]) -> dict[str, Any]:
 
 # --- workflow validation ---
 
+NON_GENERATION_BATCH_CLASSES = {
+    "UltimateSDUpscale",
+    "UltimateSDUpscaleNoUpscale",
+    "IterativeImageUpscale",
+}
+
+
+def is_non_generation_batch_node(node: Mapping[str, Any]) -> bool:
+    """Return True for nodes where batch_size controls tile/upscale concurrency rather than image count."""
+    if not isinstance(node, dict):
+        return False
+    class_type = str(node.get("class_type") or "")
+    if class_type in NON_GENERATION_BATCH_CLASSES:
+        return True
+    inputs = node.get("inputs")
+    if isinstance(inputs, dict) and ("tile_width" in inputs or "tile_height" in inputs):
+        return True
+    return False
+
 
 def _numeric_batch_nodes(workflow: Mapping[str, Any]) -> list[str]:
     changed: list[str] = []
     for node_id, node in workflow.items():
         if not isinstance(node, dict):
+            continue
+        if is_non_generation_batch_node(node):
             continue
         inputs = node.get("inputs")
         if isinstance(inputs, dict) and isinstance(inputs.get("batch_size"), (int, float)) and not isinstance(

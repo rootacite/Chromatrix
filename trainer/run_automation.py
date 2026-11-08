@@ -215,6 +215,8 @@ def set_batch_size(workflow: dict[str, Any], batch_size: int) -> list[str]:
     for node_id, node in workflow.items():
         if not isinstance(node, dict):
             continue
+        if hasattr(automation, "is_non_generation_batch_node") and automation.is_non_generation_batch_node(node):
+            continue
         inputs = node.get("inputs")
         if not isinstance(inputs, dict):
             continue

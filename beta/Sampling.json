@@ -5,7 +5,7 @@
         "224",
         0
       ],
-      "steps": 35,
+      "steps": 50,
       "cfg": 6,
       "sampler_name": "euler_ancestral",
       "scheduler": "normal",
@@ -139,7 +139,7 @@
   },
   "207:219": {
     "inputs": {
-      "lora_name": "Kano_s002450.safetensors",
+      "lora_name": "Aki.safetensors",
       "strength_model": 0.95,
       "strength_clip": 0.95,
       "model": [
