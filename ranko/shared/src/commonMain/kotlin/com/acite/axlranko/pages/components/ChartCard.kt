@@ -8,7 +8,6 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -56,6 +55,7 @@ import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.isCtrlPressed
 import androidx.compose.ui.input.pointer.isPrimaryPressed
+import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.isShiftPressed
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
@@ -96,13 +96,6 @@ private data class ChartPoint(val step: Float, val value: Float)
 private const val WHEEL_ZOOM_STEP = 1.15f
 private const val WHEEL_ZOOM_INTENSITY = 2.5f
 private const val JUMP_REJECT_FRACTION = 0.5f
-
-/**
- * Slop a mouse drag crosses before the chart pans. This is foundation's own mouse slop
- * (`0.125.dp` against `18.dp` for a finger, `pointerSlop` in `DragGestureDetector.kt`), repeated
- * here because the gesture loop no longer reads the pointer type through `detectDragGestures`.
- */
-private val MOUSE_DRAG_SLOP = 0.125.dp
 
 /** A chart whose x axis counts steps opens on its newest [DEFAULT_STEP_SPAN] steps. */
 internal const val DEFAULT_STEP_SPAN = 800f
@@ -1222,28 +1215,41 @@ private fun InteractiveLineChart(
                 )
             }
 
-            awaitEachGesture {
-                val down = awaitFirstDown(requireUnconsumed = false)
-                when (down.type) {
-                    // A mouse (or a pen) drags the chart the way it always has: slop is a fraction
-                    // of a dp, so the pan starts on the first pixel of movement.
-                    PointerType.Mouse, PointerType.Stylus, PointerType.Eraser -> {
-                        if (awaitDragSlop(down.id, MOUSE_DRAG_SLOP.toPx())) {
-                            drag(down.id) { change ->
-                                change.consume()
-                                panBy(change.positionChange())
+            awaitPointerEventScope {
+                while (true) {
+                    val event = awaitPointerEvent()
+                    val down = event.changes.firstOrNull { !it.previousPressed && it.pressed } ?: continue
+                    when (down.type) {
+                        // On PC / mouse devices, dragging the chart uses the secondary (right) mouse button.
+                        // This avoids conflicts with left-click checkpoint selection, hover readout,
+                        // or parent lazy-column scrolling, and eliminates unnatural long-press delays on PC.
+                        PointerType.Mouse, PointerType.Stylus, PointerType.Eraser -> {
+                            if (event.buttons.isSecondaryPressed) {
+                                var pointer = down.id
+                                while (true) {
+                                    val moveEvent = awaitPointerEvent()
+                                    val change = moveEvent.changes.firstOrNull { it.id == pointer }
+                                        ?: moveEvent.changes.firstOrNull { it.pressed }?.also { pointer = it.id }
+                                        ?: break
+                                    if (!change.pressed || !moveEvent.buttons.isSecondaryPressed) break
+                                    val delta = change.positionChange()
+                                    if (delta != Offset.Zero) {
+                                        change.consume()
+                                        panBy(delta)
+                                    }
+                                }
                             }
                         }
-                    }
-                    // A finger scrolls the page until it has been held still; then it pans, and two
-                    // fingers pinch instead. See `ChartTouch.kt`.
-                    else -> when (awaitTouchDecision(down)) {
-                        TouchDecision.Abort, TouchDecision.Wait -> Unit
-                        TouchDecision.Pan -> {
-                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                            dragPan(down.id, ::panBy)
+                        // A finger scrolls the page until it has been held still; then it pans, and two
+                        // fingers pinch instead. See `ChartTouch.kt`.
+                        else -> when (awaitTouchDecision(down)) {
+                            TouchDecision.Abort, TouchDecision.Wait -> Unit
+                            TouchDecision.Pan -> {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                dragPan(down.id, ::panBy)
+                            }
+                            TouchDecision.Pinch -> pinchZoom(::zoomBy)
                         }
-                        TouchDecision.Pinch -> pinchZoom(::zoomBy)
                     }
                 }
             }

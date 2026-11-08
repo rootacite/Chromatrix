@@ -14,9 +14,12 @@ import androidx.compose.ui.InternalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerButton
+import androidx.compose.ui.input.pointer.PointerButtons
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.PointerType
+import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.scene.ComposeScenePointer
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -95,6 +98,76 @@ class ChartTouchGestureTest {
             // which walks the window back towards earlier steps.
             assertTrue(window.min < 300f, "the window did not move: $window")
             assertEquals(0, scroll.value, "the page scrolled while the chart was panning")
+        } finally {
+            scene.close()
+        }
+    }
+
+    @Test
+    fun aRightClickDragPansTheChart() {
+        val store = StepChartInteractionStore()
+        val scroll = ScrollState(0)
+        val scene = chartPage(store, scroll)
+        try {
+            val rightButtons = PointerButtons(isSecondaryPressed = true)
+            scene.sendPointerEvent(
+                PointerEventType.Press,
+                Offset(200f, 120f),
+                button = PointerButton.Secondary,
+                buttons = rightButtons,
+            )
+            repeat(4) { step ->
+                scene.sendPointerEvent(
+                    PointerEventType.Move,
+                    Offset(200f + 25f * (step + 1), 120f),
+                    buttons = rightButtons,
+                )
+            }
+            scene.sendPointerEvent(
+                PointerEventType.Release,
+                Offset(300f, 120f),
+                button = PointerButton.Secondary,
+                buttons = PointerButtons(),
+            )
+
+            assertTrue(store.state.detached, "a right-click drag did not pan the chart")
+            val window = assertNotNull(store.state.xWindow, "the right-click drag left no x window")
+            assertTrue(window.min < 300f, "the window did not move: $window")
+            assertEquals(0, scroll.value, "the page scrolled during right-click drag")
+        } finally {
+            scene.close()
+        }
+    }
+
+    @Test
+    fun aLeftClickDragDoesNotPanTheChart() {
+        val store = StepChartInteractionStore()
+        val scroll = ScrollState(0)
+        val scene = chartPage(store, scroll)
+        try {
+            val leftButtons = PointerButtons(isPrimaryPressed = true)
+            scene.sendPointerEvent(
+                PointerEventType.Press,
+                Offset(200f, 120f),
+                button = PointerButton.Primary,
+                buttons = leftButtons,
+            )
+            repeat(4) { step ->
+                scene.sendPointerEvent(
+                    PointerEventType.Move,
+                    Offset(200f + 25f * (step + 1), 120f),
+                    buttons = leftButtons,
+                )
+            }
+            scene.sendPointerEvent(
+                PointerEventType.Release,
+                Offset(300f, 120f),
+                button = PointerButton.Primary,
+                buttons = PointerButtons(),
+            )
+
+            assertFalse(store.state.detached, "a left-click drag panned the chart")
+            assertEquals(null, store.state.xWindow)
         } finally {
             scene.close()
         }
@@ -232,6 +305,13 @@ class ChartTouchGestureTest {
         position = position,
         pressed = pressed,
         type = PointerType.Touch,
+    )
+
+    private fun mouse(id: Long, position: Offset, pressed: Boolean) = ComposeScenePointer(
+        id = PointerId(id),
+        position = position,
+        pressed = pressed,
+        type = PointerType.Mouse,
     )
 
     private fun ImageComposeScene.send(type: PointerEventType, vararg pointers: ComposeScenePointer) {

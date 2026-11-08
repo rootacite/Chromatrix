@@ -231,6 +231,28 @@ class ChartCtrlClickTest {
     }
 
     @Test
+    fun rightClickDragDoesNotPickAStep() {
+        withChart { window, picks ->
+            val queue = Toolkit.getDefaultToolkit().systemEventQueue
+            val target = onEdtGet { pointerTarget(window) }
+
+            repeat(2) {
+                postClick(
+                    queue,
+                    target,
+                    x = 200,
+                    y = 200,
+                    button = MouseEvent.BUTTON3,
+                    ctrl = false,
+                    dragTo = 320,
+                )
+            }
+            pumpUntil(500) { picks.isNotEmpty() }
+            assertTrue(picks.isEmpty(), "right-click dragging opened the panel: ${picks.toList()}")
+        }
+    }
+
+    @Test
     fun hoverDoesNotPickAStep() {
         withChart { window, picks ->
             val queue = Toolkit.getDefaultToolkit().systemEventQueue

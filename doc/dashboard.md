@@ -489,11 +489,12 @@ not sample (or to re-render one after changing the prompts in `config.toml`).
 | Charts | Hover | Step readout under the cursor |
 | Charts | `Ctrl` + click | Pick the nearest checkpoint (Avg Loss only) |
 | Charts | Double click | Same pick without a keyboard; the second click sets the position (Avg Loss only) |
+| Charts | Right-click drag (mouse) | Pan the chart |
 | Charts | `Ctrl` + wheel | Zoom X axis |
 | Charts | `Shift` + wheel | Zoom Y axis |
 | Charts | Drag the title-row handle over the plot | Place the step cursor (no-hover devices) |
 | Charts | Tap a placed handle | Pick the checkpoint at the cursor (Avg Loss only) |
-| Charts | Hold a finger, then drag | Move the chart (a plain swipe scrolls the page) |
+| Charts | Hold a finger, then drag | Move the chart (touch devices; a plain swipe scrolls the page) |
 | Charts | Two-finger pinch | Zoom the axis the fingers spread along |
 
 There are no global app-level shortcuts.
