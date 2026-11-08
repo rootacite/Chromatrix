@@ -950,6 +950,70 @@ class DashboardScreenViewModel(
         _uiState.update { it.copy(samplePromptsEditorOpen = false) }
     }
 
+    fun openBlindTest() {
+        val selected = _uiState.value.selectedRun
+        val runId = selected?.runId ?: _uiState.value.runId
+        _uiState.update { it.copy(blindTestOpen = true, blindTestLoading = true, blindTestError = null) }
+        viewModelScope.launch {
+            try {
+                val state = withContext(IoDispatcher) {
+                    ipc.blindTestRatings(name = selected?.outputName, runId = runId)
+                }
+                _uiState.update { it.copy(blindTestState = state, blindTestLoading = false) }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(blindTestLoading = false, blindTestError = e.message ?: e.toString()) }
+            }
+        }
+    }
+
+    fun closeBlindTest() {
+        _uiState.update { it.copy(blindTestOpen = false) }
+    }
+
+    fun recordBlindTestChoice(
+        leftCheckpoint: String,
+        rightCheckpoint: String,
+        chosen: String,
+        profileIndex: Int,
+        isCanary: Boolean,
+    ) {
+        val selected = _uiState.value.selectedRun
+        val runId = selected?.runId ?: _uiState.value.runId
+        viewModelScope.launch {
+            try {
+                val updatedState = withContext(IoDispatcher) {
+                    ipc.recordBlindTestMatch(
+                        leftCheckpoint = leftCheckpoint,
+                        rightCheckpoint = rightCheckpoint,
+                        chosen = chosen,
+                        profileIndex = profileIndex,
+                        isCanary = isCanary,
+                        name = selected?.outputName,
+                        runId = runId,
+                    )
+                }
+                _uiState.update { it.copy(blindTestState = updatedState) }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(blindTestError = e.message ?: e.toString()) }
+            }
+        }
+    }
+
+    fun resetBlindTest() {
+        val selected = _uiState.value.selectedRun
+        val runId = selected?.runId ?: _uiState.value.runId
+        viewModelScope.launch {
+            try {
+                val resetState = withContext(IoDispatcher) {
+                    ipc.resetBlindTest(name = selected?.outputName, runId = runId)
+                }
+                _uiState.update { it.copy(blindTestState = resetState) }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(blindTestError = e.message ?: e.toString()) }
+            }
+        }
+    }
+
     /**
      * Saves the edited prompt sets for the displayed run. The helper stores them whole in that
      * run's log directory, where the trainer's own sample points read them before every pass — so

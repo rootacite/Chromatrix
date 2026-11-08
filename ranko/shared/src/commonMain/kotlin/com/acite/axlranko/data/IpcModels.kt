@@ -453,3 +453,43 @@ data class AutomationJobStartResult(
     val job: AutomationJobSummary = AutomationJobSummary(),
     @SerialName("log_path") val logPath: String = "",
 )
+
+@Serializable
+data class BlindTestCheckpointRating(
+    val rating: Double = 1500.0,
+    val uncertainty: Double = 350.0,
+    val wins: Int = 0,
+    val losses: Int = 0,
+    val matches: Int = 0,
+)
+
+@Serializable
+data class BlindTestMetrics(
+    @SerialName("overall_consistency") val overallConsistency: Double = 1.0,
+    @SerialName("cross_profile_consistency") val crossProfileConsistency: Double = 1.0,
+    @SerialName("canary_consistency") val canaryConsistency: Double = 1.0,
+    @SerialName("total_comparisons") val totalComparisons: Int = 0,
+    @SerialName("canary_total") val canaryTotal: Int = 0,
+    @SerialName("multi_profile_pairs") val multiProfilePairs: Int = 0,
+)
+
+@Serializable
+data class BlindTestHistoryEntry(
+    @SerialName("left_checkpoint") val leftCheckpoint: String = "",
+    @SerialName("right_checkpoint") val rightCheckpoint: String = "",
+    @SerialName("profile_index") val profileIndex: Int = 0,
+    val chosen: String = "",
+    @SerialName("is_canary") val isCanary: Boolean = false,
+    val timestamp: Double = 0.0,
+)
+
+@Serializable
+data class BlindTestState(
+    @SerialName("run_id") val runId: String? = null,
+    val file: String? = null,
+    val ratings: Map<String, BlindTestCheckpointRating> = emptyMap(),
+    val metrics: BlindTestMetrics = BlindTestMetrics(),
+    val history: List<BlindTestHistoryEntry> = emptyList(),
+    @SerialName("updated_at") val updatedAt: Double = 0.0,
+)
+

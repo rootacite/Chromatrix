@@ -121,6 +121,7 @@ import com.acite.axlranko.model.SamplePassKind
 import com.acite.axlranko.model.SamplePassRequest
 import com.acite.axlranko.model.UnpinnedClearResult
 import com.acite.axlranko.pages.components.ChartCard
+import com.acite.axlranko.pages.components.BlindTestDialog
 import com.acite.axlranko.pages.components.ChartPickMarkers
 import com.acite.axlranko.pages.components.ChartSeries
 import com.acite.axlranko.pages.components.CheckpointRow
@@ -515,6 +516,7 @@ fun DashboardScreen(
                                     )
                                 )
                             },
+                            onOpenBlindTest = viewModel::openBlindTest,
                         )
                     }
                 }
@@ -700,6 +702,29 @@ fun DashboardScreen(
                     maxWidth = maxWidth - PAGE_PANEL_MARGIN,
                 )
             }
+        }
+
+        if (uiState.blindTestOpen) {
+            val pinnedPaths = uiState.checkpointPins.map { it.path }.toSet()
+            val pinnedCheckpoints = uiState.checkpoints.filter { it.path in pinnedPaths }
+            BlindTestDialog(
+                pinnedCheckpoints = pinnedCheckpoints,
+                jobs = uiState.generatedJobs,
+                state = uiState.blindTestState,
+                loading = uiState.blindTestLoading,
+                error = uiState.blindTestError,
+                onChoice = { leftCp, rightCp, chosen, profileIndex, isCanary ->
+                    viewModel.recordBlindTestChoice(
+                        leftCheckpoint = leftCp,
+                        rightCheckpoint = rightCp,
+                        chosen = chosen,
+                        profileIndex = profileIndex,
+                        isCanary = isCanary,
+                    )
+                },
+                onReset = viewModel::resetBlindTest,
+                onDismiss = viewModel::closeBlindTest,
+            )
         }
 
         uiState.chartPick?.let { pick ->
@@ -1456,6 +1481,7 @@ internal fun PinnedSampleRow(
     roundIndex: Int = 0,
     roundTotal: Int = 0,
     onGeneratePinned: (Int) -> Unit,
+    onOpenBlindTest: (() -> Unit)? = null,
 ) {
     val colors = rankoColors
     // How many passes over the pins one click starts. The helper renders one pass per call, so the
@@ -1498,6 +1524,20 @@ internal fun PinnedSampleRow(
                 colors = rankoFieldColors(),
                 shape = rankoTokens.panel,
             )
+            if (pinnedCount >= 2 && onOpenBlindTest != null) {
+                CapsuleButton(
+                    text = "Blind Test",
+                    onClick = onOpenBlindTest,
+                    compact = true,
+                ) {
+                    Text(
+                        "Blind Test",
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        softWrap = false,
+                    )
+                }
+            }
             Text(
                 text = if (roundTotal > 1 && roundIndex > 0) {
                     "round $roundIndex/$roundTotal"

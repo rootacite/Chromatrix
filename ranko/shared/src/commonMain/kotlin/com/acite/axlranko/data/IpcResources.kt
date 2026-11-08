@@ -270,6 +270,9 @@ internal object IpcResources {
         "list_generated_samples" to { params -> listOf(run(params, ResourceMode.Read)) },
         "checkpoint_pins" to { params -> listOf(run(params, ResourceMode.Read)) },
         "checkpoint_pin_set" to { params -> listOf(run(params, ResourceMode.Write)) },
+        "blind_test_ratings" to { params -> listOf(run(params, ResourceMode.Read)) },
+        "blind_test_record" to { params -> listOf(run(params, ResourceMode.Write)) },
+        "blind_test_reset" to { params -> listOf(run(params, ResourceMode.Write)) },
         // Read-only: the prompts the displayed run samples with (its own saved config, or the sets
         // the editor wrote for it) — resolved the same way `evaluation_prompts` is.
         "sample_prompts" to { _ -> emptyList() },

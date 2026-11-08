@@ -184,6 +184,61 @@ class TrainerIpcClient {
         return json.decodeFromJsonElement(result)
     }
 
+    /** Read the run's blind test ratings, metrics, and history. */
+    suspend fun blindTestRatings(
+        name: String? = null,
+        runId: String? = null,
+    ): BlindTestState {
+        val result = call(
+            "blind_test_ratings",
+            buildJsonObject {
+                name?.let { put("name", it) }
+                runId?.let { put("run_id", it) }
+            },
+        )
+        return json.decodeFromJsonElement(result)
+    }
+
+    /** Record one blind test match decision and receive updated ratings and metrics. */
+    suspend fun recordBlindTestMatch(
+        leftCheckpoint: String,
+        rightCheckpoint: String,
+        chosen: String,
+        profileIndex: Int,
+        isCanary: Boolean,
+        name: String? = null,
+        runId: String? = null,
+    ): BlindTestState {
+        val result = call(
+            "blind_test_record",
+            buildJsonObject {
+                put("left_checkpoint", leftCheckpoint)
+                put("right_checkpoint", rightCheckpoint)
+                put("chosen", chosen)
+                put("profile_index", profileIndex)
+                put("is_canary", isCanary)
+                name?.let { put("name", it) }
+                runId?.let { put("run_id", it) }
+            },
+        )
+        return json.decodeFromJsonElement(result)
+    }
+
+    /** Reset the run's blind test state. */
+    suspend fun resetBlindTest(
+        name: String? = null,
+        runId: String? = null,
+    ): BlindTestState {
+        val result = call(
+            "blind_test_reset",
+            buildJsonObject {
+                name?.let { put("name", it) }
+                runId?.let { put("run_id", it) }
+            },
+        )
+        return json.decodeFromJsonElement(result)
+    }
+
     /** Pin or unpin one checkpoint; the reply is that run's whole pin list. */
     suspend fun setCheckpointPin(
         path: String,

@@ -804,4 +804,9 @@ data class DashboardUiState(
     val comfyCheckpointsError: String? = null,
     val hardware: HardwareStatus = HardwareStatus(),
     val hardwareHistory: HardwareHistory = HardwareHistory(),
+    /** True while the Blind Test evaluation modal is open. */
+    val blindTestOpen: Boolean = false,
+    val blindTestLoading: Boolean = false,
+    val blindTestError: String? = null,
+    val blindTestState: com.acite.axlranko.data.BlindTestState? = null,
 )

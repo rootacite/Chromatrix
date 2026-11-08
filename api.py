@@ -3,6 +3,7 @@ import functools
 import ipaddress
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -21,15 +22,19 @@ from tensorboard.backend.event_processing.event_accumulator import EventAccumula
 
 from trainer.amdfq_patch import resolve_preload
 from trainer.checkpoints import (
+    blind_test_path,
     discover_checkpoints,
     parse_checkpoint_dir,
     pin_entry,
     pins_path,
+    read_blind_test_state,
     read_lora_metadata,
     read_pins,
     require_resume_network_type,
+    reset_blind_test_state,
     resolve_resume_path,
     unpin_entry,
+    write_blind_test_state,
     write_pins,
 )
 from trainer.config import (
@@ -1048,6 +1053,250 @@ def handle_checkpoint_pin_set(params: dict[str, Any]) -> dict[str, Any]:
     else:
         pins = unpin_entry(pins, target)
     return {"run_id": run_id, "file": str(write_pins(log_dir, run_id, pins)), "pins": pins}
+
+
+def _calculate_blind_test_consistency(history: list[dict[str, Any]]) -> dict[str, Any]:
+    pair_profile_wins: dict[tuple[str, str], dict[int, dict[str, int]]] = {}
+    pair_total_wins: dict[tuple[str, str], dict[str, int]] = {}
+    canary_matches: list[bool] = []
+    prev_decisions: dict[tuple[str, str, int], str] = {}
+
+    for entry in history:
+        chosen = entry.get("chosen")
+        if chosen not in ("left", "right"):
+            continue
+        left = str(entry.get("left_checkpoint") or entry.get("left_cp") or "").strip()
+        right = str(entry.get("right_checkpoint") or entry.get("right_cp") or "").strip()
+        if not left or not right or left == right:
+            continue
+        profile = int(entry.get("profile_index") if entry.get("profile_index") is not None else 0)
+        winner = left if chosen == "left" else right
+        pair_key = (min(left, right), max(left, right))
+        is_canary = bool(entry.get("is_canary"))
+
+        if is_canary:
+            prev_winner = prev_decisions.get((pair_key[0], pair_key[1], profile))
+            if prev_winner:
+                canary_matches.append(winner == prev_winner)
+        else:
+            prev_decisions[(pair_key[0], pair_key[1], profile)] = winner
+            if pair_key not in pair_profile_wins:
+                pair_profile_wins[pair_key] = {}
+                pair_total_wins[pair_key] = {pair_key[0]: 0, pair_key[1]: 0}
+
+            p_dict = pair_profile_wins[pair_key]
+            if profile not in p_dict:
+                p_dict[profile] = {pair_key[0]: 0, pair_key[1]: 0}
+            p_dict[profile][winner] = p_dict[profile].get(winner, 0) + 1
+            pair_total_wins[pair_key][winner] = pair_total_wins[pair_key].get(winner, 0) + 1
+
+    multi_profile_max_sum = 0
+    multi_profile_total_sum = 0
+    for pair_key, profiles_map in pair_profile_wins.items():
+        if len(profiles_map) >= 2:
+            counts = pair_total_wins[pair_key]
+            w1 = counts.get(pair_key[0], 0)
+            w2 = counts.get(pair_key[1], 0)
+            multi_profile_max_sum += max(w1, w2)
+            multi_profile_total_sum += (w1 + w2)
+
+    cross_profile_consistency = (
+        float(multi_profile_max_sum) / float(multi_profile_total_sum)
+        if multi_profile_total_sum > 0
+        else 1.0
+    )
+
+    canary_consistency = (
+        float(sum(canary_matches)) / float(len(canary_matches))
+        if canary_matches
+        else 1.0
+    )
+
+    if multi_profile_total_sum > 0 and canary_matches:
+        overall = 0.7 * cross_profile_consistency + 0.3 * canary_consistency
+    elif multi_profile_total_sum > 0:
+        overall = cross_profile_consistency
+    elif canary_matches:
+        overall = canary_consistency
+    else:
+        overall = 1.0
+
+    return {
+        "overall_consistency": round(overall, 4),
+        "cross_profile_consistency": round(cross_profile_consistency, 4),
+        "canary_consistency": round(canary_consistency, 4),
+        "total_comparisons": len([h for h in history if h.get("chosen") in ("left", "right")]),
+        "canary_total": len(canary_matches),
+        "multi_profile_pairs": len([k for k, p in pair_profile_wins.items() if len(p) >= 2]),
+    }
+
+
+def _update_elo_rating(
+    ratings: dict[str, dict[str, Any]],
+    left_cp: str,
+    right_cp: str,
+    chosen: str,
+) -> None:
+    def _entry(cp: str) -> dict[str, Any]:
+        if cp not in ratings or not isinstance(ratings[cp], dict):
+            ratings[cp] = {
+                "rating": 1500.0,
+                "uncertainty": 350.0,
+                "wins": 0,
+                "losses": 0,
+                "matches": 0,
+            }
+        return ratings[cp]
+
+    entry_l = _entry(left_cp)
+    entry_r = _entry(right_cp)
+
+    if chosen not in ("left", "right"):
+        return
+
+    r_l = float(entry_l.get("rating", 1500.0))
+    u_l = float(entry_l.get("uncertainty", 350.0))
+    r_r = float(entry_r.get("rating", 1500.0))
+    u_r = float(entry_r.get("uncertainty", 350.0))
+
+    e_l = 1.0 / (1.0 + 10.0 ** ((r_r - r_l) / 400.0))
+    e_r = 1.0 - e_l
+
+    actual_l = 1.0 if chosen == "left" else 0.0
+    actual_r = 1.0 - actual_l
+
+    k_base = 32.0
+    k_l = k_base * max(0.2, min(2.0, u_l / 350.0))
+    k_r = k_base * max(0.2, min(2.0, u_r / 350.0))
+
+    beta = 175.0
+    denom = u_l ** 2 + u_r ** 2 + 2.0 * (beta ** 2)
+
+    new_r_l = r_l + k_l * (actual_l - e_l)
+    new_r_r = r_r + k_r * (actual_r - e_r)
+
+    ratio_l = max(0.01, 1.0 - (u_l ** 2) / denom)
+    ratio_r = max(0.01, 1.0 - (u_r ** 2) / denom)
+    new_u_l = max(30.0, u_l * math.sqrt(ratio_l))
+    new_u_r = max(30.0, u_r * math.sqrt(ratio_r))
+
+    entry_l["rating"] = round(new_r_l, 1)
+    entry_l["uncertainty"] = round(new_u_l, 1)
+    entry_l["matches"] = int(entry_l.get("matches", 0)) + 1
+    if actual_l > 0.5:
+        entry_l["wins"] = int(entry_l.get("wins", 0)) + 1
+    else:
+        entry_l["losses"] = int(entry_l.get("losses", 0)) + 1
+
+    entry_r["rating"] = round(new_r_r, 1)
+    entry_r["uncertainty"] = round(new_u_r, 1)
+    entry_r["matches"] = int(entry_r.get("matches", 0)) + 1
+    if actual_r > 0.5:
+        entry_r["wins"] = int(entry_r.get("wins", 0)) + 1
+    else:
+        entry_r["losses"] = int(entry_r.get("losses", 0)) + 1
+
+
+def handle_blind_test_ratings(params: dict[str, Any]) -> dict[str, Any]:
+    """Read the run's blind test ratings, metrics, and history from `blind_test_ratings.json`."""
+    cfg = _train_config_dict()
+    run_id, _output_name = _resolve_run(params, cfg)
+    if not run_id:
+        return {
+            "run_id": None,
+            "file": None,
+            "ratings": {},
+            "metrics": {
+                "overall_consistency": 1.0,
+                "cross_profile_consistency": 1.0,
+                "canary_consistency": 1.0,
+                "total_comparisons": 0,
+            },
+            "history": [],
+        }
+    log_dir = _log_dir(cfg, run_id)
+    state = read_blind_test_state(log_dir)
+    return {
+        "run_id": run_id,
+        "file": str(blind_test_path(log_dir)),
+        "ratings": state.get("ratings", {}),
+        "metrics": state.get("metrics", {}),
+        "history": state.get("history", []),
+        "updated_at": state.get("updated_at", 0.0),
+    }
+
+
+def handle_blind_test_record(params: dict[str, Any]) -> dict[str, Any]:
+    """Record one blind test match decision, update Elo and consistency metrics, and persist."""
+    cfg = _train_config_dict()
+    run_id, _output_name = _resolve_run(params, cfg)
+    if not run_id:
+        raise ValueError("no run to record blind test result to")
+
+    left_cp = str(params.get("left_checkpoint") or params.get("left_cp") or "").strip()
+    right_cp = str(params.get("right_checkpoint") or params.get("right_cp") or "").strip()
+    if not left_cp or not right_cp:
+        raise ValueError("both left_checkpoint and right_checkpoint are required")
+
+    chosen = str(params.get("chosen") or params.get("winner") or "").strip().lower()
+    if chosen not in ("left", "right", "skip"):
+        raise ValueError(f"invalid choice '{chosen}'; expected 'left', 'right', or 'skip'")
+
+    profile_index = int(params.get("profile_index") if params.get("profile_index") is not None else 0)
+    is_canary = bool(params.get("is_canary"))
+
+    log_dir = _log_dir(cfg, run_id)
+    state = read_blind_test_state(log_dir)
+    ratings = state.get("ratings", {})
+    history = state.get("history", [])
+
+    if chosen in ("left", "right"):
+        _update_elo_rating(ratings, left_cp, right_cp, chosen)
+
+    history.append({
+        "left_checkpoint": left_cp,
+        "right_checkpoint": right_cp,
+        "profile_index": profile_index,
+        "chosen": chosen,
+        "is_canary": is_canary,
+        "timestamp": time.time(),
+    })
+
+    metrics = _calculate_blind_test_consistency(history)
+    state["ratings"] = ratings
+    state["metrics"] = metrics
+    state["history"] = history
+    state["run_id"] = run_id
+
+    write_blind_test_state(log_dir, run_id, state)
+
+    return {
+        "run_id": run_id,
+        "file": str(blind_test_path(log_dir)),
+        "ratings": ratings,
+        "metrics": metrics,
+        "history": history,
+        "updated_at": state.get("updated_at", 0.0),
+    }
+
+
+def handle_blind_test_reset(params: dict[str, Any]) -> dict[str, Any]:
+    """Reset the run's blind test ratings, history, and consistency metrics to initial state."""
+    cfg = _train_config_dict()
+    run_id, _output_name = _resolve_run(params, cfg)
+    if not run_id:
+        raise ValueError("no run to reset blind test state for")
+
+    log_dir = _log_dir(cfg, run_id)
+    state = reset_blind_test_state(log_dir, run_id)
+    return {
+        "run_id": run_id,
+        "file": str(blind_test_path(log_dir)),
+        "ratings": state.get("ratings", {}),
+        "metrics": state.get("metrics", {}),
+        "history": state.get("history", []),
+        "updated_at": state.get("updated_at", 0.0),
+    }
 
 
 def _tagger_script() -> Path:
@@ -2972,6 +3221,9 @@ _HANDLERS = {
     "generate_pinned_checkpoint_samples": handle_generate_pinned_checkpoint_samples,
     "clear_checkpoint_samples": handle_clear_checkpoint_samples,
     "clear_unpinned_checkpoints": handle_clear_unpinned_checkpoints,
+    "blind_test_ratings": handle_blind_test_ratings,
+    "blind_test_record": handle_blind_test_record,
+    "blind_test_reset": handle_blind_test_reset,
     "evaluate_checkpoint": handle_evaluate_checkpoint,
     "evaluation_prompts": handle_evaluation_prompts,
     "cancel_generation": handle_cancel_generation,

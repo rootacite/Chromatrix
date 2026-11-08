@@ -311,3 +311,67 @@ def unpin_entry(pins: list[dict[str, Any]], path: Union[str, Path]) -> list[dict
     """Drop one checkpoint from the list; a path that is not pinned changes nothing."""
     target = str(path or "").strip()
     return [entry for entry in pins if str(entry.get("path") or "") != target]
+
+
+_BLIND_TEST_VERSION = 1
+_BLIND_TEST_FILENAME = "blind_test_ratings.json"
+
+
+def blind_test_path(log_dir: Union[str, Path]) -> Path:
+    return Path(log_dir).expanduser() / _BLIND_TEST_FILENAME
+
+
+def read_blind_test_state(log_dir: Union[str, Path]) -> dict[str, Any]:
+    path = blind_test_path(log_dir)
+    default_state: dict[str, Any] = {
+        "version": _BLIND_TEST_VERSION,
+        "run_id": "",
+        "updated_at": 0.0,
+        "ratings": {},
+        "metrics": {
+            "overall_consistency": 1.0,
+            "cross_profile_consistency": 1.0,
+            "canary_consistency": 1.0,
+            "total_comparisons": 0,
+        },
+        "history": [],
+    }
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return data
+    except (OSError, json.JSONDecodeError):
+        pass
+    return default_state
+
+
+def write_blind_test_state(log_dir: Union[str, Path], run_id: str, state: dict[str, Any]) -> Path:
+    path = blind_test_path(log_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = dict(state)
+    payload["version"] = _BLIND_TEST_VERSION
+    payload["run_id"] = str(run_id or "")
+    payload["updated_at"] = time.time()
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
+    return path
+
+
+def reset_blind_test_state(log_dir: Union[str, Path], run_id: str) -> dict[str, Any]:
+    default_state: dict[str, Any] = {
+        "version": _BLIND_TEST_VERSION,
+        "run_id": str(run_id or ""),
+        "updated_at": time.time(),
+        "ratings": {},
+        "metrics": {
+            "overall_consistency": 1.0,
+            "cross_profile_consistency": 1.0,
+            "canary_consistency": 1.0,
+            "total_comparisons": 0,
+        },
+        "history": [],
+    }
+    write_blind_test_state(log_dir, run_id, default_state)
+    return default_state
+
